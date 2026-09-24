@@ -26,6 +26,7 @@ data class HomeUiState(
     val isBackupLoading: Boolean = true,
     val isBackupLoadError: Boolean = false,
     val isBackupActionRunning: Boolean = false,
+    val nas: NasHomeUiState = NasHomeUiState(),
     val activeDialog: HomeDialog? = null,
     val activeSheet: HomeSheet? = null,
 )
@@ -45,6 +46,15 @@ data class HomeRecentBookUi(
 data class HomeBackupUi(
     val name: String,
     val lastModify: Long,
+)
+
+@Stable
+data class NasHomeUiState(
+    val configured: Boolean = false,
+    val isLoading: Boolean = false,
+    val isConnected: Boolean = false,
+    val bookCount: Int? = null,
+    val error: String? = null,
 )
 
 sealed interface HomeIntent {
@@ -72,6 +82,9 @@ sealed interface HomeIntent {
     data object ConfirmRestore : HomeIntent
     data object BackupSettingsClick : HomeIntent
     data object RetryBackupInfo : HomeIntent
+    data object NasCardClick : HomeIntent
+    data object NasSettingsClick : HomeIntent
+    data object RetryNasConnection : HomeIntent
     data object DismissDialog : HomeIntent
     data object DismissSheet : HomeIntent
 }
@@ -79,6 +92,8 @@ sealed interface HomeIntent {
 sealed interface HomeEffect {
     data class OpenBook(val book: Book) : HomeEffect
     data object OpenBackupSettings : HomeEffect
+    data object OpenNasLibrary : HomeEffect
+    data object OpenNasSettings : HomeEffect
     data class SelectBackupDirectory(
         val destination: HomeBackupDestination,
     ) : HomeEffect
