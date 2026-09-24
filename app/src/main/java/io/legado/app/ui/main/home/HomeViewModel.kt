@@ -4,6 +4,8 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import io.legado.app.R
 import io.legado.app.data.repository.BookRepository
+import io.legado.app.data.repository.NasLibraryRepository
+import io.legado.app.domain.gateway.NasSettingsGateway
 import io.legado.app.domain.gateway.BackupSettingsGateway
 import io.legado.app.domain.model.HomeDashboardSection
 import io.legado.app.domain.model.HomeReadingBook
@@ -35,9 +37,12 @@ class HomeViewModel(
     private val webDavBackupUseCase: WebDavBackupUseCase,
     private val backupRestoreUseCase: BackupRestoreUseCase,
     private val backupSettingsGateway: BackupSettingsGateway,
+    private val nasLibraryRepository: NasLibraryRepository,
+    private val nasSettingsGateway: NasSettingsGateway,
 ) : ViewModel() {
 
     private val _backupState = MutableStateFlow(HomeBackupState())
+    private val _nasState = MutableStateFlow(NasHomeUiState())
     private val _activeDialog = MutableStateFlow<HomeDialog?>(null)
     private val _activeSheet = MutableStateFlow<HomeSheet?>(null)
     private val _effects = MutableSharedFlow<HomeEffect>(extraBufferCapacity = 16)
@@ -56,9 +61,10 @@ class HomeViewModel(
     val uiState = combine(
         dashboardData,
         _backupState,
+        _nasState,
         _activeDialog,
         _activeSheet,
-    ) { dashboardData, backup, dialog, sheet ->
+    ) { dashboardData, backup, nas, dialog, sheet ->
         val (dashboard, selectedSourceUrl, visibleSections) = dashboardData
         HomeUiState(
             totalReadBooks = dashboard.totalReadBooks,
@@ -77,6 +83,7 @@ class HomeViewModel(
             isBackupLoading = backup.isLoading,
             isBackupLoadError = backup.isLoadError,
             isBackupActionRunning = backup.isActionRunning,
+            nas = nas,
             activeDialog = dialog,
             activeSheet = sheet,
         )
@@ -99,6 +106,12 @@ class HomeViewModel(
                         _backupState.update { it.copy(isLoading = false) }
                     }
                 }
+        }
+        viewModelScope.launch {
+            nasSettingsGateway.settings.collect { settings ->
+                _nasState.value = NasHomeUiState(configured = settings.apiUrl.isNotBlank())
+                if (settings.showHomeCard && settings.apiUrl.isNotBlank()) refreshNas()
+            }
         }
     }
 
@@ -152,6 +165,9 @@ class HomeViewModel(
             }
 
             HomeIntent.RetryBackupInfo -> refreshLatestBackup()
+            HomeIntent.NasCardClick -> _effects.tryEmit(HomeEffect.OpenNasLibrary)
+            HomeIntent.NasSettingsClick -> _effects.tryEmit(HomeEffect.OpenNasSettings)
+            HomeIntent.RetryNasConnection -> refreshNas()
             HomeIntent.DismissDialog -> _activeDialog.value = null
             HomeIntent.DismissSheet -> _activeSheet.value = null
         }
@@ -329,6 +345,23 @@ class HomeViewModel(
         backupRefreshJob?.cancel()
         backupRefreshJob = viewModelScope.launch(Dispatchers.IO) {
             loadLatestBackup()
+        }
+    }
+
+    private fun refreshNas() {
+        viewModelScope.launch(Dispatchers.IO) {
+            val settings = nasSettingsGateway.currentSettings
+            if (!settings.showHomeCard || settings.apiUrl.isBlank()) return@launch
+            _nasState.update { it.copy(configured = true, isLoading = true, error = null) }
+            runCatching {
+                val connection = nasLibraryRepository.checkConnection(settings)
+                nasLibraryRepository.listBooks(page = 1, pageSize = 1, settings = settings).total
+                    to connection
+            }.onSuccess { (total, _) ->
+                _nasState.update { it.copy(isLoading = false, isConnected = true, bookCount = total, error = null) }
+            }.onFailure { error ->
+                _nasState.update { it.copy(isLoading = false, isConnected = false, error = error.localizedMessage ?: "NAS 连接失败") }
+            }
         }
     }
 

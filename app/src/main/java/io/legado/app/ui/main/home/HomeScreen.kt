@@ -150,6 +150,8 @@ fun HomeRouteScreen(
         exploreUrl: String?,
     ) -> Unit,
     onOpenBackupSettings: () -> Unit,
+    onOpenNasLibrary: () -> Unit = {},
+    onOpenNasSettings: () -> Unit = {},
     onNavigateToReadRecord: () -> Unit,
     onNavigateToReadRecordOverview: () -> Unit,
     sharedTransitionScope: SharedTransitionScope? = null,
@@ -273,6 +275,8 @@ fun HomeRouteScreen(
             when (effect) {
                 is HomeEffect.OpenBook -> onOpenBook(effect.book)
                 HomeEffect.OpenBackupSettings -> onOpenBackupSettings()
+                HomeEffect.OpenNasLibrary -> onOpenNasLibrary()
+                HomeEffect.OpenNasSettings -> onOpenNasSettings()
                 is HomeEffect.SelectBackupDirectory -> {
                     pendingBackupDestination = effect.destination
                     runCatching { backupDirectoryLauncher.launch(null) }
@@ -723,6 +727,48 @@ private fun HomeDashboardContent(
                 onOpenSettings = { onIntent(HomeIntent.BackupSettingsClick) },
                 onRetry = { onIntent(HomeIntent.RetryBackupInfo) },
             )
+        }
+        if (HomeDashboardSection.NasLibrary in state.visibleSections && state.nas.configured) {
+            NasLibraryCard(
+                state = state.nas,
+                onOpen = { onIntent(HomeIntent.NasCardClick) },
+                onSettings = { onIntent(HomeIntent.NasSettingsClick) },
+                onRetry = { onIntent(HomeIntent.RetryNasConnection) },
+            )
+        }
+    }
+}
+
+@Composable
+private fun NasLibraryCard(
+    state: NasHomeUiState,
+    onOpen: () -> Unit,
+    onSettings: () -> Unit,
+    onRetry: () -> Unit,
+) {
+    val summary = when {
+        state.isLoading -> stringResource(R.string.home_nas_loading)
+        state.isConnected -> stringResource(R.string.home_nas_book_count, state.bookCount ?: 0)
+        else -> state.error ?: stringResource(R.string.home_nas_connection_failed)
+    }
+    GlassCard(modifier = Modifier.fillMaxWidth(), onClick = onOpen) {
+        Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                AppIcon(
+                    imageVector = Icons.Default.CloudSync,
+                    contentDescription = null,
+                    tint = LegadoTheme.colorScheme.primary,
+                )
+                Column(Modifier.weight(1f)) {
+                    AppText(stringResource(R.string.home_nas_library), style = LegadoTheme.typography.titleMediumEmphasized)
+                    AppText(summary, style = LegadoTheme.typography.bodySmall, color = if (state.isConnected) LegadoTheme.colorScheme.onSurfaceVariant else LegadoTheme.colorScheme.error)
+                }
+                if (state.isLoading) AppContainedLoadingIndicator(Modifier.size(24.dp))
+            }
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                SmallTonalButton(modifier = Modifier.weight(1f), onClick = onOpen, enabled = state.isConnected, icon = Icons.Default.Book, text = stringResource(R.string.open))
+                SmallTonalButton(modifier = Modifier.weight(1f), onClick = if (state.isConnected) onSettings else onRetry, icon = if (state.isConnected) Icons.Default.Settings else Icons.Default.Refresh, text = stringResource(if (state.isConnected) R.string.setting else R.string.retry))
+            }
         }
     }
 }
@@ -1423,6 +1469,7 @@ private fun HomeDashboardSection.labelRes(): Int = when (this) {
     HomeDashboardSection.RecentBooks -> R.string.home_recent_books
     HomeDashboardSection.DailyGoal -> R.string.home_today_reading_goal
     HomeDashboardSection.WebDavBackup -> R.string.home_webdav_backup
+    HomeDashboardSection.NasLibrary -> R.string.home_nas_library
 }
 
 private fun bookAccessibilityLabel(
