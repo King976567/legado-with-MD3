@@ -21,6 +21,14 @@
 
 工作流不会设置自动合并。分支保护若已配置，仍需满足其要求；没有配置保护时，GitHub 可能允许人工忽略失败检查，合并前须确认上述状态通过。
 
+### 验证失败的排查
+
+- `Checks 0` 不代表没有验证：本流程另行发布 `Sync verification (nas)` commit status。点击其链接查看完整运行；PR 事件自身若显示 `action_required`，也不能代替这项明确验证。
+- 若 NAS 分支在 PR 创建后新增了功能，重新从 `main` 手动运行 **Sync upstream**、选择 `nas`。流程会保留同步分支的人工修复，合入当前 NAS 基线并更新原 PR；仅重跑旧 run 仍验证旧 SHA。
+- `concurrent-futures{,-ktx}` 的 `1.1.0` 与 `1.2.0` 冲突来自 AGP 对应用/Android 测试 classpath 的一致性约束，不是仓库下载失败，也没有需要删除的项目 lockfile。应用侧两个依赖约束与 Espresso 3.7 / AndroidX Test 1.7 对齐到至少 `1.2.0`，不关闭一致性检查或跳过 AndroidTest lint。
+- `LatestChapterTaskSchedulerTest` 使用注入的测试调度器，明确执行到 worker 的 `finally` 清理完成再检查空闲状态，避免实际 IO 线程与 `Deferred.await()` 的竞争；生产调度和原断言不变。
+- 本地 NAS 专项单测、APK 打包通过不等同于云端全量 JVM 测试及 lint 已通过，合并以当前候选 SHA 的完整验证为准。
+
 ## 重复执行和冲突
 
 - 无新增提交时不创建空 PR。

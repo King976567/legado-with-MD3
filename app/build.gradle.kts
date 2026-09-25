@@ -191,6 +191,16 @@ ksp {
 }
 
 dependencies {
+    constraints {
+        // AGP aligns androidTest with the app runtime. Espresso 3.7 needs 1.2.0;
+        // leaving the app at transitive 1.1.0 makes the test compile classpath unresolvable.
+        implementation("androidx.concurrent:concurrent-futures:1.2.0") {
+            because("Align app and Android test runtime with Espresso 3.7")
+        }
+        implementation("androidx.concurrent:concurrent-futures-ktx:1.2.0") {
+            because("Align app and Android test runtime with AndroidX Test 1.7")
+        }
+    }
     implementation(libs.androidx.profileinstaller)
     "baselineProfile"(project(":baselineprofile"))
     coreLibraryDesugaring(libs.desugar)
