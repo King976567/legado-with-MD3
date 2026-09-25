@@ -399,9 +399,7 @@ val appModule = module {
     single<CoverSettingsGateway> { CoverSettingsRepository() }
     single<BackupSettingsGateway> { BackupSettingsRepository() }
     single<NasSettingsGateway> { NasSettingsRepository() }
-    single<NasLibraryRepository> {
-        NasLibraryRepository(get(), httpClient = okHttpClient)
-    }
+    single<NasLibraryRepository> { NasLibraryRepository(get()) }
     single<NasLibraryGateway> { get<NasLibraryRepository>() }
     single<LabSettingsGateway> { LabSettingsRepository() }
     single<MangaSettingsGateway> { MangaSettingsRepository() }
