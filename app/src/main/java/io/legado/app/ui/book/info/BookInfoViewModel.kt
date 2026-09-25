@@ -26,6 +26,14 @@ import io.legado.app.data.repository.BookSourceRepository
 import io.legado.app.data.repository.HighlightTagRuleRepository
 import io.legado.app.data.repository.ReadRecordRepository
 import io.legado.app.data.repository.RemoteBookRepository
+import io.legado.app.data.repository.NasLocalBookUploadRepository
+import io.legado.app.domain.gateway.NasSettingsGateway
+import io.legado.app.domain.model.NasHttpException
+import io.legado.app.domain.usecase.NasBookUploadError
+import io.legado.app.domain.usecase.NasBookUploadException
+import io.legado.app.domain.usecase.NasBookUploadStage
+import io.legado.app.domain.usecase.isBookUploadEnabled
+import kotlinx.coroutines.TimeoutCancellationException
 import io.legado.app.data.repository.SearchRepository
 import io.legado.app.domain.gateway.BookKnowledgeGateway
 import io.legado.app.domain.gateway.CoverSettingsGateway
@@ -127,6 +135,8 @@ class BookInfoViewModel(
     private val otherSettingsGateway: OtherSettingsGateway,
     private val privateAccessGateway: PrivateAccessGateway,
     private val privateContentGateway: PrivateContentGateway,
+    private val nasSettingsGateway: NasSettingsGateway,
+    private val nasLocalBookUploadRepository: NasLocalBookUploadRepository,
 ) : BaseViewModel(application) {
 
     val allGroups = bookGroupRepository.flowSelect().map { it.toImmutableList() }
@@ -161,6 +171,8 @@ class BookInfoViewModel(
         otherSettingsGateway.settings,
     ) { screen, theme, cover, other ->
         screen.withSettings(theme, cover, other)
+    }.combine(nasSettingsGateway.settings) { screen, nas ->
+        screen.copy(nasUploadVisible = nas.isBookUploadEnabled())
     }.combine(bookPrivateFlow) { screen, bookPrivate ->
         screen.copy(bookPrivate = bookPrivate)
     }.combine(privateLockedByEntryFlow) { screen, lockedByEntry ->
@@ -186,9 +198,24 @@ class BookInfoViewModel(
 
     private val _effects = MutableSharedFlow<BookInfoEffect>(extraBufferCapacity = 8)
     val effects = _effects.asSharedFlow()
+    private var nasUploadJob: Job? = null
+    @Volatile private var nasUploadGeneration = 0L
 
     init {
         collectEventBus()
+        viewModelScope.launch {
+            var previous = nasSettingsGateway.currentSettings
+            nasSettingsGateway.settings.collect { current ->
+                if (current.apiUrl != previous.apiUrl || current.apiToken != previous.apiToken ||
+                    current.isBookUploadEnabled() != previous.isBookUploadEnabled()) {
+                    nasUploadGeneration++
+                    nasUploadJob?.cancel()
+                    _screenState.update { it.copy(nasUploadStage = null, nasUploadDenied = false,
+                        dialog = if (it.dialog is BookInfoDialog.NasUploadResult) null else it.dialog) }
+                }
+                previous = current
+            }
+        }
     }
 
     private fun collectEventBus() {
@@ -407,6 +434,11 @@ class BookInfoViewModel(
 
     fun onIntent(intent: BookInfoIntent) {
         when (intent) {
+            BookInfoIntent.CancelNasUpload -> {
+                nasUploadGeneration++
+                nasUploadJob?.cancel()
+                _screenState.update { it.copy(nasUploadStage = null) }
+            }
             BookInfoIntent.DismissSheet -> dismissSheet()
             is BookInfoIntent.UpdateVariable -> updateVariableDraft(intent.value)
             BookInfoIntent.SaveVariable -> saveVariableDraft()
@@ -808,6 +840,48 @@ class BookInfoViewModel(
             setBusy(false)
         }.onError {
             showMessage(it.localizedMessage ?: "操作失败")
+        }
+    }
+
+    private fun uploadBookToNas() {
+        val book = currentBook?.uiCopy() ?: return
+        val settings = nasSettingsGateway.currentSettings
+        if (!book.isLocal || !settings.isBookUploadEnabled() || uiState.value.privateLocked ||
+            _screenState.value.isBusy || _screenState.value.nasUploadStage != null ||
+            _screenState.value.nasUploadDenied || nasUploadJob?.isActive == true) return
+        val generation = ++nasUploadGeneration
+        _screenState.update { it.copy(nasUploadStage = NasBookUploadStage.Preparing) }
+        nasUploadJob = viewModelScope.launch {
+            try {
+                val result = nasLocalBookUploadRepository.upload(book, settings) { stage ->
+                    _screenState.update { if (generation == nasUploadGeneration) it.copy(nasUploadStage = stage) else it }
+                }
+                if (generation == nasUploadGeneration && currentBook?.bookUrl == book.bookUrl) showDialog(BookInfoDialog.NasUploadResult(
+                    context.getString(if (result.alreadyExists) R.string.feature_book_info_nas_exists
+                        else R.string.feature_book_info_nas_uploaded, result.path)))
+            } catch (error: Exception) {
+                if (error is CancellationException && error !is TimeoutCancellationException) throw error
+                if (generation != nasUploadGeneration) return@launch
+                val denied = (error is NasBookUploadException && error.reason == NasBookUploadError.ReadOnly) ||
+                    (error is NasHttpException && error.statusCode == 403)
+                _screenState.update { it.copy(nasUploadDenied = denied) }
+                val message = when {
+                    denied -> R.string.feature_book_info_nas_read_only
+                    error is NasHttpException && error.statusCode == 401 -> R.string.feature_book_info_nas_auth_error
+                    error is NasBookUploadException -> when (error.reason) {
+                        NasBookUploadError.Unavailable -> R.string.feature_book_info_nas_unavailable
+                        NasBookUploadError.Unsupported -> R.string.feature_book_info_nas_unsupported
+                        NasBookUploadError.CheckIncomplete -> R.string.feature_book_info_nas_check_failed
+                        NasBookUploadError.InvalidFile -> R.string.feature_book_info_nas_invalid_file
+                        else -> R.string.feature_book_info_nas_failed
+                    }
+                    else -> R.string.feature_book_info_nas_failed
+                }
+                if (currentBook?.bookUrl == book.bookUrl)
+                    showDialog(BookInfoDialog.NasUploadResult(context.getString(message)))
+            } finally {
+                _screenState.update { if (generation == nasUploadGeneration) it.copy(nasUploadStage = null) else it }
+            }
         }
     }
 
@@ -1572,6 +1646,7 @@ class BookInfoViewModel(
             BookInfoMenuAction.Upload -> uploadBook {
                 showMessage("上传成功")
             }
+            BookInfoMenuAction.UploadNas -> uploadBookToNas()
             BookInfoMenuAction.SyncRemote -> syncFromRemote()
             BookInfoMenuAction.Refresh -> refreshCurrentBook()
             BookInfoMenuAction.ReadRecord -> setSheet(BookInfoSheet.ReadRecord)

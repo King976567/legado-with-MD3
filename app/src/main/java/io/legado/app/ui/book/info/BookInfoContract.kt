@@ -11,6 +11,7 @@ import io.legado.app.domain.model.BookshelfConflict
 import io.legado.app.domain.model.ConflictBookSummary
 import io.legado.app.domain.model.PrivateAccessState
 import io.legado.app.domain.usecase.ChangeSourceMigrationOptions
+import io.legado.app.domain.usecase.NasBookUploadStage
 import io.legado.app.ui.widget.components.variable.VariableEditorUiState
 import kotlinx.collections.immutable.ImmutableList
 import kotlinx.collections.immutable.persistentListOf
@@ -43,6 +44,9 @@ data class BookInfoUiState(
     val recentEvents: ImmutableList<BookInfoEventUi> = persistentListOf(),
     val isTocLoading: Boolean = false,
     val isBusy: Boolean = false,
+    val nasUploadVisible: Boolean = false,
+    val nasUploadDenied: Boolean = false,
+    val nasUploadStage: NasBookUploadStage? = null,
     val deleteAlertEnabled: Boolean = true,
     val deleteOriginal: Boolean = false,
     val showAppLogSheet: Boolean = false,
@@ -156,6 +160,7 @@ sealed interface BookInfoSheet {
 }
 
 sealed interface BookInfoDialog {
+    data class NasUploadResult(val message: String) : BookInfoDialog
     data class DeleteBook(val isLocal: Boolean) : BookInfoDialog
     data class EditRemark(val remark: String?) : BookInfoDialog
     data class PhotoPreview(val path: String) : BookInfoDialog
@@ -181,6 +186,7 @@ data class RelatedBooksUi(
 )
 
 sealed interface BookInfoIntent {
+    data object CancelNasUpload : BookInfoIntent
     data object DismissSheet : BookInfoIntent
     data object DismissDialog : BookInfoIntent
     data object DismissAppLogSheet : BookInfoIntent
@@ -370,6 +376,7 @@ enum class BookInfoMenuAction {
     Edit,
     Share,
     Upload,
+    UploadNas,
     SyncRemote,
     Refresh,
     ReadRecord,

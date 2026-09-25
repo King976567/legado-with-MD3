@@ -62,7 +62,6 @@ import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.ExperimentalMaterial3ExpressiveApi
 import androidx.compose.material3.ExtendedFloatingActionButton
 import androidx.compose.material3.Icon
-import androidx.compose.material3.MediumFlexibleTopAppBar
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.SnackbarResult
@@ -105,6 +104,8 @@ import coil3.compose.AsyncImage
 import coil3.size.Size
 import io.legado.app.R
 import io.legado.app.constant.BookType
+import io.legado.app.core.ui.book.BookDetailHeaderLayout
+import io.legado.app.core.ui.book.BookDetailTopBar
 import io.legado.app.data.entities.BaseSource
 import io.legado.app.data.entities.BookGroup
 import io.legado.app.data.entities.BookSource
@@ -115,7 +116,6 @@ import io.legado.app.help.webView.WebJsExtensions
 import io.legado.app.ui.association.OnLineImportActivity
 import io.legado.app.ui.main.homepage.modules.BannerModule
 import io.legado.app.ui.theme.LegadoTheme
-import io.legado.app.ui.theme.LocalHazeState
 import io.legado.app.ui.theme.LocalLegadoThemeColors
 import io.legado.app.ui.theme.ProvideColorSchemeOverride
 import io.legado.app.ui.theme.ThemeOverrideState
@@ -124,7 +124,6 @@ import io.legado.app.ui.theme.animateColorSchemeAsState
 import io.legado.app.ui.theme.fadingEdge
 import io.legado.app.ui.theme.rememberImageSeedColor
 import io.legado.app.ui.theme.rememberThemeOverride
-import io.legado.app.ui.theme.responsiveHazeEffectFixedStyle
 import io.legado.app.ui.widget.components.AppPullToRefresh
 import io.legado.app.ui.widget.components.AppScaffold
 import io.legado.app.ui.widget.components.AppTextField
@@ -152,15 +151,10 @@ import io.legado.app.ui.widget.components.text.AnimatedTextLine
 import io.legado.app.ui.widget.components.text.AppText
 import io.legado.app.ui.widget.components.text.HtmlContent
 import io.legado.app.ui.widget.components.text.MarkdownBlock
-import io.legado.app.ui.widget.components.topbar.GlassTopAppBarDefaults
 import io.legado.app.ui.widget.components.topbar.GlassTopAppBarScrollBehavior
 import io.legado.app.ui.widget.components.topbar.M3GlassScrollBehavior
 import io.legado.app.ui.widget.components.topbar.MiuixGlassScrollBehavior
 import io.legado.app.ui.widget.components.topbar.TopBarActionButton
-import io.legado.app.ui.widget.components.topbar.TopBarActionsRow
-import io.legado.app.ui.widget.components.topbar.TopBarNavigationButton
-import io.legado.app.ui.widget.components.topbar.miuixTopBarActionsEndPadding
-import io.legado.app.ui.widget.components.topbar.miuixTopBarSlotPadding
 import io.legado.app.ui.widget.components.variable.VariableEditorSheet
 import io.legado.app.utils.ColorUtils
 import io.legado.app.utils.HtmlFormatter
@@ -173,7 +167,6 @@ import org.koin.compose.koinInject
 import top.yukonga.miuix.kmp.basic.MiuixScrollBehavior
 import kotlin.math.abs
 import io.legado.app.model.BookCover as BookCoverModel
-import top.yukonga.miuix.kmp.basic.TopAppBar as MiuixTopAppBar
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -733,65 +726,8 @@ private fun BookInfoTransparentTopAppBar(
     onBackPressed: () -> Unit,
     scrollBehavior: GlassTopAppBarScrollBehavior,
 ) {
-    val hazeState = LocalHazeState.current
-    val isMiuix = ThemeResolver.isMiuixEngine(LegadoTheme.composeEngine)
-    val collapsedColor = if (isMiuix) {
-        GlassTopAppBarDefaults.getMiuixAppBarColor()
-    } else {
-        GlassTopAppBarDefaults.scrolledContainerColor()
-    }
-    val isAtTop = scrollBehavior.collapsedFraction <= 0.001f
-    val resolvedColor = if (isAtTop) Color.Transparent else collapsedColor
-    val topBarColors = TopAppBarDefaults.topAppBarColors(
-        containerColor = resolvedColor,
-        scrolledContainerColor = resolvedColor,
-    )
-
-    if (isMiuix) {
-        MiuixTopAppBar(
-            modifier = hazeState?.let { Modifier.responsiveHazeEffectFixedStyle(it) } ?: Modifier,
-            title = "",
-            subtitle = "",
-            navigationIcon = {
-                TopBarNavigationButton(onClick = onBackPressed)
-            },
-            actions = {
-                TopBarActionsRow(
-                    modifier = Modifier.padding(
-                        end = miuixTopBarActionsEndPadding()
-                    )
-                ) {
-                    BookInfoTopBarActions(
-                        state = state,
-                        onMenuAction = onMenuAction,
-                    )
-                }
-            },
-            color = resolvedColor,
-            navigationIconPadding = miuixTopBarSlotPadding(),
-            actionIconPadding = miuixTopBarSlotPadding(),
-            scrollBehavior = (scrollBehavior as? MiuixGlassScrollBehavior)?.miuixBehavior,
-        )
-    } else {
-        MediumFlexibleTopAppBar(
-            modifier = hazeState?.let { Modifier.responsiveHazeEffectFixedStyle(it) } ?: Modifier,
-            title = { Text(text = "", maxLines = 1) },
-            navigationIcon = {
-                TopBarNavigationButton(onClick = onBackPressed)
-            },
-            actions = {
-                Box(modifier = Modifier.padding(end = 12.dp)) {
-                    TopBarActionsRow {
-                        BookInfoTopBarActions(
-                            state = state,
-                            onMenuAction = onMenuAction,
-                        )
-                    }
-                }
-            },
-            scrollBehavior = (scrollBehavior as? M3GlassScrollBehavior)?.m3Behavior,
-            colors = topBarColors,
-        )
+    BookDetailTopBar(onBackPressed, scrollBehavior) {
+        BookInfoTopBarActions(state, onMenuAction)
     }
 }
 
@@ -1023,7 +959,7 @@ private data class BookInfoBackdropState(
 )
 
 @Composable
-private fun BookInfoOverflowMenu(
+internal fun BookInfoOverflowMenu(
     expanded: Boolean,
     onDismissRequest: () -> Unit,
     state: BookInfoUiState,
@@ -1060,6 +996,14 @@ private fun BookInfoOverflowMenu(
                 text = stringResource(R.string.upload_to_remote),
                 onClick = { onMenuAction(BookInfoMenuAction.Upload) }
             )
+            if (state.nasUploadVisible) {
+                RoundDropdownMenuItem(
+                    text = stringResource(if (state.nasUploadDenied) R.string.feature_book_info_nas_read_only
+                        else R.string.feature_book_info_upload_nas),
+                    enabled = !state.isBusy && state.nasUploadStage == null && !state.nasUploadDenied,
+                    onClick = { onMenuAction(BookInfoMenuAction.UploadNas) },
+                )
+            }
         }
         if (state.bookSourceUi?.hasLogin == true) {
             RoundDropdownMenuItem(
@@ -1148,162 +1092,131 @@ private fun BookInfoHeader(
 ) {
     val coverDescription = stringResource(R.string.a11y_book_cover_actions, book.name)
     val hiddenDescription = stringResource(R.string.private_hidden_label)
-    Column(
-        modifier = Modifier
-            .fillMaxWidth()
-            .background(
-                Brush.verticalGradient(
-                    colors = listOf(
-                        Color.Transparent,
-                        if (applySeedOverlay) {
-                            lerp(LegadoTheme.colorScheme.surface, LegadoTheme.seedColor, 0.08f)
-                                .copy(alpha = 0.5f)
+    BookDetailHeaderLayout(
+        applySeedOverlay = applySeedOverlay,
+        cover = {
+            Box(
+                modifier = Modifier
+                    .width(112.dp)
+                    .then(
+                        // 脱敏时封面不可点：点开大图等于直接泄漏
+                        if (locked) {
+                            Modifier
                         } else {
-                            LegadoTheme.colorScheme.surface.copy(alpha = 0.5f)
-                        },
-                        LegadoTheme.colorScheme.surface,
+                            Modifier.combinedClickable(
+                                onClick = onCoverClick,
+                                onLongClick = onCoverLongClick
+                            )
+                        }
                     )
-                )
-            )
-            .padding(top = 16.dp, bottom = 8.dp),
-        verticalArrangement = Arrangement.spacedBy(12.dp)
-    ) {
-        Column(
-            modifier = Modifier.padding(horizontal = 16.dp),
-            verticalArrangement = Arrangement.spacedBy(12.dp)
-        ) {
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(16.dp),
-                verticalAlignment = Alignment.Top,
+                    .semantics {
+                        role = Role.Button
+                        contentDescription = if (locked) hiddenDescription else coverDescription
+                    }
             ) {
-                Box(
-                    modifier = Modifier
-                        .width(112.dp)
-                        .then(
-                            // 脱敏时封面不可点：点开大图等于直接泄漏
-                            if (locked) {
-                                Modifier
-                            } else {
-                                Modifier.combinedClickable(
-                                    onClick = onCoverClick,
-                                    onLongClick = onCoverLongClick
-                                )
-                            }
-                        )
-                        .semantics {
-                            role = Role.Button
-                            contentDescription = if (locked) hiddenDescription else coverDescription
-                        }
-                ) {
-                    if (locked) {
-                        PrivateLockedCover(
-                            name = null,
-                            author = null,
-                            path = if (usesDefaultCover) null else book.coverPath,
-                            sourceOrigin = if (usesDefaultCover) null else book.origin,
-                            bookUrl = book.bookUrl,
-                            modifier = Modifier
-                                .width(112.dp)
-                                .aspectRatio(5f / 7f),
-                            // 同一个 key + 同一个 scope：共享元素动画在脱敏态下依然连续
-                            sharedCoverKey = sharedCoverKey,
-                            sharedTransitionScope = sharedTransitionScope,
-                            animatedVisibilityScope = animatedVisibilityScope,
-                        )
-                    } else {
-                        CoilBookCover(
-                            name = book.name,
-                            author = book.author,
-                            path = if (usesDefaultCover) null else book.coverPath,
-                            sourceOrigin = if (usesDefaultCover) null else book.origin,
-                            // 传 bookUrl 供别名缓存键。详情页故意不设 preferCache：
-                            // 在线时仍走完整链路拉新链接并刷新别名，保证封面换图后书架也能更新；
-                            // 精确命中时同样不跑脚本。
-                            bookUrl = book.bookUrl,
-                            onError = onNetworkCoverLoadError,
-                            modifier = Modifier
-                                .width(112.dp)
-                                .aspectRatio(5f / 7f),
-                            showLoadingPlaceholder = sharedCoverKey == null,
-                            sharedTransitionScope = sharedTransitionScope,
-                            animatedVisibilityScope = animatedVisibilityScope,
-                            sharedCoverKey = sharedCoverKey
-                        )
-                    }
-                }
-                Column(
-                    modifier = Modifier
-                        .weight(1f)
-                        .align(Alignment.CenterVertically)
-                        .padding(top = 8.dp, bottom = 8.dp),
-                    verticalArrangement = Arrangement.spacedBy(4.dp)
-                ) {
-                    if (locked) {
-                        // 书名 / 作者 / 来源全部换成占位条：不渲染任何真实字符串，也不响应点击
-                        PrivateMaskLine(widthFraction = 0.72f, thickness = 20.dp)
-                        PrivateMaskLine(
-                            modifier = Modifier.padding(top = 6.dp),
-                            widthFraction = 0.42f,
-                            thickness = 12.dp
-                        )
-                        PrivateMaskLine(
-                            modifier = Modifier.padding(top = 6.dp),
-                            widthFraction = 0.3f,
-                            thickness = 9.dp
-                        )
-                    } else {
-                        var showTitleMenu by remember { mutableStateOf(false) }
-                        var isTitleExpanded by rememberSaveable { mutableStateOf(false) }
-                        Box {
-                            AnimatedTextLine(
-                                text = book.name,
-                                style = LegadoTheme.typography.headlineSmall,
-                                fontWeight = FontWeight.Bold,
-                                maxLines = if (isTitleExpanded) Int.MAX_VALUE else 2,
-                                modifier = Modifier.combinedClickable(
-                                    onClick = { onBookNameClick(false) },
-                                    onLongClick = { showTitleMenu = true }
-                                )
-                            )
-                            RoundDropdownMenu(
-                                expanded = showTitleMenu,
-                                onDismissRequest = { showTitleMenu = false }
-                            ) {
-                                RoundDropdownMenuItem(
-                                    text = stringResource(R.string.search),
-                                    onClick = {
-                                        showTitleMenu = false
-                                        onBookNameClick(true)
-                                    }
-                                )
-                                RoundDropdownMenuItem(
-                                    text = stringResource(if (isTitleExpanded) R.string.collapse else R.string.expand),
-                                    onClick = {
-                                        showTitleMenu = false
-                                        isTitleExpanded = !isTitleExpanded
-                                    }
-                                )
-                            }
-                        }
-                        AnimatedTextLine(
-                            text = stringResource(R.string.author_show, book.realAuthor),
-                            style = LegadoTheme.typography.bodyLarge,
-                            color = LegadoTheme.colorScheme.onSurfaceVariant,
-                            modifier = Modifier.combinedClickable(
-                                onClick = { onAuthorClick(false) },
-                                onLongClick = { onAuthorClick(true) }
-                            )
-                        )
-                        AnimatedTextLine(
-                            text = stringResource(R.string.origin_show, book.originName),
-                            style = LegadoTheme.typography.labelMedium,
-                            color = LegadoTheme.colorScheme.primary,
-                            modifier = Modifier.clickable(onClick = onOriginClick)
-                        )
-                    }
+                if (locked) {
+                    PrivateLockedCover(
+                        name = null,
+                        author = null,
+                        path = if (usesDefaultCover) null else book.coverPath,
+                        sourceOrigin = if (usesDefaultCover) null else book.origin,
+                        bookUrl = book.bookUrl,
+                        modifier = Modifier
+                            .width(112.dp)
+                            .aspectRatio(5f / 7f),
+                        // 同一个 key + 同一个 scope：共享元素动画在脱敏态下依然连续
+                        sharedCoverKey = sharedCoverKey,
+                        sharedTransitionScope = sharedTransitionScope,
+                        animatedVisibilityScope = animatedVisibilityScope,
+                    )
+                } else {
+                    CoilBookCover(
+                        name = book.name,
+                        author = book.author,
+                        path = if (usesDefaultCover) null else book.coverPath,
+                        sourceOrigin = if (usesDefaultCover) null else book.origin,
+                        // 传 bookUrl 供别名缓存键。详情页故意不设 preferCache：
+                        // 在线时仍走完整链路拉新链接并刷新别名，保证封面换图后书架也能更新；
+                        // 精确命中时同样不跑脚本。
+                        bookUrl = book.bookUrl,
+                        onError = onNetworkCoverLoadError,
+                        modifier = Modifier
+                            .width(112.dp)
+                            .aspectRatio(5f / 7f),
+                        showLoadingPlaceholder = sharedCoverKey == null,
+                        sharedTransitionScope = sharedTransitionScope,
+                        animatedVisibilityScope = animatedVisibilityScope,
+                        sharedCoverKey = sharedCoverKey
+                    )
                 }
             }
+        },
+        details = {
+            if (locked) {
+                // 书名 / 作者 / 来源全部换成占位条：不渲染任何真实字符串，也不响应点击
+                PrivateMaskLine(widthFraction = 0.72f, thickness = 20.dp)
+                PrivateMaskLine(
+                    modifier = Modifier.padding(top = 6.dp),
+                    widthFraction = 0.42f,
+                    thickness = 12.dp
+                )
+                PrivateMaskLine(
+                    modifier = Modifier.padding(top = 6.dp),
+                    widthFraction = 0.3f,
+                    thickness = 9.dp
+                )
+            } else {
+                var showTitleMenu by remember { mutableStateOf(false) }
+                var isTitleExpanded by rememberSaveable { mutableStateOf(false) }
+                Box {
+                    AnimatedTextLine(
+                        text = book.name,
+                        style = LegadoTheme.typography.headlineSmall,
+                        fontWeight = FontWeight.Bold,
+                        maxLines = if (isTitleExpanded) Int.MAX_VALUE else 2,
+                        modifier = Modifier.combinedClickable(
+                            onClick = { onBookNameClick(false) },
+                            onLongClick = { showTitleMenu = true }
+                        )
+                    )
+                    RoundDropdownMenu(
+                        expanded = showTitleMenu,
+                        onDismissRequest = { showTitleMenu = false }
+                    ) {
+                        RoundDropdownMenuItem(
+                            text = stringResource(R.string.search),
+                            onClick = {
+                                showTitleMenu = false
+                                onBookNameClick(true)
+                            }
+                        )
+                        RoundDropdownMenuItem(
+                            text = stringResource(if (isTitleExpanded) R.string.collapse else R.string.expand),
+                            onClick = {
+                                showTitleMenu = false
+                                isTitleExpanded = !isTitleExpanded
+                            }
+                        )
+                    }
+                }
+                AnimatedTextLine(
+                    text = stringResource(R.string.author_show, book.realAuthor),
+                    style = LegadoTheme.typography.bodyLarge,
+                    color = LegadoTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.combinedClickable(
+                        onClick = { onAuthorClick(false) },
+                        onLongClick = { onAuthorClick(true) }
+                    )
+                )
+                AnimatedTextLine(
+                    text = stringResource(R.string.origin_show, book.originName),
+                    style = LegadoTheme.typography.labelMedium,
+                    color = LegadoTheme.colorScheme.primary,
+                    modifier = Modifier.clickable(onClick = onOriginClick)
+                )
+            }
+        },
+        labels = {
             if (locked) {
                 PrivateMaskLine(widthFraction = 0.5f, thickness = 24.dp)
             } else if (highlightedTags.isNotEmpty()) {
@@ -1347,8 +1260,8 @@ private fun BookInfoHeader(
                     }
                 }
             }
-        }
-    }
+        },
+    )
 }
 
 @Composable
@@ -1988,6 +1901,14 @@ private fun BookInfoDialogs(
     onIntent: (BookInfoIntent) -> Unit,
 ) {
     val dialog = state.dialog
+    AppAlertDialog(
+        data = dialog as? BookInfoDialog.NasUploadResult,
+        onDismissRequest = { onIntent(BookInfoIntent.DismissDialog) },
+        title = stringResource(R.string.feature_book_info_upload_nas),
+        text = (dialog as? BookInfoDialog.NasUploadResult)?.message,
+        confirmText = stringResource(android.R.string.ok),
+        onConfirm = { onIntent(BookInfoIntent.DismissDialog) },
+    )
     var deleteOriginal by remember(dialog, state.deleteOriginal) { mutableStateOf(state.deleteOriginal) }
     var remarkText by remember(dialog) { mutableStateOf((dialog as? BookInfoDialog.EditRemark)?.remark.orEmpty()) }
 
@@ -2083,8 +2004,17 @@ private fun BookInfoDialogs(
     )
 
     AppAlertDialog(
-        show = state.isBusy,
-        onDismissRequest = {},
+        show = state.isBusy || state.nasUploadStage != null,
+        onDismissRequest = { if (state.nasUploadStage != null) onIntent(BookInfoIntent.CancelNasUpload) },
+        dismissText = stringResource(android.R.string.cancel),
+        onDismiss = if (state.nasUploadStage != null) ({ onIntent(BookInfoIntent.CancelNasUpload) }) else null,
+        text = state.nasUploadStage?.let {
+            stringResource(when (it) {
+                io.legado.app.domain.usecase.NasBookUploadStage.Preparing -> R.string.feature_book_info_nas_preparing
+                io.legado.app.domain.usecase.NasBookUploadStage.Checking -> R.string.feature_book_info_nas_checking
+                io.legado.app.domain.usecase.NasBookUploadStage.Uploading -> R.string.feature_book_info_nas_uploading
+            })
+        },
         content = {
             Box(modifier = Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) {
                 AppCircularProgressIndicator()

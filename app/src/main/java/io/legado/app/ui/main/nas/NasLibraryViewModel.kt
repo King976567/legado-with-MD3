@@ -154,6 +154,7 @@ class NasLibraryViewModel(
     @Volatile private var loadGeneration = 0L
     private var observedSettings = nasSettingsGateway.currentSettings
     private var connectionJob: Job? = null
+    @Volatile private var detailGeneration = 0L
     private var diagnosticJob: Job? = null
     private var diagnosticSettings: NasSettings? = null
 
@@ -166,6 +167,9 @@ class NasLibraryViewModel(
                 val credentialsChanged = !credentialsMatch(observedSettings, settings)
                 observedSettings = settings
                 if (credentialsChanged || !settings.connectionVerified) {
+                    detailGeneration++
+                    connectionJob?.cancel()
+                    connectionJob = null
                     loadGeneration++
                     loadJob?.cancel()
                     loadJob = null
@@ -259,7 +263,12 @@ class NasLibraryViewModel(
             is NasLibraryIntent.MoveBook -> moveBook(intent)
             NasLibraryIntent.DismissEditor -> _uiState.update { it.copy(editingBook = null) }
             NasLibraryIntent.DismissMove -> _uiState.update { it.copy(movingBook = null) }
-            NasLibraryIntent.DismissBook -> _uiState.update { it.copy(selectedBook = null, detailError = null) }
+            NasLibraryIntent.DismissBook -> {
+                detailGeneration++
+                connectionJob?.cancel()
+                connectionJob = null
+                _uiState.update { it.copy(selectedBook = null, isLoadingDetail = false, detailError = null) }
+            }
             NasLibraryIntent.DismissDiagnostic -> {
                 diagnosticJob?.cancel()
                 diagnosticJob = null
@@ -439,6 +448,8 @@ class NasLibraryViewModel(
     }
 
     private fun selectBook(book: NasBook) {
+        if (!_uiState.value.isConfigured) return
+        val generation = ++detailGeneration
         connectionJob?.cancel()
         _uiState.update {
             it.copy(
@@ -452,12 +463,11 @@ class NasLibraryViewModel(
             runCatching {
                 nasLibraryUseCase.detail(book.id, settings)
             }.onSuccess { detail ->
-                if (!isCurrentSettings(settings)) {
-                    _uiState.update { it.copy(isLoadingDetail = false) }
+                if (generation != detailGeneration || !isCurrentSettings(settings)) {
                     return@onSuccess
                 }
                 _uiState.update {
-                    it.copy(
+                    if (generation != detailGeneration || it.selectedBook?.id != book.id) it else it.copy(
                         selectedBook = detail.toBook(),
                         isLoadingDetail = false,
                         detailError = null,
@@ -467,15 +477,14 @@ class NasLibraryViewModel(
                 if (error is CancellationException && error !is TimeoutCancellationException) {
                     throw error
                 }
-                if (!isCurrentSettings(settings)) {
-                    _uiState.update { it.copy(isLoadingDetail = false) }
+                if (generation != detailGeneration || !isCurrentSettings(settings)) {
                     return@onFailure
                 }
                 // The list item is still useful when an older NAS service does
                 // not expose /api/books/:id, so keep it visible and explain the
-                // failed enrichment in the dialog.
+                // failed enrichment on the detail page.
                 _uiState.update {
-                    it.copy(
+                    if (generation != detailGeneration || it.selectedBook?.id != book.id) it else it.copy(
                         isLoadingDetail = false,
                         detailError = error.toNasMessage(),
                     )

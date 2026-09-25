@@ -688,6 +688,7 @@ class NasLibraryRepository(
             author = item.string("manualAuthor", "manual_author", "scrapedAuthor", "scraped_author", "parsedAuthor", "parsed_author", "author"),
             intro = item.string("manualIntro", "manual_intro", "scrapedIntro", "scraped_intro", "intro"),
             size = item.long("fileSize", "file_size", "size"),
+            contentHash = item.string("contentHash", "content_hash").orEmpty(),
             lastModified = item.long("lastModified", "last_modified", "updatedAt", "updated_at"),
             indexedAt = item.long("indexedAt", "indexed_at"),
             scrapeStatus = item.string("scrapeStatus", "scrape_status").orEmpty(),

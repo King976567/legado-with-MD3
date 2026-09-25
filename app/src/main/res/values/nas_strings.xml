@@ -1,5 +1,16 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
+    <string name="feature_nas_book_read">Download and read</string>
+    <string name="feature_nas_book_working">Processing…</string>
+    <string name="feature_nas_book_remote">NAS library</string>
+    <string name="feature_nas_book_unknown_author">Unknown author</string>
+    <string name="feature_nas_book_download_hint">Download to your bookshelf to read and view chapters.</string>
+    <string name="feature_nas_book_file">File information</string>
+    <string name="feature_nas_book_scrape_status">Scraping status: %1$s</string>
+    <string name="feature_nas_book_actions">Book actions</string>
+    <string name="feature_nas_book_edit">Edit metadata</string>
+    <string name="feature_nas_book_move">Move to category</string>
+    <string name="feature_nas_book_scrape">Scrape book</string>
     <string name="feature_nas_tasks">Tasks</string>
     <string name="feature_nas_manage">Manage NAS</string>
     <string name="feature_nas_upload">Upload book</string>

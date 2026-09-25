@@ -1,5 +1,16 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
+    <string name="feature_nas_book_read">下载并阅读</string>
+    <string name="feature_nas_book_working">正在处理…</string>
+    <string name="feature_nas_book_remote">NAS 书库</string>
+    <string name="feature_nas_book_unknown_author">未知作者</string>
+    <string name="feature_nas_book_download_hint">下载到书架后可阅读和查看目录。</string>
+    <string name="feature_nas_book_file">文件信息</string>
+    <string name="feature_nas_book_scrape_status">刮削状态：%1$s</string>
+    <string name="feature_nas_book_actions">书籍操作</string>
+    <string name="feature_nas_book_edit">编辑元数据</string>
+    <string name="feature_nas_book_move">移动分类</string>
+    <string name="feature_nas_book_scrape">刮削本书</string>
     <string name="feature_nas_tasks">任务中心</string>
     <string name="feature_nas_manage">管理 NAS</string>
     <string name="feature_nas_upload">上传书籍</string>

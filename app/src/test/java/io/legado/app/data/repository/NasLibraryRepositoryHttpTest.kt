@@ -63,9 +63,9 @@ class NasLibraryRepositoryHttpTest {
                 """
                 {
                   "items": [
-                    {"id":"book-1","relativePath":"a/book.epub","fileName":"book.epub","title":"A"},
+                    {"id":"book-1","relativePath":"a/book.epub","fileName":"book.epub","title":"A","contentHash":"camel-hash"},
                     {"id":"book-1","relativePath":"a/book.epub","fileName":"book.epub","title":"A duplicate"},
-                    {"id":"book-2","relativePath":"b/book.epub","fileName":"book.epub"}
+                    {"id":"book-2","relativePath":"b/book.epub","fileName":"book.epub","content_hash":"snake-hash"}
                   ],
                   "page": 2,
                   "pageSize": 2,
@@ -90,6 +90,8 @@ class NasLibraryRepositoryHttpTest {
         assertEquals(2, page.items.size)
         assertEquals("book-1", page.items[0].id)
         assertEquals("book-2", page.items[1].id)
+        assertEquals("camel-hash", page.items[0].contentHash)
+        assertEquals("snake-hash", page.items[1].contentHash)
         assertEquals(2, page.page)
         assertEquals(2, page.pageSize)
         assertEquals(5, page.total)

@@ -67,6 +67,7 @@ import io.legado.app.data.repository.LocalBookRepository
 import io.legado.app.data.repository.LocalPasswordRepository
 import io.legado.app.data.repository.MangaSettingsRepository
 import io.legado.app.data.repository.NasLibraryRepository
+import io.legado.app.data.repository.NasLocalBookUploadRepository
 import io.legado.app.data.repository.NasSettingsRepository
 import io.legado.app.data.repository.OtherConfigSystemRepository
 import io.legado.app.data.repository.OtherSettingsRepository
@@ -201,6 +202,7 @@ import io.legado.app.domain.usecase.HomeDashboardUseCase
 import io.legado.app.domain.usecase.IdentifyBookCharactersUseCase
 import io.legado.app.domain.usecase.ImportBookshelfUseCase
 import io.legado.app.domain.usecase.NasLibraryUseCase
+import io.legado.app.domain.usecase.UploadNasBookUseCase
 import io.legado.app.domain.usecase.PrepareChapterSpeechPlanUseCase
 import io.legado.app.domain.usecase.RefineSpeechWithAiUseCase
 import io.legado.app.domain.usecase.RefreshTocUseCase
@@ -458,6 +460,8 @@ val appModule = module {
     singleOf(::GetReadingProgressUseCase)
     single { HomeDashboardUseCase(get(), Clock.System) }
     singleOf(::NasLibraryUseCase)
+    singleOf(::UploadNasBookUseCase)
+    singleOf(::NasLocalBookUploadRepository)
     singleOf(::RemoveBookGroupAssignmentUseCase)
     singleOf(::UpdateBooksGroupUseCase)
     singleOf(::UploadReadingProgressUseCase)

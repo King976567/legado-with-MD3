@@ -19,6 +19,7 @@ data class NasBook(
     val confidence: Double = 0.0,
     val needsReview: Boolean = false,
     val coverUrl: String? = null,
+    val contentHash: String = "",
 ) {
     val directoryPath: String
         get() = relativePath.substringBeforeLast('/', "")

@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="feature_book_info_upload_nas">Upload to NAS</string>
+    <string name="feature_book_info_nas_preparing">Preparing local book…</string>
+    <string name="feature_book_info_nas_checking">Checking for existing NAS files…</string>
+    <string name="feature_book_info_nas_uploading">Uploading to NAS…</string>
+    <string name="feature_book_info_nas_exists">Already exists or the target path is occupied. Nothing was overwritten.\n%1$s</string>
+    <string name="feature_book_info_nas_uploaded">Uploaded to NAS.\n%1$s</string>
+    <string name="feature_book_info_nas_read_only">Upload to NAS (read-only token)</string>
+    <string name="feature_book_info_nas_auth_error">NAS authentication failed. Test the token again in settings.</string>
+    <string name="feature_book_info_nas_unavailable">NAS configuration changed or is not enabled and verified. No upload was started.</string>
+    <string name="feature_book_info_nas_unsupported">This NAS does not support book uploads.</string>
+    <string name="feature_book_info_nas_check_failed">The duplicate check could not finish. No upload was started. Please retry.</string>
+    <string name="feature_book_info_nas_invalid_file">Select an accessible, nonempty local book no larger than 512 MB.</string>
+    <string name="feature_book_info_nas_failed">NAS upload did not complete. Check the connection and local file, then retry. Retrying never overwrites existing files.</string>
+</resources>
