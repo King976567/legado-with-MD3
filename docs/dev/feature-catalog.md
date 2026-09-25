@@ -38,6 +38,11 @@
 | `ui/association`                         | `feature/file-association`  | Feature + Android capability  | 外部 Intent/URI 是兼容入口，不进入共享 contract                                           |
 | `ui/browser`                             | `platform/android/browser`  | platform capability           | 若出现独立用户流程再由 Feature 包装，不把 WebView 放 core UI                                  |
 
+## NAS 详情视觉复用切片
+
+- NAS 业务当前 owner：`ui/main/nas`（目标 `feature/nas-library`，尚未整体迁移）。详情为现有 `MainRouteNasLibrary` 的全屏子状态，共享原 ViewModel。
+- `core/ui/book`：NAS 与书架共同使用的无业务头部/工具栏布局，不持有数据或导航。迁移说明见 [nas-book-detail.md](nas-book-detail.md)。
+
 ## Catalog 使用规则
 
 - 一项只能有一个 canonical owner；子流程通过子包表达，不复制完整 Feature 栈。

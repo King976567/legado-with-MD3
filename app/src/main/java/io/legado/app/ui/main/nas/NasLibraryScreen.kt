@@ -1,6 +1,7 @@
 package io.legado.app.ui.main.nas
 
 import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.compose.BackHandler
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -26,7 +27,6 @@ import androidx.compose.material.icons.filled.History
 import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.CloudOff
 import androidx.compose.material.icons.filled.CloudDownload
-import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.Folder
 import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.Refresh
@@ -106,6 +106,9 @@ fun NasLibraryRouteScreen(
         nasSettingsGateway.currentSettings
     )
     val context = LocalContext.current
+    BackHandler(enabled = state.selectedBook != null) {
+        viewModel.onIntent(NasLibraryIntent.DismissBook)
+    }
     val uploadLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.OpenDocument(),
     ) { uri ->
@@ -163,7 +166,7 @@ fun NasLibraryScreen(
     LaunchedEffect(listState) {
         snapshotFlow {
             val layout = listState.layoutInfo
-            latestState.canGoNext && layout.totalItemsCount > 0 &&
+            latestState.selectedBook == null && latestState.canGoNext && layout.totalItemsCount > 0 &&
                 (layout.visibleItemsInfo.lastOrNull()?.index ?: -1) >= layout.totalItemsCount - 3
         }.distinctUntilChanged().collect { shouldLoad ->
             if (shouldLoad) latestIntent(NasLibraryIntent.NextPage)
@@ -173,114 +176,98 @@ fun NasLibraryScreen(
         showTasks = true
         onIntent(NasLibraryIntent.LoadTasks)
     }
-    Scaffold(
-        modifier = Modifier.imePadding(),
-        topBar = {
-            TopAppBar(
-                title = { Text("我的 NAS") },
-                navigationIcon = {
-                    IconButton(onClick = onBack) {
-                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "返回")
-                    }
-                },
-                actions = {
-                    IconButton(onClick = { onIntent(NasLibraryIntent.Refresh) }, enabled = !state.isRefreshing) {
-                        Icon(Icons.Default.Refresh, contentDescription = "刷新")
-                    }
-                    IconButton(onClick = ::openTasks) {
-                        Icon(Icons.Default.History, contentDescription = stringResource(R.string.feature_nas_tasks))
-                    }
-                    LibraryManagementMenu(state, onIntent, onOpenSettings)
-                },
-            )
-        },
-    ) { padding ->
-        LazyColumn(
-            state = listState,
-            modifier = Modifier.fillMaxSize().padding(padding).consumeWindowInsets(padding)
-                .testTag("nas-library-list"),
-            contentPadding = PaddingValues(bottom = 16.dp),
-            verticalArrangement = Arrangement.spacedBy(8.dp),
-        ) {
-            item(key = "search") {
-                SearchBar(
-                    query = state.query,
-                    onQueryChanged = { onIntent(NasLibraryIntent.QueryChanged(it)) },
-                    onSubmit = {
-                        focusManager.clearFocus()
-                        onIntent(NasLibraryIntent.SubmitSearch)
+    if (state.selectedBook == null) {
+        Scaffold(
+            modifier = Modifier.imePadding(),
+            topBar = {
+                TopAppBar(
+                    title = { Text("我的 NAS") },
+                    navigationIcon = {
+                        IconButton(onClick = onBack) {
+                            Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "返回")
+                        }
                     },
-                    enabled = state.isConfigured,
+                    actions = {
+                        IconButton(onClick = { onIntent(NasLibraryIntent.Refresh) }, enabled = !state.isRefreshing) {
+                            Icon(Icons.Default.Refresh, contentDescription = "刷新")
+                        }
+                        IconButton(onClick = ::openTasks) {
+                            Icon(Icons.Default.History, contentDescription = stringResource(R.string.feature_nas_tasks))
+                        }
+                        LibraryManagementMenu(state, onIntent, onOpenSettings)
+                    },
                 )
-            }
-            item(key = "categories") { DirectoryFilter(state = state, onIntent = onIntent) }
-            item(key = "connection") {
-                ConnectionBanner(state = state, onRetry = { onIntent(NasLibraryIntent.Retry) })
-            }
-            val runningTasks = state.tasks.count { it.status.lowercase() in RUNNING_TASK_STATUSES }
-            if (runningTasks > 0) {
-                item(key = "running-tasks") {
-                    TextButton(onClick = ::openTasks, modifier = Modifier.fillMaxWidth()) {
-                        Text(stringResource(R.string.feature_nas_running_tasks, runningTasks))
-                    }
+            },
+        ) { padding ->
+            LazyColumn(
+                state = listState,
+                modifier = Modifier.fillMaxSize().padding(padding).consumeWindowInsets(padding)
+                    .testTag("nas-library-list"),
+                contentPadding = PaddingValues(bottom = 16.dp),
+                verticalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                item(key = "search") {
+                    SearchBar(
+                        query = state.query,
+                        onQueryChanged = { onIntent(NasLibraryIntent.QueryChanged(it)) },
+                        onSubmit = {
+                            focusManager.clearFocus()
+                            onIntent(NasLibraryIntent.SubmitSearch)
+                        },
+                        enabled = state.isConfigured,
+                    )
                 }
-            }
-            state.actionError?.let { error ->
-                item(key = "action-error") {
-                    Text(error, color = androidx.compose.material3.MaterialTheme.colorScheme.error,
-                        modifier = Modifier.padding(horizontal = 16.dp))
+                item(key = "categories") { DirectoryFilter(state = state, onIntent = onIntent) }
+                item(key = "connection") {
+                    ConnectionBanner(state = state, onRetry = { onIntent(NasLibraryIntent.Retry) })
                 }
-            }
-            when {
-                !state.isConfigured -> item(key = "unconfigured") { UnconfiguredContent() }
-                state.isLoading && state.books.isEmpty() -> item(key = "loading") { LoadingContent() }
-                state.error != null && state.books.isEmpty() -> item(key = "error") {
-                    ErrorContent(state.error) { onIntent(NasLibraryIntent.Retry) }
-                }
-                state.books.isEmpty() -> item(key = "empty") { EmptyContent(state.appliedQuery) }
-                else -> {
-                    items(state.books, key = { "book:${it.id}" }, contentType = { "book" }) { book ->
-                        Box(Modifier.padding(horizontal = 16.dp)) {
-                            NasBookRow(book, nasApiUrl, nasToken) {
-                                onIntent(NasLibraryIntent.OpenBook(book))
-                            }
+                val runningTasks = state.tasks.count { it.status.lowercase() in RUNNING_TASK_STATUSES }
+                if (runningTasks > 0) {
+                    item(key = "running-tasks") {
+                        TextButton(onClick = ::openTasks, modifier = Modifier.fillMaxWidth()) {
+                            Text(stringResource(R.string.feature_nas_running_tasks, runningTasks))
                         }
                     }
-                    item(key = "load-more") { LoadMoreFooter(state, onIntent) }
+                }
+                state.actionError?.let { error ->
+                    item(key = "action-error") {
+                        Text(error, color = androidx.compose.material3.MaterialTheme.colorScheme.error,
+                            modifier = Modifier.padding(horizontal = 16.dp))
+                    }
+                }
+                when {
+                    !state.isConfigured -> item(key = "unconfigured") { UnconfiguredContent() }
+                    state.isLoading && state.books.isEmpty() -> item(key = "loading") { LoadingContent() }
+                    state.error != null && state.books.isEmpty() -> item(key = "error") {
+                        ErrorContent(state.error) { onIntent(NasLibraryIntent.Retry) }
+                    }
+                    state.books.isEmpty() -> item(key = "empty") { EmptyContent(state.appliedQuery) }
+                    else -> {
+                        items(state.books, key = { "book:${it.id}" }, contentType = { "book" }) { book ->
+                            Box(Modifier.padding(horizontal = 16.dp)) {
+                                NasBookRow(book, nasApiUrl, nasToken) {
+                                    onIntent(NasLibraryIntent.OpenBook(book))
+                                }
+                            }
+                        }
+                        item(key = "load-more") { LoadMoreFooter(state, onIntent) }
+                    }
                 }
             }
         }
-    }
-    AppModalBottomSheet(
-        show = showTasks,
-        onDismissRequest = { showTasks = false },
-        title = stringResource(R.string.feature_nas_tasks),
-    ) {
-        TasksPanel(state = state, onIntent = onIntent)
-    }
-
-    state.selectedBook?.let { book ->
-        BookDetailDialog(
-            book = book,
-            nasApiUrl = nasApiUrl,
-            nasToken = nasToken,
-            isLoading = state.isLoadingDetail,
-            error = state.detailError,
-            onDismiss = { onIntent(NasLibraryIntent.DismissBook) },
-            canDownload = state.isConfigured &&
-                state.capabilities.supports("download") &&
-                !state.isActionRunning,
-            onDownload = { onIntent(NasLibraryIntent.DownloadBook(book)) },
-            canEdit = state.capabilities.supports("books") &&
-                !state.writeAccessDenied && !state.isActionRunning,
-            onEdit = { onIntent(NasLibraryIntent.RequestEdit(book)) },
-            canMove = state.capabilities.supports("libraryDirectories") &&
-                state.directories.isNotEmpty() && !state.writeAccessDenied &&
-                !state.isActionRunning,
-            onMove = { onIntent(NasLibraryIntent.RequestMove(book)) },
-            canScrape = state.capabilities.supports("scraper") &&
-                !state.writeAccessDenied && !state.isActionRunning,
-            onScrape = { onIntent(NasLibraryIntent.ScrapeBook(book)) },
+        AppModalBottomSheet(
+            show = showTasks,
+            onDismissRequest = { showTasks = false },
+            title = stringResource(R.string.feature_nas_tasks),
+        ) {
+            TasksPanel(state = state, onIntent = onIntent)
+        }
+    } else {
+        NasBookDetailScreen(
+            state = state,
+            onIntent = onIntent,
+            coverRequest = rememberNasCoverRequest(state.selectedBook.coverUrl, nasApiUrl, nasToken),
+            onBack = { onIntent(NasLibraryIntent.DismissBook) },
         )
     }
 
@@ -804,82 +791,6 @@ private fun DiagnosticStepRow(step: NasDiagnosticStep) {
     }
 }
 
-@Composable
-private fun BookDetailDialog(
-    book: NasBook,
-    nasApiUrl: String,
-    nasToken: String,
-    isLoading: Boolean,
-    error: String?,
-    onDismiss: () -> Unit,
-    canDownload: Boolean,
-    onDownload: () -> Unit,
-    canEdit: Boolean,
-    onEdit: () -> Unit,
-    canMove: Boolean,
-    onMove: () -> Unit,
-    canScrape: Boolean,
-    onScrape: () -> Unit,
-) {
-    AlertDialog(
-        onDismissRequest = onDismiss,
-        title = { Text(book.title.ifBlank { book.fileName }) },
-        text = {
-            Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                AsyncImage(
-                    model = rememberNasCoverRequest(book.coverUrl, nasApiUrl, nasToken),
-                    contentDescription = null,
-                    contentScale = ContentScale.Crop,
-                    modifier = Modifier
-                        .size(96.dp, 132.dp)
-                        .clip(RoundedCornerShape(8.dp))
-                        .align(Alignment.CenterHorizontally),
-                )
-                if (isLoading) LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
-                error?.let { Text(it, color = androidx.compose.material3.MaterialTheme.colorScheme.error) }
-                book.author?.takeIf { it.isNotBlank() }?.let { Text("作者：$it") }
-                book.intro?.takeIf { it.isNotBlank() }?.let { Text(it) }
-                Text("路径：${book.relativePath.ifBlank { book.fileName }}")
-                if (book.size > 0) Text("大小：${formatBytes(book.size)}")
-                if (book.scrapeStatus.isNotBlank()) Text("刮削状态：${book.scrapeStatus}")
-                Text("能力：${if (book.id.isNotBlank()) "详情可查看" else "未知"}")
-            }
-        },
-        confirmButton = {
-            Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(4.dp),
-                ) {
-                    TextButton(onClick = onEdit, enabled = canEdit && !isLoading) {
-                        Icon(Icons.Default.Edit, contentDescription = null)
-                        Spacer(Modifier.width(4.dp))
-                        Text("编辑")
-                    }
-                    TextButton(onClick = onMove, enabled = canMove && !isLoading) {
-                        Icon(Icons.Default.Folder, contentDescription = null)
-                        Spacer(Modifier.width(4.dp))
-                        Text("移动")
-                    }
-                    TextButton(onClick = onScrape, enabled = canScrape && !isLoading) {
-                        Icon(Icons.Default.CloudDownload, contentDescription = null)
-                        Spacer(Modifier.width(4.dp))
-                        Text("刮削")
-                    }
-                    Spacer(Modifier.weight(1f))
-                    TextButton(onClick = onDismiss) { Text("关闭") }
-                }
-                TextButton(
-                    onClick = onDownload,
-                    enabled = canDownload && !isLoading,
-                    modifier = Modifier.fillMaxWidth(),
-                ) {
-                    Text("下载并阅读")
-                }
-            }
-        },
-    )
-}
 
 @Composable
 private fun MetadataDialog(
@@ -993,7 +904,7 @@ private fun MoveBookDialog(
     )
 }
 
-private fun formatBytes(value: Long): String = when {
+internal fun formatBytes(value: Long): String = when {
     value >= 1024 * 1024 -> "%.1f MB".format(value / (1024f * 1024f))
     value >= 1024 -> "%.1f KB".format(value / 1024f)
     else -> "$value B"
