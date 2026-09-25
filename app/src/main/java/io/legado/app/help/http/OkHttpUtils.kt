@@ -173,6 +173,10 @@ fun Request.Builder.postMultipart(type: String?, form: Map<String, Any>) {
                         file.toRequestBody(mediaType)
                     }
 
+                    is okhttp3.RequestBody -> {
+                        file
+                    }
+
                     is String -> {
                         file.toRequestBody(mediaType)
                     }

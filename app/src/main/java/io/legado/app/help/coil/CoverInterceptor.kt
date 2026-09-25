@@ -35,7 +35,7 @@ class CoverInterceptor : Interceptor {
         val request = chain.request
         val data = request.data
 
-        if (data is String && data.isNotBlank()) {
+        if (data is String && data.isNotBlank() && request.extras[CoverExtras.SkipAnalysis] != true) {
             // 本地封面缓存快速路径：命中就改写为本地文件，跳过 AnalyzeUrl 的书源规则调用
             // （部分书源的 headerRule/coverUrl 会执行 JS/Java 检查脚本，冷启动或重载封面时
             // 会弹“未登录/版本检测”提示）与网络请求。
@@ -90,11 +90,14 @@ class CoverInterceptor : Interceptor {
                 }
             }
 
+            val explicitHeaders = request.extras[CoverExtras.Headers]
             val newRequest = request.newBuilder()
                 .data(finalUrl)
                 .apply {
                     extras[CoverExtras.Source] = source
-                    extras[CoverExtras.Headers] = headers
+                    // Preserve explicit transport headers (for example a NAS
+                    // bearer token) while still adding source-resolved headers.
+                    extras[CoverExtras.Headers] = mergeCoverHeaders(headers, explicitHeaders)
                     // 携带原始地址，供 CoverFetcher 回写稳定键的持久缓存
                     extras[CoverExtras.OriginalUrl] = data
                     // 关闭 Coil 自带的磁盘缓存（位于 cacheDir/image_cache，系统低存储时会被回收，

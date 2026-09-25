@@ -93,7 +93,11 @@ class CoverFetcher(
         // 缓存体积只与书架藏书量成正比。
         val bookUrl = options.extras[CoverExtras.BookUrl]
 
-        val requestHeaders = options.extras[CoverExtras.Headers]
+        // Headers are carried in Extras so custom callers (such as the NAS
+        // library) can authenticate protected cover endpoints without putting
+        // credentials in the URL. Apply the same set to cache and network
+        // requests; an empty map keeps the existing source-cover behavior.
+        val requestHeaders = options.extras[CoverExtras.Headers].orEmpty()
 
         // ===== 第二级：OkHttp HTTP 缓存（FORCE_CACHE 只读缓存，miss 返回 504，不碰网络）=====
         // 注意：WiFi 限制与失败冷却不能挡在本地缓存读取之前，
@@ -105,7 +109,7 @@ class CoverFetcher(
                 val cacheRequest = Request.Builder()
                     .url(url)
                     .tag(io.legado.app.data.entities.BaseSource::class.java, source)
-                    .apply { requestHeaders?.forEach { (key, value) -> addHeader(key, value) } }
+                    .apply { requestHeaders.forEach { (key, value) -> addHeader(key, value) } }
                     .cacheControl(CacheControl.FORCE_CACHE)
                     .build()
                 val cacheResponse = callFactory.newCall(cacheRequest).execute()
@@ -138,7 +142,7 @@ class CoverFetcher(
                     val networkRequest = Request.Builder()
                         .url(url)
                         .tag(io.legado.app.data.entities.BaseSource::class.java, source)
-                        .apply { requestHeaders?.forEach { (key, value) -> addHeader(key, value) } }
+                        .apply { requestHeaders.forEach { (key, value) -> addHeader(key, value) } }
                         .tag(COVER_REQUEST_TAG)
                         .cacheControl(
                             CacheControl.Builder()

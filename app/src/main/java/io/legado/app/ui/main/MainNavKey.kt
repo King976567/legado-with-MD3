@@ -10,6 +10,10 @@ sealed interface MainRoute : NavKey
 @Serializable
 data object MainRouteHome : MainRoute
 
+/** Dedicated Compose NAS library; it is intentionally not a bottom-nav destination. */
+@Serializable
+data object MainRouteNasLibrary : MainRoute
+
 @Serializable
 data class MainRouteSourceLogin(
     val type: SourceLoginType,
@@ -256,6 +260,7 @@ data object MainRouteAbout : MainRoute
 
 object MainRouteConst {
     const val ROUTE_MAIN = "main"
+    const val ROUTE_NAS_LIBRARY = "nas/library"
     const val ROUTE_SOURCE_LOGIN = "source/login"
     const val ROUTE_WEB_VIEW = "web/view"
     const val ROUTE_BOOK_SOURCE_MANAGE = "source/book/manage"

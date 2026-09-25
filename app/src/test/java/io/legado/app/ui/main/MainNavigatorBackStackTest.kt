@@ -29,6 +29,24 @@ class MainNavigatorBackStackTest {
     }
 
     @Test
+    fun `opening NAS library from home keeps home as parent`() {
+        val backStack = mutableListOf<NavKey>(MainRouteHome)
+
+        MainNavigator.navigateToRoute(backStack, MainRouteNasLibrary)
+
+        assertEquals(listOf(MainRouteHome, MainRouteNasLibrary), backStack)
+    }
+
+    @Test
+    fun `opening NAS library from another route resets to home`() {
+        val backStack = mutableListOf<NavKey>(MainRouteHome, MainRouteSettings)
+
+        MainNavigator.navigateToRoute(backStack, MainRouteNasLibrary)
+
+        assertEquals(listOf(MainRouteHome, MainRouteNasLibrary), backStack)
+    }
+
+    @Test
     fun `media reader replaces stale route with home parent`() {
         val bookInfo = MainRouteBookInfo("Book", "Author", "book-url")
         val reader = MainRouteReadBook(readAloud = true)

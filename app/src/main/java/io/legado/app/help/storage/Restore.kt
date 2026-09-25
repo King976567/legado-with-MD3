@@ -39,6 +39,7 @@ import io.legado.app.data.entities.readRecord.ReadRecordSession
 import io.legado.app.data.repository.ReadRecordRepository
 import io.legado.app.domain.gateway.AppLocaleGateway
 import io.legado.app.domain.gateway.ReadStyleGateway
+import io.legado.app.domain.model.settings.NasSettingsKeys
 import io.legado.app.help.DirectLinkUpload
 import io.legado.app.help.LauncherIconHelp
 import io.legado.app.help.book.isLocal
@@ -519,13 +520,27 @@ object Restore : KoinComponent {
     }
 
     private suspend fun applyConfigMap(map: Map<String, Any?>, aes: BackupAES) {
-        val finalMap = normalizeConfigMap(
-            map = map,
-            keyIsNotIgnore = { BackupConfig.keyIsNotIgnore(it) },
-            decryptWebDavPassword = { runCatching { aes.decryptStr(it) }.getOrNull() },
-            hasLocalWebDavPassword = !appCtx.getPrefString(PreferKey.webDavPassword)
-                .isNullOrBlank(),
-        )
+        val finalMap = mutableMapOf<String, Any?>().apply {
+            putAll(
+                normalizeConfigMap(
+                    map = map,
+                    keyIsNotIgnore = { BackupConfig.keyIsNotIgnore(it) },
+                    decryptWebDavPassword = { runCatching { aes.decryptStr(it) }.getOrNull() },
+                    hasLocalWebDavPassword = !appCtx.getPrefString(PreferKey.webDavPassword)
+                        .isNullOrBlank(),
+                )
+            )
+            // A backup may contain the NAS URL and home-card preference, but it
+            // can never prove that this device's current token can access it.
+            // Invalidate the local trust marker after every restore, including
+            // restores produced before NAS settings existed.
+            put(NasSettingsKeys.CONNECTION_VERIFIED, false)
+            // The error is also device-local. Do not carry a stale failure from
+            // the pre-restore NAS configuration into the restored settings UI.
+            // A null value is an explicit DataStore delete. Merely omitting the
+            // key would leave an error from the pre-restore device in place.
+            this[NasSettingsKeys.LAST_CONNECTION_ERROR] = null
+        }
         // 经快照层批量恢复：立即对读侧生效（onRestoreFinish 的读取不再依赖回灌时机），单次原子 edit 落盘
         AppConfigStore.putAll(finalMap)
         // 恢复完成提示前等待落盘，dataStore.edit 返回即持久化完成

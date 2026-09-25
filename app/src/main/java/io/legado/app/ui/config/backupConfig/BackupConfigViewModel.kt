@@ -5,12 +5,19 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import io.legado.app.R
 import io.legado.app.domain.gateway.BackupSettingsGateway
+import io.legado.app.domain.gateway.NasSettingsGateway
+import io.legado.app.domain.model.NasHttpException
 import io.legado.app.domain.model.settings.BackupSettings
+import io.legado.app.domain.model.settings.NasSettings
 import io.legado.app.domain.usecase.BackupRestoreUseCase
+import io.legado.app.domain.usecase.NasLibraryUseCase
 import io.legado.app.domain.usecase.WebDavBackupUseCase
 import io.legado.app.utils.isContentScheme
 import kotlinx.collections.immutable.toImmutableList
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.TimeoutCancellationException
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asSharedFlow
@@ -23,10 +30,14 @@ class BackupConfigViewModel(
     private val settingsGateway: BackupSettingsGateway,
     private val webDavBackupUseCase: WebDavBackupUseCase,
     private val backupRestoreUseCase: BackupRestoreUseCase,
+    private val nasSettingsGateway: NasSettingsGateway,
+    private val nasLibraryUseCase: NasLibraryUseCase,
 ) : ViewModel() {
     private val _uiState = MutableStateFlow(
         BackupConfigUiState(
             settings = settingsGateway.currentSettings,
+            nasSettings = nasSettingsGateway.currentSettings,
+            nasConnectionState = deriveNasConnectionState(nasSettingsGateway.currentSettings),
             ignoreItems = loadIgnoreItems(),
             backupIgnoreItems = loadBackupIgnoreItems(),
             dbIgnoreItems = loadDbIgnoreItems(),
@@ -37,11 +48,31 @@ class BackupConfigViewModel(
 
     private val _effects = MutableSharedFlow<BackupConfigEffect>(extraBufferCapacity = 16)
     val effects = _effects.asSharedFlow()
+    private var nasTestJob: Job? = null
+    private var nasSettingsWriteJob: Job? = null
 
     init {
         viewModelScope.launch {
             settingsGateway.settings.collect { settings ->
                 _uiState.update { it.copy(settings = settings) }
+            }
+        }
+        viewModelScope.launch {
+            nasSettingsGateway.settings.collect { settings ->
+                _uiState.update { state ->
+                    state.copy(
+                        nasSettings = settings,
+                        // Editing a value invalidates a previous successful test. Keep the
+                        // explicit failure message until the next edit or test, but never show
+                        // Connected for a changed endpoint/token.
+                        nasConnectionState = when {
+                            state.nasConnectionState == NasConnectionState.Testing &&
+                                settings.apiUrl.isNotBlank() && settings.apiToken.isNotBlank() ->
+                                NasConnectionState.Testing
+                            else -> deriveNasConnectionState(settings)
+                        },
+                    )
+                }
             }
         }
     }
@@ -70,6 +101,39 @@ class BackupConfigViewModel(
                 updateAuth { it.copy(passwordVisible = !it.passwordVisible) }
             BackupConfigIntent.SaveWebDavAuth -> saveWebDavAuth()
             BackupConfigIntent.TestWebDav -> testWebDav()
+            BackupConfigIntent.OpenNasToken -> openNasToken()
+            is BackupConfigIntent.EditNasToken -> updateNasToken {
+                it.copy(token = intent.value)
+            }
+            BackupConfigIntent.ToggleNasTokenVisibility -> updateNasToken {
+                it.copy(tokenVisible = !it.tokenVisible)
+            }
+            BackupConfigIntent.SaveNasToken -> saveNasToken()
+            is BackupConfigIntent.SetNasUrl -> updateNas {
+                it.copy(
+                    apiUrl = intent.value,
+                    // A changed endpoint must be tested again before the card can be enabled.
+                    showHomeCard = false,
+                    connectionVerified = false,
+                    lastConnectionError = null,
+                )
+            }
+            is BackupConfigIntent.SetNasToken -> updateNas {
+                it.copy(
+                    apiToken = intent.value,
+                    // Tokens are intentionally not restored from WebDAV; entering one does
+                    // not count as a successful connection test.
+                    showHomeCard = false,
+                    connectionVerified = false,
+                    lastConnectionError = null,
+                )
+            }
+            is BackupConfigIntent.SetNasShowHomeCard -> {
+                if (!intent.value || _uiState.value.nasConnectionState == NasConnectionState.Connected) {
+                    updateNas { it.copy(showHomeCard = intent.value) }
+                }
+            }
+            BackupConfigIntent.TestNasConnection -> testNasConnection()
             BackupConfigIntent.OpenIgnoreDialog ->
                 _uiState.update { it.copy(activeSheet = BackupConfigSheet.IgnoreRestoreItems) }
             is BackupConfigIntent.ToggleIgnoreItem -> toggleIgnoreItem(intent.key, intent.value)
@@ -111,6 +175,156 @@ class BackupConfigViewModel(
         viewModelScope.launch { settingsGateway.update(transform) }
     }
 
+    private fun updateNas(transform: (NasSettings) -> NasSettings) {
+        // A changed URL/token invalidates any request using the old snapshot.
+        nasTestJob?.cancel()
+        // Keep the UI responsive while AppConfigStore serializes the write. The collector
+        // below remains the source of truth for the persisted snapshot.
+        _uiState.update { state ->
+            val next = transform(state.nasSettings)
+            state.copy(
+                nasSettings = next,
+                nasConnectionState = deriveNasConnectionState(next),
+            )
+        }
+        nasSettingsWriteJob = viewModelScope.launch { nasSettingsGateway.update(transform) }
+    }
+
+    private fun testNasConnection() {
+        nasTestJob?.cancel()
+        val entered = _uiState.value.nasSettings
+        val normalizedUrl = nasLibraryUseCase.normalizeUrl(entered.apiUrl)
+        if (normalizedUrl == null) {
+            finishNasTestWithoutRequest(
+                snapshot = entered,
+                state = NasConnectionState.NotConfigured,
+                message = if (entered.apiUrl.isBlank()) "NAS 地址未配置" else "NAS 地址无效",
+            )
+            return
+        }
+        val settings = entered.copy(apiUrl = normalizedUrl)
+        if (entered.apiToken.isBlank()) {
+            finishNasTestWithoutRequest(
+                snapshot = entered,
+                state = NasConnectionState.Failed,
+                message = "NAS 访问令牌未配置",
+            )
+            return
+        }
+        _uiState.update {
+            it.copy(
+                nasConnectionState = NasConnectionState.Testing,
+                nasSettings = it.nasSettings.copy(apiUrl = normalizedUrl),
+            )
+        }
+        nasTestJob = viewModelScope.launch(Dispatchers.IO) {
+            // Wait for the latest edit to reach the persistent gateway. A fast
+            // response must not be discarded as an old URL/token snapshot.
+            nasSettingsWriteJob?.join()
+            val result = runCatching { nasLibraryUseCase.checkConnection(settings) }
+            val failure = result.exceptionOrNull()
+            if (failure is CancellationException && failure !is TimeoutCancellationException) {
+                throw failure
+            }
+            // A request may outlive an edit in the settings screen. Never let an
+            // old response mark a newer endpoint/token as trusted.
+            if (!nasCredentialsStillMatch(settings)) return@launch
+            if (result.isSuccess) {
+                // A successful test is the only operation that enables the home card. It
+                // never exports or copies the token into WebDAV settings.
+                nasSettingsGateway.update {
+                    if (nasCredentialsStillMatch(it, settings)) {
+                        it.copy(
+                            apiUrl = normalizedUrl,
+                            showHomeCard = true,
+                            connectionVerified = true,
+                            lastConnectionError = null,
+                        )
+                    } else it
+                }
+                if (nasCredentialsStillMatch(settings) &&
+                    credentialsMatch(nasSettingsGateway.currentSettings, settings)
+                ) {
+                    _uiState.update {
+                        it.copy(
+                            nasConnectionState = NasConnectionState.Connected,
+                            nasSettings = it.nasSettings.copy(
+                                apiUrl = normalizedUrl,
+                                showHomeCard = true,
+                                connectionVerified = true,
+                                lastConnectionError = null,
+                            ),
+                        )
+                    }
+                    _effects.tryEmit(BackupConfigEffect.ShowMessage(R.string.nas_test_success))
+                }
+            } else {
+                val message = failure?.toNasErrorMessage() ?: "NAS 连接失败"
+                // Preserve the user's switch choice on failure; a failed test must not
+                // unexpectedly make the card visible.
+                nasSettingsGateway.update {
+                    if (nasCredentialsStillMatch(it, settings)) {
+                        it.copy(
+                            apiUrl = normalizedUrl,
+                            connectionVerified = false,
+                            lastConnectionError = message,
+                        )
+                    } else it
+                }
+                if (nasCredentialsStillMatch(settings) &&
+                    credentialsMatch(nasSettingsGateway.currentSettings, settings)
+                ) {
+                    _uiState.update {
+                        it.copy(
+                            nasConnectionState = NasConnectionState.Failed,
+                            nasSettings = it.nasSettings.copy(
+                                apiUrl = normalizedUrl,
+                                connectionVerified = false,
+                                lastConnectionError = message,
+                            ),
+                        )
+                    }
+                    _effects.tryEmit(BackupConfigEffect.ShowMessage(R.string.nas_test_failed, message))
+                }
+            }
+        }
+    }
+
+    private fun finishNasTestWithoutRequest(
+        snapshot: NasSettings,
+        state: NasConnectionState,
+        message: String,
+    ) {
+        _uiState.update {
+            if (!nasCredentialsStillMatch(snapshot, it.nasSettings)) it
+            else it.copy(
+                nasConnectionState = state,
+                nasSettings = it.nasSettings.copy(
+                    connectionVerified = false,
+                    lastConnectionError = message,
+                ),
+            )
+        }
+        viewModelScope.launch {
+            nasSettingsGateway.update {
+                if (nasCredentialsStillMatch(it, snapshot)) {
+                    it.copy(connectionVerified = false, lastConnectionError = message)
+                } else it
+            }
+        }
+        _effects.tryEmit(BackupConfigEffect.ShowMessage(R.string.nas_test_failed, message))
+    }
+
+    private fun nasCredentialsStillMatch(snapshot: NasSettings): Boolean =
+        credentialsMatch(_uiState.value.nasSettings, snapshot)
+
+    private fun nasCredentialsStillMatch(left: NasSettings, right: NasSettings): Boolean =
+        credentialsMatch(left, right)
+
+    private fun credentialsMatch(left: NasSettings, right: NasSettings): Boolean =
+        nasLibraryUseCase.normalizeUrl(left.apiUrl) == nasLibraryUseCase.normalizeUrl(right.apiUrl) &&
+            left.apiToken.trim() == right.apiToken.trim()
+
     private fun setSyncBookProgress(value: Boolean) {
         viewModelScope.launch {
             settingsGateway.update {
@@ -139,6 +353,36 @@ class BackupConfigViewModel(
             val dialog = state.activeDialog as? BackupConfigDialog.WebDavAuth ?: return@update state
             state.copy(activeDialog = transform(dialog))
         }
+    }
+
+    private fun openNasToken() {
+        _uiState.update {
+            it.copy(
+                activeDialog = BackupConfigDialog.NasToken(
+                    token = it.nasSettings.apiToken,
+                )
+            )
+        }
+    }
+
+    private fun updateNasToken(
+        transform: (BackupConfigDialog.NasToken) -> BackupConfigDialog.NasToken,
+    ) {
+        _uiState.update { state ->
+            val dialog = state.activeDialog as? BackupConfigDialog.NasToken
+                ?: return@update state
+            state.copy(activeDialog = transform(dialog))
+        }
+    }
+
+    private fun saveNasToken() {
+        val dialog = _uiState.value.activeDialog as? BackupConfigDialog.NasToken ?: return
+        // Reuse the normal setting path so changing a token invalidates the local trust
+        // marker and never enables the home card before a fresh connection test.
+        if (dialog.token.trim() != _uiState.value.nasSettings.apiToken.trim()) {
+            onIntent(BackupConfigIntent.SetNasToken(dialog.token))
+        }
+        _uiState.update { it.copy(activeDialog = null) }
     }
 
     private fun saveWebDavAuth() {
@@ -410,4 +654,15 @@ class BackupConfigViewModel(
             }
             .toImmutableList()
     }
+}
+
+private fun Throwable.toNasErrorMessage(): String = when (this) {
+    is TimeoutCancellationException -> "NAS 请求超时，请检查服务是否在线"
+    is java.io.IOException -> "无法连接 NAS，请检查网络和服务地址"
+    is NasHttpException -> when (statusCode) {
+        401 -> "NAS 访问令牌无效或已过期（401）"
+        403 -> "NAS 令牌没有访问权限（403）"
+        else -> message ?: "NAS 请求失败（HTTP $statusCode）"
+    }
+    else -> localizedMessage?.takeIf { it.isNotBlank() } ?: "NAS 连接失败，请检查网络和服务地址"
 }
