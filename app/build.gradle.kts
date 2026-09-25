@@ -191,6 +191,16 @@ ksp {
 }
 
 dependencies {
+    constraints {
+        // AGP aligns androidTest with the app runtime. Espresso 3.7 needs 1.2.0;
+        // leaving the app at transitive 1.1.0 makes the test compile classpath unresolvable.
+        implementation("androidx.concurrent:concurrent-futures:1.2.0") {
+            because("Align app and Android test runtime with Espresso 3.7")
+        }
+        implementation("androidx.concurrent:concurrent-futures-ktx:1.2.0") {
+            because("Align app and Android test runtime with AndroidX Test 1.7")
+        }
+    }
     implementation(libs.androidx.profileinstaller)
     "baselineProfile"(project(":baselineprofile"))
     coreLibraryDesugaring(libs.desugar)
@@ -198,8 +208,12 @@ dependencies {
     testImplementation(libs.robolectric)
     testImplementation(libs.kotlinx.coroutines.test)
     testImplementation(libs.mockwebserver)
+    testImplementation(platform(libs.androidx.compose.bom))
     testImplementation(libs.androidx.compose.ui.test.junit4)
     androidTestImplementation(libs.bundles.androidTest)
+    // Android tests have a separate runtime graph; versionless Compose test artifacts
+    // need their own BOM even when the application already imports it.
+    androidTestImplementation(platform(libs.androidx.compose.bom))
     androidTestImplementation(libs.androidx.compose.ui.test.junit4)
     debugImplementation(libs.androidx.compose.ui.test.manifest)
     implementation(libs.kotlin.stdlib)

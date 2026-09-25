@@ -1,5 +1,10 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
+    <string name="home_nas_library">我的 NAS</string>
+    <string name="home_nas_not_configured">尚未配置 NAS，请先测试连接</string>
+    <string name="home_nas_loading">正在连接 NAS…</string>
+    <string name="home_nas_book_count">书库共 %1$d 本</string>
+    <string name="home_nas_connection_failed">NAS 连接失败</string>
     <string name="feature_nas_book_read">下载并阅读</string>
     <string name="feature_nas_book_working">正在处理…</string>
     <string name="feature_nas_book_remote">NAS 书库</string>
