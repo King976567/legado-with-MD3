@@ -1,0 +1,28 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="feature_nas_tasks">Tasks</string>
+    <string name="feature_nas_manage">Manage NAS</string>
+    <string name="feature_nas_upload">Upload book</string>
+    <string name="feature_nas_index">Refresh index</string>
+    <string name="feature_nas_scrape_pending">Scrape pending books</string>
+    <string name="feature_nas_retry_scrape">Retry failed scraping</string>
+    <string name="feature_nas_diagnose">Connection diagnostics</string>
+    <string name="feature_nas_settings">NAS settings</string>
+    <string name="feature_nas_refresh_tasks">Refresh tasks</string>
+    <string name="feature_nas_no_tasks">No tasks</string>
+    <string name="feature_nas_index_task">Indexing</string>
+    <string name="feature_nas_scrape_task">Scraping</string>
+    <string name="feature_nas_cancelling">Cancelling…</string>
+    <string name="feature_nas_cancel_task">Cancel</string>
+    <string name="feature_nas_task_running">Running</string>
+    <string name="feature_nas_task_queued">Queued</string>
+    <string name="feature_nas_task_done">Completed</string>
+    <string name="feature_nas_task_failed">Failed</string>
+    <string name="feature_nas_task_cancelled">Cancelled</string>
+    <string name="feature_nas_task_unknown">Unknown status</string>
+    <string name="feature_nas_retry_load">Retry loading more</string>
+    <string name="feature_nas_load_more">Load more</string>
+    <string name="feature_nas_loaded_count">%1$d books loaded</string>
+    <string name="feature_nas_connected_count">Connected · %1$d books</string>
+    <string name="feature_nas_running_tasks">%1$d active tasks · View</string>
+</resources>

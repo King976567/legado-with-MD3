@@ -1,0 +1,28 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="feature_nas_tasks">任务中心</string>
+    <string name="feature_nas_manage">管理 NAS</string>
+    <string name="feature_nas_upload">上传书籍</string>
+    <string name="feature_nas_index">刷新索引</string>
+    <string name="feature_nas_scrape_pending">刮削待处理</string>
+    <string name="feature_nas_retry_scrape">重试失败刮削</string>
+    <string name="feature_nas_diagnose">连接诊断</string>
+    <string name="feature_nas_settings">NAS 设置</string>
+    <string name="feature_nas_refresh_tasks">刷新任务</string>
+    <string name="feature_nas_no_tasks">暂无任务</string>
+    <string name="feature_nas_index_task">书库索引</string>
+    <string name="feature_nas_scrape_task">书籍刮削</string>
+    <string name="feature_nas_cancelling">取消中…</string>
+    <string name="feature_nas_cancel_task">取消</string>
+    <string name="feature_nas_task_running">运行中</string>
+    <string name="feature_nas_task_queued">等待中</string>
+    <string name="feature_nas_task_done">已完成</string>
+    <string name="feature_nas_task_failed">失败</string>
+    <string name="feature_nas_task_cancelled">已取消</string>
+    <string name="feature_nas_task_unknown">状态未知</string>
+    <string name="feature_nas_retry_load">重试加载</string>
+    <string name="feature_nas_load_more">加载更多</string>
+    <string name="feature_nas_loaded_count">已加载 %1$d 本</string>
+    <string name="feature_nas_connected_count">已连接 · %1$d 本</string>
+    <string name="feature_nas_running_tasks">%1$d 个任务正在运行 · 查看</string>
+</resources>

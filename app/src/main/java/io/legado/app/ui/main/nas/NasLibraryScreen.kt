@@ -4,6 +4,8 @@ import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.consumeWindowInsets
+import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
@@ -16,10 +18,12 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
-import androidx.compose.material.icons.automirrored.filled.ArrowForward
+import androidx.compose.material.icons.filled.History
+import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.CloudOff
 import androidx.compose.material.icons.filled.CloudDownload
 import androidx.compose.material.icons.filled.Edit
@@ -50,12 +54,18 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
+import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.snapshotFlow
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalFocusManager
+import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.foundation.text.KeyboardActions
@@ -67,6 +77,9 @@ import coil3.request.ImageRequest
 import coil3.toUri
 import io.legado.app.domain.gateway.NasSettingsGateway
 import io.legado.app.domain.model.NasBook
+import io.legado.app.domain.model.NasTask
+import io.legado.app.R
+import io.legado.app.ui.widget.components.modalBottomSheet.AppModalBottomSheet
 import io.legado.app.domain.model.NasCheckKind
 import io.legado.app.domain.model.NasCheckStatus
 import io.legado.app.domain.model.NasDiagnosticReport
@@ -76,6 +89,7 @@ import io.legado.app.help.coil.nasCoverHeaders
 import io.legado.app.utils.startActivityForBook
 import io.legado.app.utils.toastOnUi
 import kotlinx.coroutines.flow.collectLatest
+import kotlinx.coroutines.flow.distinctUntilChanged
 import org.koin.androidx.compose.koinViewModel
 import org.koin.compose.koinInject
 
@@ -134,7 +148,33 @@ fun NasLibraryScreen(
     nasApiUrl: String = "",
     nasToken: String = "",
 ) {
+    var showTasks by rememberSaveable { mutableStateOf(false) }
+    val listState = rememberLazyListState()
+    val latestState by rememberUpdatedState(state)
+    val latestIntent by rememberUpdatedState(onIntent)
+    val focusManager = LocalFocusManager.current
+    var lastGeneration by rememberSaveable { mutableStateOf(state.listGeneration) }
+    LaunchedEffect(state.listGeneration) {
+        if (lastGeneration != state.listGeneration) {
+            listState.scrollToItem(0)
+            lastGeneration = state.listGeneration
+        }
+    }
+    LaunchedEffect(listState) {
+        snapshotFlow {
+            val layout = listState.layoutInfo
+            latestState.canGoNext && layout.totalItemsCount > 0 &&
+                (layout.visibleItemsInfo.lastOrNull()?.index ?: -1) >= layout.totalItemsCount - 3
+        }.distinctUntilChanged().collect { shouldLoad ->
+            if (shouldLoad) latestIntent(NasLibraryIntent.NextPage)
+        }
+    }
+    fun openTasks() {
+        showTasks = true
+        onIntent(NasLibraryIntent.LoadTasks)
+    }
     Scaffold(
+        modifier = Modifier.imePadding(),
         topBar = {
             TopAppBar(
                 title = { Text("我的 NAS") },
@@ -144,84 +184,79 @@ fun NasLibraryScreen(
                     }
                 },
                 actions = {
-                    IconButton(
-                        onClick = { onIntent(NasLibraryIntent.Refresh) },
-                        enabled = !state.isLoading,
-                    ) {
+                    IconButton(onClick = { onIntent(NasLibraryIntent.Refresh) }, enabled = !state.isRefreshing) {
                         Icon(Icons.Default.Refresh, contentDescription = "刷新")
                     }
-                    IconButton(
-                        onClick = { onIntent(NasLibraryIntent.Diagnose) },
-                        enabled = !state.isDiagnosing,
-                    ) {
-                        Icon(Icons.Default.Info, contentDescription = "能力诊断")
+                    IconButton(onClick = ::openTasks) {
+                        Icon(Icons.Default.History, contentDescription = stringResource(R.string.feature_nas_tasks))
                     }
-                    IconButton(onClick = onOpenSettings) {
-                        Icon(Icons.Default.Settings, contentDescription = "NAS 设置")
-                    }
+                    LibraryManagementMenu(state, onIntent, onOpenSettings)
                 },
             )
         },
     ) { padding ->
-        Column(
-            modifier = Modifier
-                .fillMaxSize()
-                .padding(padding),
+        LazyColumn(
+            state = listState,
+            modifier = Modifier.fillMaxSize().padding(padding).consumeWindowInsets(padding)
+                .testTag("nas-library-list"),
+            contentPadding = PaddingValues(bottom = 16.dp),
+            verticalArrangement = Arrangement.spacedBy(8.dp),
         ) {
-            SearchBar(
-                query = state.query,
-                onQueryChanged = { onIntent(NasLibraryIntent.QueryChanged(it)) },
-                onSubmit = { onIntent(NasLibraryIntent.SubmitSearch) },
-                enabled = state.isConfigured && !state.isLoading,
-            )
-            DirectoryFilter(state = state, onIntent = onIntent)
-            ConnectionBanner(state = state, onRetry = { onIntent(NasLibraryIntent.Retry) })
-
-            when {
-                !state.isConfigured -> UnconfiguredContent()
-                state.isLoading && state.books.isEmpty() -> LoadingContent()
-                state.error != null && state.books.isEmpty() -> ErrorContent(
-                    message = state.error,
-                    onRetry = { onIntent(NasLibraryIntent.Retry) },
+            item(key = "search") {
+                SearchBar(
+                    query = state.query,
+                    onQueryChanged = { onIntent(NasLibraryIntent.QueryChanged(it)) },
+                    onSubmit = {
+                        focusManager.clearFocus()
+                        onIntent(NasLibraryIntent.SubmitSearch)
+                    },
+                    enabled = state.isConfigured,
                 )
-                state.books.isEmpty() -> EmptyContent(query = state.query)
-                else -> {
-                    LazyColumn(
-                        modifier = Modifier.weight(1f),
-                        contentPadding = PaddingValues(horizontal = 16.dp, vertical = 8.dp),
-                        verticalArrangement = Arrangement.spacedBy(8.dp),
-                    ) {
-                        items(state.books, key = { it.id }) { book ->
-                            NasBookRow(
-                                book = book,
-                                nasApiUrl = nasApiUrl,
-                                nasToken = nasToken,
-                                onClick = {
-                                    onIntent(NasLibraryIntent.OpenBook(book))
-                                },
-                            )
-                        }
-                        if (state.isLoading) {
-                            item(key = "loading") {
-                                LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
-                            }
-                        }
+            }
+            item(key = "categories") { DirectoryFilter(state = state, onIntent = onIntent) }
+            item(key = "connection") {
+                ConnectionBanner(state = state, onRetry = { onIntent(NasLibraryIntent.Retry) })
+            }
+            val runningTasks = state.tasks.count { it.status.lowercase() in RUNNING_TASK_STATUSES }
+            if (runningTasks > 0) {
+                item(key = "running-tasks") {
+                    TextButton(onClick = ::openTasks, modifier = Modifier.fillMaxWidth()) {
+                        Text(stringResource(R.string.feature_nas_running_tasks, runningTasks))
                     }
                 }
             }
-
-            LibraryActions(state = state, onIntent = onIntent)
-            if (state.actionError != null) {
-                Text(
-                    text = state.actionError,
-                    color = androidx.compose.material3.MaterialTheme.colorScheme.error,
-                    style = androidx.compose.material3.MaterialTheme.typography.bodySmall,
-                    modifier = Modifier.padding(horizontal = 16.dp, vertical = 2.dp),
-                )
+            state.actionError?.let { error ->
+                item(key = "action-error") {
+                    Text(error, color = androidx.compose.material3.MaterialTheme.colorScheme.error,
+                        modifier = Modifier.padding(horizontal = 16.dp))
+                }
             }
-            TasksPanel(state = state, onIntent = onIntent)
-            PaginationBar(state = state, onIntent = onIntent)
+            when {
+                !state.isConfigured -> item(key = "unconfigured") { UnconfiguredContent() }
+                state.isLoading && state.books.isEmpty() -> item(key = "loading") { LoadingContent() }
+                state.error != null && state.books.isEmpty() -> item(key = "error") {
+                    ErrorContent(state.error) { onIntent(NasLibraryIntent.Retry) }
+                }
+                state.books.isEmpty() -> item(key = "empty") { EmptyContent(state.appliedQuery) }
+                else -> {
+                    items(state.books, key = { "book:${it.id}" }, contentType = { "book" }) { book ->
+                        Box(Modifier.padding(horizontal = 16.dp)) {
+                            NasBookRow(book, nasApiUrl, nasToken) {
+                                onIntent(NasLibraryIntent.OpenBook(book))
+                            }
+                        }
+                    }
+                    item(key = "load-more") { LoadMoreFooter(state, onIntent) }
+                }
+            }
         }
+    }
+    AppModalBottomSheet(
+        show = showTasks,
+        onDismissRequest = { showTasks = false },
+        title = stringResource(R.string.feature_nas_tasks),
+    ) {
+        TasksPanel(state = state, onIntent = onIntent)
     }
 
     state.selectedBook?.let { book ->
@@ -323,7 +358,7 @@ private fun DirectoryFilter(
     ) {
         OutlinedButton(
             onClick = { expanded = true },
-            enabled = !state.isLoading,
+            enabled = state.isConfigured,
             modifier = Modifier.fillMaxWidth(),
         ) {
             Icon(Icons.Default.Folder, contentDescription = null)
@@ -374,7 +409,6 @@ private fun ConnectionBanner(state: NasLibraryUiState, onRetry: () -> Unit) {
             }
         }
         state.connection != null -> {
-            val status = state.connection.health.status.ifBlank { "已连接" }
             Surface(tonalElevation = 1.dp, modifier = Modifier.fillMaxWidth()) {
                 Row(
                     modifier = Modifier.padding(horizontal = 16.dp, vertical = 6.dp),
@@ -382,14 +416,8 @@ private fun ConnectionBanner(state: NasLibraryUiState, onRetry: () -> Unit) {
                 ) {
                     Icon(Icons.Default.Storage, contentDescription = null)
                     Spacer(Modifier.width(8.dp))
-                    Text("NAS $status · ${state.total} 本", style = androidx.compose.material3.MaterialTheme.typography.bodySmall)
-                    if (state.capabilities.features.isNotEmpty()) {
-                        Spacer(Modifier.width(8.dp))
-                        Text(
-                            "能力 ${state.capabilities.features.size}",
-                            style = androidx.compose.material3.MaterialTheme.typography.bodySmall,
-                        )
-                    }
+                    Text(stringResource(R.string.feature_nas_connected_count, state.total),
+                        style = androidx.compose.material3.MaterialTheme.typography.bodySmall)
                 }
             }
         }
@@ -468,113 +496,100 @@ private fun rememberNasCoverRequest(
 }
 
 @Composable
-private fun LibraryActions(state: NasLibraryUiState, onIntent: (NasLibraryIntent) -> Unit) {
-    val canWrite = state.isConfigured && !state.isActionRunning && !state.writeAccessDenied
-    val canUpload = canWrite && state.capabilities.supports("upload")
-    val canIndex = canWrite && state.capabilities.supportsIndexer
-    val canScrape = canWrite && state.capabilities.supports("scraper")
-    Column(
-        modifier = Modifier
-            .fillMaxWidth()
-            .padding(horizontal = 16.dp, vertical = 4.dp),
-        verticalArrangement = Arrangement.spacedBy(6.dp),
-    ) {
-        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            OutlinedButton(
-                onClick = { onIntent(NasLibraryIntent.RequestUpload) },
-                enabled = canUpload,
-                modifier = Modifier.weight(1f),
-            ) {
-                Text("上传")
-            }
-            OutlinedButton(
-                onClick = { onIntent(NasLibraryIntent.RefreshIndex) },
-                enabled = canIndex,
-                modifier = Modifier.weight(1f),
-            ) {
-                Text(if (state.isActionRunning) "处理中…" else "刷新索引")
-            }
-        }
-        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            OutlinedButton(
-                onClick = { onIntent(NasLibraryIntent.ScrapePending) },
-                enabled = canScrape,
-                modifier = Modifier.weight(1f),
-            ) {
-                Text("刮削待处理")
-            }
-            OutlinedButton(
-                onClick = { onIntent(NasLibraryIntent.RetryFailedScrape) },
-                enabled = canScrape,
-                modifier = Modifier.weight(1f),
-            ) {
-                Text("重试失败")
-            }
-        }
-    }
-}
-
-@Composable
-private fun TasksPanel(
+private fun LibraryManagementMenu(
     state: NasLibraryUiState,
     onIntent: (NasLibraryIntent) -> Unit,
+    onOpenSettings: () -> Unit,
 ) {
-    if (!state.isConfigured) return
-    Surface(
-        tonalElevation = 1.dp,
-        modifier = Modifier
-            .fillMaxWidth()
-            .padding(horizontal = 16.dp, vertical = 4.dp),
+    var expanded by remember { mutableStateOf(false) }
+    val canWrite = state.isConfigured && !state.isActionRunning && !state.writeAccessDenied
+    Box {
+        IconButton(onClick = { expanded = true }) {
+            Icon(Icons.Default.MoreVert, contentDescription = stringResource(R.string.feature_nas_manage))
+        }
+        DropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
+            fun dispatch(intent: NasLibraryIntent) { expanded = false; onIntent(intent) }
+            DropdownMenuItem(
+                text = { Text(stringResource(R.string.feature_nas_upload)) },
+                enabled = canWrite && state.capabilities.supports("upload"),
+                onClick = { dispatch(NasLibraryIntent.RequestUpload) },
+            )
+            DropdownMenuItem(
+                text = { Text(stringResource(R.string.feature_nas_index)) },
+                enabled = canWrite && state.capabilities.supportsIndexer,
+                onClick = { dispatch(NasLibraryIntent.RefreshIndex) },
+            )
+            DropdownMenuItem(
+                text = { Text(stringResource(R.string.feature_nas_scrape_pending)) },
+                enabled = canWrite && state.capabilities.supports("scraper"),
+                onClick = { dispatch(NasLibraryIntent.ScrapePending) },
+            )
+            DropdownMenuItem(
+                text = { Text(stringResource(R.string.feature_nas_retry_scrape)) },
+                enabled = canWrite && state.capabilities.supports("scraper"),
+                onClick = { dispatch(NasLibraryIntent.RetryFailedScrape) },
+            )
+            DropdownMenuItem(
+                text = { Text(stringResource(R.string.feature_nas_diagnose)) },
+                enabled = !state.isDiagnosing,
+                onClick = { dispatch(NasLibraryIntent.Diagnose) },
+            )
+            DropdownMenuItem(
+                text = { Text(stringResource(R.string.feature_nas_settings)) },
+                onClick = { expanded = false; onOpenSettings() },
+            )
+        }
+    }
+}
+
+@Composable
+private fun TasksPanel(state: NasLibraryUiState, onIntent: (NasLibraryIntent) -> Unit) {
+    LazyColumn(
+        modifier = Modifier.fillMaxWidth().testTag("nas-task-list"),
+        verticalArrangement = Arrangement.spacedBy(12.dp),
     ) {
-        Column(
-            modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
-            verticalArrangement = Arrangement.spacedBy(4.dp),
-        ) {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Text(
-                    "任务中心",
-                    style = androidx.compose.material3.MaterialTheme.typography.titleSmall,
-                    modifier = Modifier.weight(1f),
-                )
-                TextButton(onClick = { onIntent(NasLibraryIntent.LoadTasks) }) {
-                    Text("刷新任务")
-                }
+        item {
+            TextButton(onClick = { onIntent(NasLibraryIntent.LoadTasks) }, enabled = state.isConfigured) {
+                Text(stringResource(R.string.feature_nas_refresh_tasks))
             }
-            if (state.tasks.isEmpty()) {
-                Text(
-                    "暂无任务",
-                    style = androidx.compose.material3.MaterialTheme.typography.bodySmall,
-                )
-            } else {
-                state.tasks.take(5).forEach { task ->
-                    val progress = if (task.total > 0) {
-                        "${task.processed}/${task.total}"
-                    } else {
-                        task.status.ifBlank { "未知状态" }
+        }
+        state.actionError?.let { error ->
+            item {
+                Text(error, color = androidx.compose.material3.MaterialTheme.colorScheme.error)
+            }
+        }
+        if (state.tasks.isEmpty()) {
+            item { Text(stringResource(R.string.feature_nas_no_tasks)) }
+        }
+        items(state.tasks) { task ->
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Column(Modifier.weight(1f)) {
+                    val kind = when (task.kind.lowercase()) {
+                        "indexer" -> stringResource(R.string.feature_nas_index_task)
+                        "scraper" -> stringResource(R.string.feature_nas_scrape_task)
+                        else -> task.kind.ifBlank { task.type ?: "NAS" }
                     }
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Text(
-                            text = "${task.kind.ifBlank { task.type ?: "NAS" }} · $progress" +
-                                (task.lastError?.let { " · $it" } ?: ""),
-                            style = androidx.compose.material3.MaterialTheme.typography.bodySmall,
-                            maxLines = 2,
-                            modifier = Modifier.weight(1f),
-                        )
-                        if (task.kind.equals("scraper", ignoreCase = true) ||
-                            task.kind.equals("indexer", ignoreCase = true)
-                        ) {
-                            if (task.id.isNotBlank() && task.status.lowercase() in RUNNING_TASK_STATUSES
-                            ) {
-                                TextButton(
-                                    onClick = {
-                                        onIntent(NasLibraryIntent.CancelTask(task.id, task.kind))
-                                    },
-                                    enabled = !state.isActionRunning && !task.cancelRequested,
-                                ) {
-                                    Text(if (task.cancelRequested) "取消中" else "取消")
-                                }
-                            }
-                        }
+                    Text("$kind · ${taskStatusLabel(task)}")
+                    if (task.total > 0) {
+                        Text("${task.processed} / ${task.total}",
+                            style = androidx.compose.material3.MaterialTheme.typography.bodySmall)
+                    }
+                    (task.finishedAt ?: task.startedAt)?.let {
+                        Text(it, style = androidx.compose.material3.MaterialTheme.typography.bodySmall)
+                    }
+                    task.lastError?.let {
+                        Text(it, color = androidx.compose.material3.MaterialTheme.colorScheme.error)
+                    }
+                }
+                if (task.kind.lowercase() in setOf("indexer", "scraper") &&
+                    task.id.isNotBlank() && task.status.lowercase() in RUNNING_TASK_STATUSES
+                ) {
+                    TextButton(
+                        onClick = { onIntent(NasLibraryIntent.CancelTask(task.id, task.kind)) },
+                        enabled = !state.isActionRunning && !state.writeAccessDenied && !task.cancelRequested,
+                    ) {
+                        Text(stringResource(if (task.cancelRequested) R.string.feature_nas_cancelling
+                            else R.string.feature_nas_cancel_task))
                     }
                 }
             }
@@ -583,27 +598,35 @@ private fun TasksPanel(
 }
 
 @Composable
-private fun PaginationBar(state: NasLibraryUiState, onIntent: (NasLibraryIntent) -> Unit) {
-    if (state.pageCount <= 1 && state.total == 0) return
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .padding(horizontal = 16.dp, vertical = 8.dp),
-        horizontalArrangement = Arrangement.Center,
-        verticalAlignment = Alignment.CenterVertically,
+private fun taskStatusLabel(task: NasTask): String = stringResource(
+    when (task.status.lowercase()) {
+        "running", "started" -> R.string.feature_nas_task_running
+        "pending", "queued" -> R.string.feature_nas_task_queued
+        "completed", "complete", "success", "succeeded", "done", "finished" -> R.string.feature_nas_task_done
+        "failed", "error" -> R.string.feature_nas_task_failed
+        "cancelled", "canceled" -> R.string.feature_nas_task_cancelled
+        else -> R.string.feature_nas_task_unknown
+    }
+)
+
+@Composable
+private fun LoadMoreFooter(state: NasLibraryUiState, onIntent: (NasLibraryIntent) -> Unit) {
+    Column(
+        modifier = Modifier.fillMaxWidth().padding(16.dp).testTag("nas-load-more"),
+        horizontalAlignment = Alignment.CenterHorizontally,
     ) {
-        IconButton(
-            onClick = { onIntent(NasLibraryIntent.PreviousPage) },
-            enabled = state.canGoPrevious,
-        ) {
-            Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "上一页")
-        }
-        Text("第 ${state.page} / ${state.pageCount.coerceAtLeast(1)} 页")
-        IconButton(
-            onClick = { onIntent(NasLibraryIntent.NextPage) },
-            enabled = state.canGoNext,
-        ) {
-            Icon(Icons.AutoMirrored.Filled.ArrowForward, contentDescription = "下一页")
+        when {
+            state.isLoadingMore -> CircularProgressIndicator(Modifier.size(24.dp))
+            state.loadMoreError != null -> {
+                Text(state.loadMoreError, color = androidx.compose.material3.MaterialTheme.colorScheme.error)
+                TextButton(onClick = { onIntent(NasLibraryIntent.RetryLoadMore) }) {
+                    Text(stringResource(R.string.feature_nas_retry_load))
+                }
+            }
+            state.canGoNext -> TextButton(onClick = { onIntent(NasLibraryIntent.NextPage) }) {
+                Text(stringResource(R.string.feature_nas_load_more))
+            }
+            else -> Text(stringResource(R.string.feature_nas_loaded_count, state.books.size))
         }
     }
 }
