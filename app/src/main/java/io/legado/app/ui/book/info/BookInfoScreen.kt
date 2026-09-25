@@ -1023,7 +1023,7 @@ private data class BookInfoBackdropState(
 )
 
 @Composable
-private fun BookInfoOverflowMenu(
+internal fun BookInfoOverflowMenu(
     expanded: Boolean,
     onDismissRequest: () -> Unit,
     state: BookInfoUiState,
@@ -1060,6 +1060,14 @@ private fun BookInfoOverflowMenu(
                 text = stringResource(R.string.upload_to_remote),
                 onClick = { onMenuAction(BookInfoMenuAction.Upload) }
             )
+            if (state.nasUploadVisible) {
+                RoundDropdownMenuItem(
+                    text = stringResource(if (state.nasUploadDenied) R.string.feature_book_info_nas_read_only
+                        else R.string.feature_book_info_upload_nas),
+                    enabled = !state.isBusy && state.nasUploadStage == null && !state.nasUploadDenied,
+                    onClick = { onMenuAction(BookInfoMenuAction.UploadNas) },
+                )
+            }
         }
         if (state.bookSourceUi?.hasLogin == true) {
             RoundDropdownMenuItem(
@@ -1988,6 +1996,14 @@ private fun BookInfoDialogs(
     onIntent: (BookInfoIntent) -> Unit,
 ) {
     val dialog = state.dialog
+    AppAlertDialog(
+        data = dialog as? BookInfoDialog.NasUploadResult,
+        onDismissRequest = { onIntent(BookInfoIntent.DismissDialog) },
+        title = stringResource(R.string.feature_book_info_upload_nas),
+        text = (dialog as? BookInfoDialog.NasUploadResult)?.message,
+        confirmText = stringResource(android.R.string.ok),
+        onConfirm = { onIntent(BookInfoIntent.DismissDialog) },
+    )
     var deleteOriginal by remember(dialog, state.deleteOriginal) { mutableStateOf(state.deleteOriginal) }
     var remarkText by remember(dialog) { mutableStateOf((dialog as? BookInfoDialog.EditRemark)?.remark.orEmpty()) }
 
@@ -2083,8 +2099,17 @@ private fun BookInfoDialogs(
     )
 
     AppAlertDialog(
-        show = state.isBusy,
-        onDismissRequest = {},
+        show = state.isBusy || state.nasUploadStage != null,
+        onDismissRequest = { if (state.nasUploadStage != null) onIntent(BookInfoIntent.CancelNasUpload) },
+        dismissText = stringResource(android.R.string.cancel),
+        onDismiss = if (state.nasUploadStage != null) ({ onIntent(BookInfoIntent.CancelNasUpload) }) else null,
+        text = state.nasUploadStage?.let {
+            stringResource(when (it) {
+                io.legado.app.domain.usecase.NasBookUploadStage.Preparing -> R.string.feature_book_info_nas_preparing
+                io.legado.app.domain.usecase.NasBookUploadStage.Checking -> R.string.feature_book_info_nas_checking
+                io.legado.app.domain.usecase.NasBookUploadStage.Uploading -> R.string.feature_book_info_nas_uploading
+            })
+        },
         content = {
             Box(modifier = Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) {
                 AppCircularProgressIndicator()
