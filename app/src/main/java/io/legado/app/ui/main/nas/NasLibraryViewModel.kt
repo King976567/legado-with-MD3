@@ -55,6 +55,11 @@ data class NasLibraryUiState(
     val isConfigured: Boolean = false,
     val isLoading: Boolean = false,
     val isRefreshing: Boolean = false,
+    val isLoadingMore: Boolean = false,
+    val loadMoreError: String? = null,
+    val reachedEnd: Boolean = false,
+    val appliedQuery: String = "",
+    val listGeneration: Long = 0,
     val isLoadingDetail: Boolean = false,
     val connection: NasConnection? = null,
     val capabilities: NasCapabilities = NasCapabilities(),
@@ -84,7 +89,8 @@ data class NasLibraryUiState(
         get() = page > 1 && !isLoading
 
     val canGoNext: Boolean
-        get() = pageCount > page && !isLoading
+        get() = isConfigured && books.isNotEmpty() && pageCount > page &&
+            !isLoading && !reachedEnd && loadMoreError == null && query.trim() == appliedQuery
 }
 
 sealed interface NasLibraryIntent {
@@ -94,6 +100,7 @@ sealed interface NasLibraryIntent {
     data object Diagnose : NasLibraryIntent
     data object PreviousPage : NasLibraryIntent
     data object NextPage : NasLibraryIntent
+    data object RetryLoadMore : NasLibraryIntent
     data class OpenBook(val book: NasBook) : NasLibraryIntent
     data class DownloadBook(val book: NasBook) : NasLibraryIntent
     data class UploadFileSelected(val uri: Uri) : NasLibraryIntent
@@ -144,6 +151,8 @@ class NasLibraryViewModel(
     val effects = _effects.asSharedFlow()
 
     private var loadJob: Job? = null
+    @Volatile private var loadGeneration = 0L
+    private var observedSettings = nasSettingsGateway.currentSettings
     private var connectionJob: Job? = null
     private var diagnosticJob: Job? = null
     private var diagnosticSettings: NasSettings? = null
@@ -154,6 +163,16 @@ class NasLibraryViewModel(
         // changes here, which also clears stale results after disconnecting NAS.
         viewModelScope.launch {
             nasSettingsGateway.settings.collectLatest { settings ->
+                val credentialsChanged = !credentialsMatch(observedSettings, settings)
+                observedSettings = settings
+                if (credentialsChanged || !settings.connectionVerified) {
+                    loadGeneration++
+                    loadJob?.cancel()
+                    loadJob = null
+                    _uiState.update {
+                        NasLibraryUiState(query = it.query, listGeneration = it.listGeneration + 1)
+                    }
+                }
                 // An in-flight report belongs to the exact URL/token snapshot
                 // it started with. Cancel it when that snapshot changes so an
                 // old result cannot overwrite the newly edited configuration.
@@ -190,7 +209,7 @@ class NasLibraryViewModel(
                             diagnosticError = if (diagnosticsChanged) null else current.diagnosticError,
                         )
                     } else {
-                        NasLibraryUiState(query = current.query)
+                        NasLibraryUiState(query = current.query, listGeneration = current.listGeneration)
                     }
                 }
             }
@@ -205,7 +224,12 @@ class NasLibraryViewModel(
             NasLibraryIntent.Retry -> refresh()
             NasLibraryIntent.Diagnose -> diagnoseConnection()
             NasLibraryIntent.PreviousPage -> loadPage((_uiState.value.page - 1).coerceAtLeast(1))
-            NasLibraryIntent.NextPage -> loadPage(_uiState.value.page + 1)
+            NasLibraryIntent.NextPage -> loadNextPage()
+            NasLibraryIntent.RetryLoadMore -> {
+                if (_uiState.value.loadMoreError != null && !_uiState.value.isLoading) {
+                    loadPage(_uiState.value.page + 1, append = true)
+                }
+            }
             is NasLibraryIntent.OpenBook -> selectBook(intent.book)
             is NasLibraryIntent.DownloadBook -> downloadBook(intent.book)
             is NasLibraryIntent.UploadFileSelected -> uploadFile(intent.uri)
@@ -250,7 +274,9 @@ class NasLibraryViewModel(
         loadPage(page = 1, reset = true)
     }
 
-    fun loadNextPage() = onIntent(NasLibraryIntent.NextPage)
+    fun loadNextPage() {
+        if (_uiState.value.canGoNext) loadPage(_uiState.value.page + 1, append = true)
+    }
 
     fun loadPreviousPage() = onIntent(NasLibraryIntent.PreviousPage)
 
@@ -318,94 +344,94 @@ class NasLibraryViewModel(
         }
     }
 
-    private fun loadPage(page: Int, reset: Boolean = false) {
+    private fun loadPage(page: Int, reset: Boolean = false, append: Boolean = false) {
         val settings = nasSettingsGateway.currentSettings
-        if (settings.apiUrl.isBlank() || settings.apiToken.isBlank() ||
-            !settings.connectionVerified
-        ) {
-            _uiState.value = NasLibraryUiState(
-                query = _uiState.value.query,
-                error = if (!settings.connectionVerified && settings.apiUrl.isNotBlank() &&
-                    settings.apiToken.isNotBlank()
-                ) {
-                    "NAS 尚未通过连接测试"
-                } else {
-                    "NAS 地址或访问令牌未配置"
-                },
-            )
-            return
-        }
-        if (loadJob?.isActive == true) return
-        val targetPage = page.coerceAtLeast(1)
-        val query = _uiState.value.query.trim().takeIf { it.isNotEmpty() }
-        val pageSize = _uiState.value.pageSize
-        val directoryPath = _uiState.value.directoryPath
-        loadJob = viewModelScope.launch(Dispatchers.IO) {
+        if (settings.apiUrl.isBlank() || settings.apiToken.isBlank() || !settings.connectionVerified) {
+            loadGeneration++
+            loadJob?.cancel()
             _uiState.update {
-                it.copy(
-                    isConfigured = true,
-                    isLoading = true,
-                    isRefreshing = reset,
-                    error = null,
-                    books = if (reset) emptyList() else it.books,
-                    page = targetPage,
+                NasLibraryUiState(
+                    query = it.query,
+                    listGeneration = it.listGeneration + 1,
+                    error = "请先在设置中配置 NAS 并通过连接测试",
                 )
             }
+            return
+        }
+        // A new search/filter replaces an in-flight request; paging never does.
+        if (reset) loadJob?.cancel() else if (_uiState.value.isLoading) return
+        val requestGeneration = ++loadGeneration
+        val snapshot = _uiState.value
+        val targetPage = page.coerceAtLeast(1)
+        val query = if (append) snapshot.appliedQuery else snapshot.query.trim()
+        val pageSize = snapshot.pageSize
+        val directoryPath = snapshot.directoryPath
+        _uiState.update {
+            it.copy(
+                isConfigured = true,
+                isLoading = true,
+                isRefreshing = reset,
+                isLoadingMore = append,
+                loadMoreError = null,
+                error = null,
+                books = if (reset) emptyList() else it.books,
+                page = if (reset) 1 else it.page,
+                total = if (reset) 0 else it.total,
+                reachedEnd = if (reset) false else it.reachedEnd,
+                appliedQuery = query,
+                listGeneration = if (reset) it.listGeneration + 1 else it.listGeneration,
+            )
+        }
+        loadJob = viewModelScope.launch(Dispatchers.IO) {
+            fun currentRequest() = requestGeneration == loadGeneration && isCurrentSettings(settings) &&
+                nasSettingsGateway.currentSettings.connectionVerified
             try {
-                // A connection check is intentionally done on the first page
-                // (and on pull-to-refresh).  Pagination only requests books.
-                val connection = if (reset || _uiState.value.connection == null) {
+                val connection = if (reset || snapshot.connection == null) {
                     nasLibraryUseCase.checkConnection(settings)
-                } else {
-                    _uiState.value.connection
-                }
+                } else snapshot.connection
                 val result = nasLibraryUseCase.listBooks(
                     page = targetPage,
                     pageSize = pageSize,
-                    search = query,
+                    search = query.takeIf(String::isNotBlank),
                     directoryPath = directoryPath,
                     settings = settings,
                 )
-                if (!isCurrentSettings(settings)) {
-                    _uiState.update { it.copy(isLoading = false, isRefreshing = false) }
-                    return@launch
-                }
+                if (!currentRequest()) return@launch
+                val combined = ((if (append) snapshot.books else emptyList()) + result.items)
+                    .distinctBy(NasBook::id)
                 _uiState.update {
-                    it.copy(
-                        books = result.items.distinctBy(NasBook::id),
-                        page = result.page,
-                        pageSize = result.pageSize,
+                    if (!currentRequest()) it else it.copy(
+                        books = combined,
+                        page = targetPage,
+                        pageSize = result.pageSize.coerceAtLeast(1),
                         total = result.total,
                         isLoading = false,
                         isRefreshing = false,
+                        isLoadingMore = false,
+                        loadMoreError = null,
+                        // Empty/duplicate or non-advancing pages cannot trigger a request loop.
+                        reachedEnd = result.items.isEmpty() ||
+                            (append && (combined.size == snapshot.books.size || result.page <= snapshot.page)),
                         connection = connection,
                         capabilities = connection?.capabilities ?: it.capabilities,
                         writeAccessDenied = connection?.writeAccess
-                            ?.resolveDenied(it.writeAccessDenied)
-                            ?: it.writeAccessDenied,
+                            ?.resolveDenied(it.writeAccessDenied) ?: it.writeAccessDenied,
                         error = null,
                     )
                 }
                 if (targetPage == 1 && connection?.capabilities?.supportsLibraryDirectories == true) {
                     loadDirectories()
                 }
-            } catch (cancelled: CancellationException) {
-                if (cancelled !is TimeoutCancellationException) throw cancelled
-                if (!isCurrentSettings(settings)) return@launch
-                _uiState.update {
-                    it.copy(
-                        isLoading = false,
-                        isRefreshing = false,
-                        error = cancelled.toNasMessage(),
-                    )
-                }
             } catch (error: Throwable) {
-                if (!isCurrentSettings(settings)) return@launch
+                if (error is CancellationException && error !is TimeoutCancellationException) throw error
+                if (!currentRequest()) return@launch
                 _uiState.update {
-                    it.copy(
+                    if (!currentRequest()) it else it.copy(
                         isLoading = false,
                         isRefreshing = false,
-                        error = error.toNasMessage(),
+                        isLoadingMore = false,
+                        error = if (append) null else error.toNasMessage(),
+                        loadMoreError = if (append) error.toNasMessage() else null,
                     )
                 }
             }
