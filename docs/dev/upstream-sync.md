@@ -1,58 +1,54 @@
-# MD3 上游同步流程
+# MD3 两级同步
 
-本仓库把 `HapeLee/legado-with-MD3` 作为 `upstream`，把用户自己的 GitHub Fork 作为 `origin`。`main` 只跟踪上游基线，`nas-md3` 保存 NAS 集成。上游同步不会直接写入 `nas-md3`，也不会把 NAS 改动推回上游。
+`main` 保存上游基线和本 Fork 的自动化配置；`nas-md3` 保存 NAS 功能。两级同步只创建或更新 PR，不直接修改目标分支、不自动合并、不自动解决冲突。
 
-## 首次配置
+## 流程
 
-在 GitHub 网页创建自己的 Fork 后，在本地仓库配置远程。不要把令牌、NAS 地址或其他凭据写入 URL、脚本或仓库文件。
+1. 每周一北京时间 11:17，或手动运行 **Sync upstream**：将 HapeLee 上游更新合并到 `automation/sync-upstream-main`，创建指向 `main` 的 PR。
+2. 同一次运行直接调用 **Verify sync PR**，执行 JVM 测试、lint、架构检查和 arm64 Debug APK 打包。检查结果通过 commit status 显示在 PR 中。
+3. 人工确认并合并第一份 PR 后，`main` 的 push 触发第二级：将 `main` 合并到基于 `nas-md3` 的 `automation/sync-nas-main`，创建指向 `nas-md3` 的 PR。
+4. 第二级也直接执行验证，下载 Artifacts 中的 arm64 APK 试用并确认后，再手动合并第二份 PR。
+
+手动触发可选择 `upstream`、`nas` 或 `all`。`all` 只使用当前已合入 main 的内容准备 NAS PR，不会提前带入未审批的上游 PR。定时运行也补查第二级，避免遗漏。
+
+## 验证与试用
+
+机器人使用 `GITHUB_TOKEN` 创建 PR，不依赖该事件触发其他工作流；准备步骤完成后通过 `workflow_call` 直接执行验证。人工更新同步 PR 时，`pull_request` 入口也会重新验证。
+
+状态为 **Sync verification (upstream/nas)**；点击状态链接可查看报告和下载 APK，Artifacts 保留 14 天。此 APK 为 Debug 测试包，不会自动发布 Release。构建只打包 arm64-v8a。
+
+验证绑定候选提交 SHA 和目标分支基线 SHA。若构建期间目标分支更新，则标记失败并要求重新运行同步；旧结果不能代表新的合并结果。构建任务仅有只读令牌，结果发布由独立 job 完成。
+
+工作流不会设置自动合并。分支保护若已配置，仍需满足其要求；没有配置保护时，GitHub 可能允许人工忽略失败检查，合并前须确认上述状态通过。
+
+## 重复执行和冲突
+
+- 无新增提交时不创建空 PR。
+- 同一阶段使用固定同步分支，已有开放 PR 时追加合并提交并更新原 PR，保留人工修复，不强推。
+- 远程同步分支在运行期间被修改时，普通 push 拒绝覆盖；重新运行即可。
+- 有冲突时中止合并并在 Actions 摘要列出冲突文件；已有 PR 的状态标为失败，不推送半成品。
+- 手动解决冲突后提交到同步分支并重新验证；不得用整片 ours/theirs 覆盖 NAS 功能。
+- 不再需要的同步分支可以在 PR 合并后删除；下次需要同步时会重新建立。
+
+## 本地使用
 
 ```powershell
-git remote add origin https://github.com/<your-account>/legado-with-MD3.git
-git remote set-url upstream https://github.com/HapeLee/legado-with-MD3.git
 git fetch --prune upstream
 git fetch --prune origin
-git branch --set-upstream-to=upstream/main main
-```
-
-如果 `origin` 已存在但指向其他仓库，先核对 `git remote -v`，再使用 `git remote set-url origin ...`。当前工作树没有用户 Fork 地址时，不要猜测或自动创建远程。
-
-建议在 GitHub Fork 中保护 `main` 和 `nas-md3`，要求 Pull Request 通过 `Verify` 后才能合并；打开自动删除已合并分支可以清理同步分支。
-
-## 自动/手动同步
-
-`.github/workflows/sync-upstream.yml` 只在 Fork 中运行，默认每周执行一次，也可以在 Actions 页面手动运行并填写上游分支（默认 `main`）。它会：
-
-1. 从 Fork 的 `main` 创建一次性的 `automation/sync-upstream-*` 分支。
-2. 添加 `upstream` 并把指定分支合并到该同步分支。
-3. 合并无冲突时推送同步分支，并创建一个指向 `main` 的 PR。
-4. 如果已有同步 PR，则跳过本次运行；如果没有变化，也不会创建空 PR。
-
-工作流不会自动合并 PR、不会直接推送 `main`、不会修改 `nas-md3`，也不会自动填写或解决冲突。发生冲突时它会失败并保留工作树不变；请在本地手动处理后重新发起 PR。
-
-## 合并前后操作
-
-同步 PR 合并前至少运行：
-
-```powershell
-.\gradlew.bat testAppDebugUnitTest lintAppDebug verifyConfigArchitecture assembleAppDebug --continue --no-configuration-cache
-```
-
-PR 合并后更新本地基线，并单独把基线变更带到 NAS 分支。NAS 分支若有冲突，必须人工检查每一处 NAS 代码和上游改动；不要用 `ours`/`theirs` 批量覆盖：
-
-```powershell
-git fetch --prune origin upstream
 git switch main
 git pull --ff-only origin main
 git switch nas-md3
-git merge main
-# 手动解决、测试后再提交并推送 nas-md3
-git push origin nas-md3
+git pull --ff-only origin nas-md3
 ```
 
-如果 `main` 本地出现了不属于上游的提交，先停止自动同步并人工决定是回滚、拆分到 `nas-md3`，还是在同步 PR 中保留；不要强推覆盖远程历史。
+人工处理第二级冲突时，检出其同步分支、合并最新 main 和 nas-md3、逐项解决冲突，再推送。不要把 NAS 代码合进 main。
 
-## 凭据与回滚边界
+## 配置与本地验证
 
-- 工作流只使用 GitHub Actions 的临时 `GITHUB_TOKEN` 创建分支和 PR，不需要把个人 PAT 写入仓库。
-- NAS Bearer Token 不属于 Git 配置，也不得出现在 PR、日志、备份文件或 GitHub Secrets 以外的提交内容中。
-- 同步 PR 仅改变 `main` 的上游提交；拒绝或关闭 PR 即可回滚，不能用它替代 NAS 分支的代码审查。
+仓库需要允许 Actions 创建 PR，工作流显式申请 contents/pull-requests/statuses 的必要权限；不需要个人 PAT。NAS 令牌不得写入源码、日志、PR 或备份。
+
+```powershell
+python -m unittest discover -s .github/scripts -p test_sync_pr.py -v
+actionlint -shellcheck= -pyflakes= .github/workflows/sync-upstream.yml .github/workflows/verify-sync.yml
+git diff --check
+```
