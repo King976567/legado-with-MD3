@@ -50,6 +50,7 @@ import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.ExperimentalMaterial3ExpressiveApi
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
@@ -84,6 +85,9 @@ import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
+import androidx.lifecycle.compose.LocalLifecycleOwner
 import io.legado.app.R
 import io.legado.app.data.entities.Book
 import io.legado.app.data.entities.SearchBook
@@ -336,13 +340,27 @@ fun HomeRouteScreen(
         }
     }
 
+    // The home page can remain composed while another main destination is on
+    // screen. Refresh the NAS summary when this page becomes active again.
+    val lifecycleOwner = LocalLifecycleOwner.current
+    DisposableEffect(viewModel, lifecycleOwner) {
+        val observer = LifecycleEventObserver { _, event ->
+            if (event == Lifecycle.Event.ON_RESUME) viewModel.refreshNas()
+        }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
+    }
+
     HomeScreen(
         state = state,
         homepageState = homepageState,
         homepageFeedActions = feedActions,
         homepageManageActions = manageActions,
         onIntent = viewModel::onIntent,
-        onRefreshHomepage = homepageViewModel::onRefresh,
+        onRefreshHomepage = {
+            homepageViewModel.onRefresh()
+            viewModel.refreshNas()
+        },
         onToggleHomepageManage = homepageViewModel::toggleManageMode,
         onNavigateToReadRecord = onNavigateToReadRecord,
         onNavigateToReadRecordOverview = onNavigateToReadRecordOverview,
@@ -617,6 +635,7 @@ fun HomeScreen(
         HomeSheets(
             sheet = state.activeSheet,
             visibleSections = state.visibleSections,
+            nasConnected = state.nas.isConnected,
             onIntent = onIntent,
         )
         AppAlertDialog(
@@ -728,7 +747,7 @@ private fun HomeDashboardContent(
                 onRetry = { onIntent(HomeIntent.RetryBackupInfo) },
             )
         }
-        if (HomeDashboardSection.NasLibrary in state.visibleSections && state.nas.configured) {
+        if (HomeDashboardSection.NasLibrary in state.visibleSections) {
             NasLibraryCard(
                 state = state.nas,
                 onOpen = { onIntent(HomeIntent.NasCardClick) },
@@ -747,6 +766,7 @@ private fun NasLibraryCard(
     onRetry: () -> Unit,
 ) {
     val summary = when {
+        !state.configured -> stringResource(R.string.home_nas_not_configured)
         state.isLoading -> stringResource(R.string.home_nas_loading)
         state.isConnected -> stringResource(R.string.home_nas_book_count, state.bookCount ?: 0)
         else -> state.error ?: stringResource(R.string.home_nas_connection_failed)
@@ -767,7 +787,19 @@ private fun NasLibraryCard(
             }
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 SmallTonalButton(modifier = Modifier.weight(1f), onClick = onOpen, enabled = state.isConnected, icon = Icons.Default.Book, text = stringResource(R.string.open))
-                SmallTonalButton(modifier = Modifier.weight(1f), onClick = if (state.isConnected) onSettings else onRetry, icon = if (state.isConnected) Icons.Default.Settings else Icons.Default.Refresh, text = stringResource(if (state.isConnected) R.string.setting else R.string.retry))
+                SmallTonalButton(
+                    modifier = Modifier.weight(1f),
+                    onClick = onRetry,
+                    enabled = !state.isLoading,
+                    icon = Icons.Default.Refresh,
+                    text = stringResource(R.string.refresh),
+                )
+                SmallTonalButton(
+                    modifier = Modifier.weight(1f),
+                    onClick = onSettings,
+                    icon = Icons.Default.Settings,
+                    text = stringResource(R.string.setting),
+                )
             }
         }
     }
@@ -1322,6 +1354,7 @@ private fun HomeDashboardSettingsSheet(
     show: Boolean,
     onDismissRequest: () -> Unit,
     visibleSections: Set<HomeDashboardSection>,
+    nasConnected: Boolean,
     onSectionVisibilityChanged: (HomeDashboardSection, Boolean) -> Unit,
 ) {
     if (!show) return
@@ -1337,6 +1370,8 @@ private fun HomeDashboardSettingsSheet(
                 TinySwitchSettingItem(
                     title = stringResource(section.labelRes()),
                     checked = section in visibleSections,
+                    enabled = section != HomeDashboardSection.NasLibrary ||
+                        section in visibleSections || nasConnected,
                     onCheckedChange = { visible ->
                         onSectionVisibilityChanged(section, visible)
                     },
@@ -1408,12 +1443,14 @@ private fun HomeDialogs(
 private fun HomeSheets(
     sheet: HomeSheet?,
     visibleSections: Set<HomeDashboardSection>,
+    nasConnected: Boolean,
     onIntent: (HomeIntent) -> Unit,
 ) {
     HomeDashboardSettingsSheet(
         show = sheet is HomeSheet.DashboardSettings,
         onDismissRequest = { onIntent(HomeIntent.DismissSheet) },
         visibleSections = visibleSections,
+        nasConnected = nasConnected,
         onSectionVisibilityChanged = { section, visible ->
             onIntent(HomeIntent.SetSectionVisible(section, visible))
         },

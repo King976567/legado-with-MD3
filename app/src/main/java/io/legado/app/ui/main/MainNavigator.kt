@@ -93,6 +93,19 @@ object MainNavigator {
                 backStack.add(MainRouteHome)
             }
 
+            MainRouteNasLibrary -> {
+                // NAS is a HomeDashboard child route, not a bottom-nav
+                // destination. Keep the normal Home parent so the system back
+                // action returns to the dashboard from the library screen.
+                if (currentRoute == MainRouteHome) {
+                    backStack.add(MainRouteNasLibrary)
+                } else {
+                    backStack.clear()
+                    backStack.add(MainRouteHome)
+                    backStack.add(MainRouteNasLibrary)
+                }
+            }
+
             MainRouteSettings -> {
                 if (currentRoute == MainRouteHome) {
                     backStack.add(MainRouteSettings)
@@ -421,6 +434,7 @@ object MainNavigator {
     private fun resolveStartRoute(route: String?, intent: Intent?): MainRoute {
         return when (route) {
             MainRouteConst.ROUTE_MAIN -> MainRouteHome
+            MainRouteConst.ROUTE_NAS_LIBRARY -> MainRouteNasLibrary
             MainRouteConst.ROUTE_SOURCE_LOGIN -> MainRouteSourceLogin(
                 type = intent?.getStringExtra(MainIntent.EXTRA_SOURCE_LOGIN_TYPE)
                     ?.let { runCatching { io.legado.app.ui.login.SourceLoginType.valueOf(it) }.getOrNull() }

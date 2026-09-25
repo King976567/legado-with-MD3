@@ -51,6 +51,10 @@ android {
     }
 
     defaultConfig {
+        // The upstream MD3 identity is already different from the frozen
+        // original app (io.legado.app). Keep it so the checked-in Firebase
+        // client and provider authorities continue to work; Android derives
+        // a separate data directory from this application id.
         applicationId = "io.legato.kazusa"
         minSdk = 26
         targetSdk = 37
@@ -193,6 +197,7 @@ dependencies {
     testImplementation(libs.junit)
     testImplementation(libs.robolectric)
     testImplementation(libs.kotlinx.coroutines.test)
+    testImplementation(libs.mockwebserver)
     androidTestImplementation(libs.bundles.androidTest)
     implementation(libs.kotlin.stdlib)
     implementation(libs.kotlinx.collections.immutable)

@@ -45,4 +45,14 @@ class MainIntentTest {
         assertEquals(0, intent.flags and mediaControlFlags)
         assertFalse(MainIntent.shouldOpenRouteWithHomeParent(intent))
     }
+
+    @Test
+    fun `NAS deep link requests the home dashboard as parent`() {
+        val intent = Intent().putExtra(
+            MainIntent.EXTRA_START_ROUTE,
+            MainRouteConst.ROUTE_NAS_LIBRARY,
+        )
+
+        assertTrue(MainIntent.shouldOpenRouteWithHomeParent(intent))
+    }
 }

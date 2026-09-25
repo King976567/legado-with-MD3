@@ -66,6 +66,8 @@ import io.legado.app.data.repository.LabSettingsRepository
 import io.legado.app.data.repository.LocalBookRepository
 import io.legado.app.data.repository.LocalPasswordRepository
 import io.legado.app.data.repository.MangaSettingsRepository
+import io.legado.app.data.repository.NasLibraryRepository
+import io.legado.app.data.repository.NasSettingsRepository
 import io.legado.app.data.repository.OtherConfigSystemRepository
 import io.legado.app.data.repository.OtherSettingsRepository
 import io.legado.app.data.repository.PrivateAccessRepository
@@ -150,6 +152,8 @@ import io.legado.app.domain.gateway.LocalPasswordGateway
 import io.legado.app.domain.gateway.MangaReaderDataGateway
 import io.legado.app.domain.gateway.MangaReaderSessionFactory
 import io.legado.app.domain.gateway.MangaSettingsGateway
+import io.legado.app.domain.gateway.NasLibraryGateway
+import io.legado.app.domain.gateway.NasSettingsGateway
 import io.legado.app.domain.gateway.OtherConfigSystemGateway
 import io.legado.app.domain.gateway.OtherSettingsGateway
 import io.legado.app.domain.gateway.PrivateAccessGateway
@@ -196,6 +200,7 @@ import io.legado.app.domain.usecase.GetReadingProgressUseCase
 import io.legado.app.domain.usecase.HomeDashboardUseCase
 import io.legado.app.domain.usecase.IdentifyBookCharactersUseCase
 import io.legado.app.domain.usecase.ImportBookshelfUseCase
+import io.legado.app.domain.usecase.NasLibraryUseCase
 import io.legado.app.domain.usecase.PrepareChapterSpeechPlanUseCase
 import io.legado.app.domain.usecase.RefineSpeechWithAiUseCase
 import io.legado.app.domain.usecase.RefreshTocUseCase
@@ -306,6 +311,7 @@ import io.legado.app.ui.main.bookshelf.BookshelfViewModel
 import io.legado.app.ui.main.bookshelf.autoGroup.AiAutoGroupViewModel
 import io.legado.app.ui.main.explore.ExploreViewModel
 import io.legado.app.ui.main.home.HomeViewModel
+import io.legado.app.ui.main.nas.NasLibraryViewModel
 import io.legado.app.ui.main.homepage.HomepageViewModel
 import io.legado.app.ui.main.my.MyViewModel
 import io.legado.app.ui.main.rss.RssViewModel
@@ -392,6 +398,11 @@ val appModule = module {
     single<DownloadCacheSettingsGateway> { DownloadCacheSettingsRepository() }
     single<CoverSettingsGateway> { CoverSettingsRepository() }
     single<BackupSettingsGateway> { BackupSettingsRepository() }
+    single<NasSettingsGateway> { NasSettingsRepository() }
+    single<NasLibraryRepository> {
+        NasLibraryRepository(get(), httpClient = okHttpClient)
+    }
+    single<NasLibraryGateway> { get<NasLibraryRepository>() }
     single<LabSettingsGateway> { LabSettingsRepository() }
     single<MangaSettingsGateway> { MangaSettingsRepository() }
     single<ChangeSourceSettingsGateway> { ChangeSourceSettingsRepository() }
@@ -448,6 +459,7 @@ val appModule = module {
     singleOf(::DeleteBooksUseCase)
     singleOf(::GetReadingProgressUseCase)
     single { HomeDashboardUseCase(get(), Clock.System) }
+    singleOf(::NasLibraryUseCase)
     singleOf(::RemoveBookGroupAssignmentUseCase)
     singleOf(::UpdateBooksGroupUseCase)
     singleOf(::UploadReadingProgressUseCase)
@@ -587,6 +599,7 @@ val appModule = module {
     viewModelOf(::AiAutoGroupViewModel)
     viewModelOf(::MainViewModel)
     viewModelOf(::HomeViewModel)
+    viewModelOf(::NasLibraryViewModel)
     viewModelOf(::HomepageViewModel)
     viewModelOf(::AboutViewModel)
     viewModelOf(::GroupViewModel)

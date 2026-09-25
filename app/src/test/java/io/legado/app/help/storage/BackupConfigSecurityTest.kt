@@ -1,6 +1,8 @@
 package io.legado.app.help.storage
 
 import io.legado.app.data.local.preferences.LocalPreferencesKeys
+import io.legado.app.domain.model.settings.NasSettingsKeys
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -24,5 +26,14 @@ class BackupConfigSecurityTest {
         assertTrue(LocalPreferencesKeys.PRIVATE_BIOMETRIC_ENABLED.name in alwaysIgnoredPreferenceKeys)
         assertTrue(LocalPreferencesKeys.PRIVATE_BIOMETRIC_ENVELOPE.name in alwaysIgnoredPreferenceKeys)
         assertTrue(LocalPreferencesKeys.PRIVATE_BIOMETRIC_IV.name in alwaysIgnoredPreferenceKeys)
+    }
+
+    @Test
+    fun `nas token and transient errors are never exported`() {
+        assertTrue(NasSettingsKeys.API_TOKEN in alwaysIgnoredPreferenceKeys)
+        assertTrue(NasSettingsKeys.CONNECTION_VERIFIED in alwaysIgnoredPreferenceKeys)
+        assertTrue(NasSettingsKeys.LAST_CONNECTION_ERROR in alwaysIgnoredPreferenceKeys)
+        assertFalse(NasSettingsKeys.API_URL in alwaysIgnoredPreferenceKeys)
+        assertFalse(NasSettingsKeys.SHOW_HOME_CARD in alwaysIgnoredPreferenceKeys)
     }
 }

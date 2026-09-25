@@ -146,6 +146,20 @@ fun BackupConfigScreen(
     snackbarHostState: SnackbarHostState,
 ) {
     val settings = state.settings
+    val nasSettings = state.nasSettings
+    val nasTokenSummary = maskNasToken(nasSettings.apiToken).ifEmpty {
+        stringResource(R.string.nas_status_not_configured)
+    }
+    val nasStatus = when (state.nasConnectionState) {
+        NasConnectionState.NotConfigured -> stringResource(R.string.nas_status_not_configured)
+        NasConnectionState.Idle -> stringResource(R.string.nas_status_idle)
+        NasConnectionState.Testing -> stringResource(R.string.nas_status_testing)
+        NasConnectionState.Connected -> stringResource(R.string.nas_status_connected)
+        NasConnectionState.Failed -> stringResource(
+            R.string.nas_status_failed,
+            nasSettings.lastConnectionError.orEmpty(),
+        )
+    }
     val scrollBehavior = GlassTopAppBarDefaults.defaultScrollBehavior()
     AppScaffold(
         modifier = Modifier.nestedScroll(scrollBehavior.nestedScrollConnection),
@@ -271,6 +285,35 @@ fun BackupConfigScreen(
                         description = stringResource(R.string.only_latest_backup_s),
                         checked = settings.onlyLatestBackup,
                         onCheckedChange = { onIntent(BackupConfigIntent.SetOnlyLatestBackup(it)) },
+                    )
+                }
+                SplicedColumnGroup(title = stringResource(R.string.nas_settings)) {
+                    InputSettingItem(
+                        title = stringResource(R.string.nas_service_url),
+                        description = stringResource(R.string.nas_service_url_s),
+                        value = nasSettings.apiUrl,
+                        defaultValue = "",
+                        onConfirm = { onIntent(BackupConfigIntent.SetNasUrl(it)) },
+                    )
+                    ClickableSettingItem(
+                        title = stringResource(R.string.nas_access_token),
+                        description = nasTokenSummary,
+                        onClick = { onIntent(BackupConfigIntent.OpenNasToken) },
+                    )
+                    ClickableSettingItem(
+                        title = stringResource(R.string.nas_test_connection),
+                        description = nasStatus,
+                        onClick = { onIntent(BackupConfigIntent.TestNasConnection) },
+                    )
+                    SwitchSettingItem(
+                        title = stringResource(R.string.nas_show_home_card),
+                        description = stringResource(R.string.nas_show_home_card_s),
+                        checked = nasSettings.showHomeCard,
+                        enabled = nasSettings.showHomeCard ||
+                            state.nasConnectionState == NasConnectionState.Connected,
+                        onCheckedChange = {
+                            onIntent(BackupConfigIntent.SetNasShowHomeCard(it))
+                        },
                     )
                 }
             }
@@ -506,6 +549,53 @@ private fun BackupConfigDialogs(
         onDismiss = { onIntent(BackupConfigIntent.DismissDialog) },
     )
 
+    val nasToken = dialog as? BackupConfigDialog.NasToken
+    AppAlertDialog(
+        show = nasToken != null,
+        onDismissRequest = { onIntent(BackupConfigIntent.DismissDialog) },
+        title = stringResource(R.string.nas_access_token),
+        content = {
+            nasToken?.let {
+                AppTextField(
+                    value = it.token,
+                    onValueChange = { value ->
+                        onIntent(BackupConfigIntent.EditNasToken(value))
+                    },
+                    backgroundColor = LegadoTheme.colorScheme.surface,
+                    label = stringResource(R.string.nas_access_token),
+                    visualTransformation = if (it.tokenVisible) {
+                        VisualTransformation.None
+                    } else {
+                        PasswordVisualTransformation()
+                    },
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password),
+                    singleLine = true,
+                    trailingIcon = {
+                        IconButton(onClick = {
+                            onIntent(BackupConfigIntent.ToggleNasTokenVisibility)
+                        }) {
+                            Icon(
+                                imageVector = if (it.tokenVisible) {
+                                    Icons.Filled.Visibility
+                                } else {
+                                    Icons.Filled.VisibilityOff
+                                },
+                                contentDescription = stringResource(
+                                    if (it.tokenVisible) R.string.hide_password
+                                    else R.string.show_password
+                                ),
+                            )
+                        }
+                    },
+                )
+            }
+        },
+        confirmText = stringResource(R.string.ok),
+        onConfirm = { onIntent(BackupConfigIntent.SaveNasToken) },
+        dismissText = stringResource(R.string.cancel),
+        onDismiss = { onIntent(BackupConfigIntent.DismissDialog) },
+    )
+
     val fallback = dialog as? BackupConfigDialog.ConfirmLocalRestoreFallback
     ConfirmDialog(
         show = fallback != null,
@@ -521,6 +611,15 @@ private fun BackupConfigDialogs(
         onDismissRequest = { onIntent(BackupConfigIntent.DismissDialog) },
         title = loading?.let { stringResource(it.titleRes) }.orEmpty(),
     )
+}
+
+/** Keep the bearer token out of summaries and setting-item accessibility text. */
+internal fun maskNasToken(token: String): String {
+    val normalized = token.trim()
+    if (normalized.isEmpty()) return ""
+    if (normalized.length <= 4) return "\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022"
+    val suffix = normalized.takeLast(4)
+    return "\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022$suffix"
 }
 
 @Composable

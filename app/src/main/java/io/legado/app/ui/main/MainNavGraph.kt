@@ -142,6 +142,7 @@ import io.legado.app.ui.login.SourceLoginIntent
 import io.legado.app.ui.login.SourceLoginRoute
 import io.legado.app.ui.login.SourceLoginType
 import io.legado.app.ui.login.SourceLoginViewModel
+import io.legado.app.ui.main.nas.NasLibraryRouteScreen
 import io.legado.app.ui.rss.article.MainRouteRssSort
 import io.legado.app.ui.rss.article.RssSortRouteScreen
 import io.legado.app.ui.rss.favorites.RssFavoritesRouteScreen
@@ -488,6 +489,12 @@ fun MainActivity.mainEntryProvider(
             onNavigateToBackupSettings = {
                 onNavigateToRoute(MainRouteSettingsBackup)
             },
+            onNavigateToNasLibrary = {
+                onNavigateToRoute(MainRouteNasLibrary)
+            },
+            onNavigateToNasSettings = {
+                onNavigateToRoute(MainRouteSettingsBackup)
+            },
             onNavigateToBookInfo = { name, author, bookUrl, origin, coverPath, sharedCoverKey ->
                 onNavigateToRoute(
                     MainRouteBookInfo(
@@ -564,6 +571,15 @@ fun MainActivity.mainEntryProvider(
             },
             sharedTransitionScope = sharedTransitionScope,
             animatedVisibilityScope = LocalNavAnimatedContentScope.current,
+        )
+    }
+
+    entry<MainRouteNasLibrary> {
+        NasLibraryRouteScreen(
+            onBack = { onNavigateBack() },
+            onOpenSettings = {
+                onNavigateToRoute(MainRouteSettingsBackup)
+            },
         )
     }
 

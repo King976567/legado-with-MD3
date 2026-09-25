@@ -236,8 +236,13 @@ object MainIntent {
             putExtra(EXTRA_ROUTE_HOME_AS_PARENT, true)
         }
 
-    internal fun shouldOpenRouteWithHomeParent(intent: Intent?): Boolean =
-        intent?.getBooleanExtra(EXTRA_ROUTE_HOME_AS_PARENT, false) == true
+    internal fun shouldOpenRouteWithHomeParent(intent: Intent?): Boolean {
+        if (intent?.getBooleanExtra(EXTRA_ROUTE_HOME_AS_PARENT, false) == true) return true
+        // NAS is a child of HomeDashboard.  An explicit NAS deep link must
+        // preserve that parent so Back returns to the dashboard instead of
+        // finishing MainActivity from a one-item stack.
+        return intent?.getStringExtra(EXTRA_START_ROUTE) == MainRouteConst.ROUTE_NAS_LIBRARY
+    }
 
     fun createReadMangaIntent(
         context: Context,

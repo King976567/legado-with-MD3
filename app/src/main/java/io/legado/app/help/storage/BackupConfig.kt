@@ -3,6 +3,7 @@ package io.legado.app.help.storage
 import io.legado.app.R
 import io.legado.app.constant.PreferKey
 import io.legado.app.data.local.preferences.LocalPreferencesKeys
+import io.legado.app.domain.model.settings.NasSettingsKeys
 import io.legado.app.utils.FileUtils
 import io.legado.app.utils.GSON
 import io.legado.app.utils.fromJsonObject
@@ -30,6 +31,12 @@ internal val alwaysIgnoredPreferenceKeys = setOf(
     LocalPreferencesKeys.PRIVATE_BIOMETRIC_ENABLED.name,
     LocalPreferencesKeys.PRIVATE_BIOMETRIC_ENVELOPE.name,
     LocalPreferencesKeys.PRIVATE_BIOMETRIC_IV.name,
+    // NAS credentials must never leave this device. The URL and home-card
+    // preference remain backup-able, but the bearer token and transient error
+    // state are always local.
+    NasSettingsKeys.API_TOKEN,
+    NasSettingsKeys.CONNECTION_VERIFIED,
+    NasSettingsKeys.LAST_CONNECTION_ERROR,
 )
 
 /**

@@ -3,12 +3,15 @@ package io.legado.app.ui.config.backupConfig
 import androidx.annotation.StringRes
 import androidx.compose.runtime.Stable
 import io.legado.app.domain.model.settings.BackupSettings
+import io.legado.app.domain.model.settings.NasSettings
 import kotlinx.collections.immutable.ImmutableList
 import kotlinx.collections.immutable.persistentListOf
 
 @Stable
 data class BackupConfigUiState(
     val settings: BackupSettings = BackupSettings(),
+    val nasSettings: NasSettings = NasSettings(),
+    val nasConnectionState: NasConnectionState = NasConnectionState.NotConfigured,
     val activeSheet: BackupConfigSheet? = null,
     val activeDialog: BackupConfigDialog? = null,
     val backupNames: ImmutableList<String> = persistentListOf(),
@@ -17,6 +20,28 @@ data class BackupConfigUiState(
     val dbIgnoreItems: ImmutableList<BackupIgnoreItem> = persistentListOf(),
     val backupDbIgnoreItems: ImmutableList<BackupIgnoreItem> = persistentListOf(),
 )
+
+/** Connection state shown by the NAS section in the backup settings screen. */
+enum class NasConnectionState {
+    NotConfigured,
+    Idle,
+    Testing,
+    Connected,
+    Failed,
+}
+
+/**
+ * Derives the state shown in the NAS settings section from persisted settings.
+ * A local verification marker is meaningful only while both credentials are
+ * present; this prevents an old marker from making a restored, token-less
+ * configuration appear connected.
+ */
+internal fun deriveNasConnectionState(settings: NasSettings): NasConnectionState = when {
+    settings.apiUrl.isBlank() || settings.apiToken.isBlank() -> NasConnectionState.NotConfigured
+    settings.lastConnectionError != null -> NasConnectionState.Failed
+    settings.connectionVerified -> NasConnectionState.Connected
+    else -> NasConnectionState.Idle
+}
 
 @Stable
 data class BackupIgnoreItem(
@@ -42,6 +67,12 @@ sealed interface BackupConfigDialog {
         val passwordVisible: Boolean = false,
     ) : BackupConfigDialog
 
+    /** Temporary editor state for the local-only NAS bearer token. */
+    data class NasToken(
+        val token: String,
+        val tokenVisible: Boolean = false,
+    ) : BackupConfigDialog
+
     data class ConfirmLocalRestoreFallback(val error: String?) : BackupConfigDialog
     data class Loading(@StringRes val titleRes: Int) : BackupConfigDialog
 }
@@ -63,6 +94,14 @@ sealed interface BackupConfigIntent {
     data object TogglePasswordVisibility : BackupConfigIntent
     data object SaveWebDavAuth : BackupConfigIntent
     data object TestWebDav : BackupConfigIntent
+    data object OpenNasToken : BackupConfigIntent
+    data class EditNasToken(val value: String) : BackupConfigIntent
+    data object ToggleNasTokenVisibility : BackupConfigIntent
+    data object SaveNasToken : BackupConfigIntent
+    data class SetNasUrl(val value: String) : BackupConfigIntent
+    data class SetNasToken(val value: String) : BackupConfigIntent
+    data class SetNasShowHomeCard(val value: Boolean) : BackupConfigIntent
+    data object TestNasConnection : BackupConfigIntent
     data object OpenIgnoreDialog : BackupConfigIntent
     data class ToggleIgnoreItem(val key: String, val value: Boolean) : BackupConfigIntent
     data object SaveIgnoreItems : BackupConfigIntent

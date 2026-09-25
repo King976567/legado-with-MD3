@@ -18,6 +18,12 @@ object CoverExtras {
     /** CoverInterceptor 解析得到的请求头，CoverFetcher 构造 OkHttp 请求用。 */
     val Headers = Extras.Key<Map<String, String>?>(null)
 
+    /**
+     * 请求已经是最终 URL（例如 NAS 封面）时，跳过书源 URL 解析。显式
+     * 请求头仍会由 [CoverFetcher] 使用。
+     */
+    val SkipAnalysis = Extras.Key<Boolean?>(null)
+
     /** 仅 WiFi 时加载。 */
     val LoadOnlyWifi = Extras.Key<Boolean?>(null)
 

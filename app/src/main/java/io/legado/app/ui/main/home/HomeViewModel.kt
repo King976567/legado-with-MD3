@@ -4,14 +4,16 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import io.legado.app.R
 import io.legado.app.data.repository.BookRepository
-import io.legado.app.data.repository.NasLibraryRepository
 import io.legado.app.domain.gateway.NasSettingsGateway
 import io.legado.app.domain.gateway.BackupSettingsGateway
 import io.legado.app.domain.model.HomeDashboardSection
 import io.legado.app.domain.model.HomeReadingBook
+import io.legado.app.domain.model.NasHttpException
+import io.legado.app.domain.model.settings.NasSettings
 import io.legado.app.domain.model.WebDavBackup
 import io.legado.app.domain.usecase.BackupRestoreUseCase
 import io.legado.app.domain.usecase.HomeDashboardUseCase
+import io.legado.app.domain.usecase.NasLibraryUseCase
 import io.legado.app.domain.usecase.WebDavBackupUseCase
 import io.legado.app.utils.isContentScheme
 import kotlinx.collections.immutable.toImmutableList
@@ -19,12 +21,14 @@ import kotlinx.collections.immutable.toImmutableSet
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.TimeoutCancellationException
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
@@ -37,7 +41,7 @@ class HomeViewModel(
     private val webDavBackupUseCase: WebDavBackupUseCase,
     private val backupRestoreUseCase: BackupRestoreUseCase,
     private val backupSettingsGateway: BackupSettingsGateway,
-    private val nasLibraryRepository: NasLibraryRepository,
+    private val nasLibraryUseCase: NasLibraryUseCase,
     private val nasSettingsGateway: NasSettingsGateway,
 ) : ViewModel() {
 
@@ -48,6 +52,8 @@ class HomeViewModel(
     private val _effects = MutableSharedFlow<HomeEffect>(extraBufferCapacity = 16)
     val effects = _effects.asSharedFlow()
     private var backupRefreshJob: Job? = null
+    private var nasRefreshJob: Job? = null
+    private var observedNasSettings: NasSettings? = null
     private val backupActionMutex = Mutex()
 
     private val dashboardData = combine(
@@ -109,8 +115,50 @@ class HomeViewModel(
         }
         viewModelScope.launch {
             nasSettingsGateway.settings.collect { settings ->
-                _nasState.value = NasHomeUiState(configured = settings.apiUrl.isNotBlank())
-                if (settings.showHomeCard && settings.apiUrl.isNotBlank()) refreshNas()
+                val previousSettings = observedNasSettings
+                val connectionInputsChanged = previousSettings == null ||
+                    !sameNasConnectionInputs(previousSettings, settings)
+                if (connectionInputsChanged) {
+                    // A settings edit or restore invalidates any request started
+                    // with the previous URL/token snapshot. Updating only the
+                    // persisted error below must not cancel and restart a request.
+                    nasRefreshJob?.cancel()
+                    nasRefreshJob = null
+                }
+                // A restored URL/home preference is not enough to activate the card:
+                // the bearer token is intentionally excluded from WebDAV backups and
+                // must be entered and tested again on the new device.
+                val configured = settings.apiUrl.isNotBlank() &&
+                    settings.apiToken.isNotBlank() && settings.connectionVerified
+                _nasState.update { current ->
+                    if (connectionInputsChanged) {
+                        NasHomeUiState(
+                            configured = configured,
+                            error = settings.lastConnectionError,
+                        )
+                    } else {
+                        current.copy(
+                            configured = configured,
+                            error = settings.lastConnectionError,
+                        )
+                    }
+                }
+                // The NAS switch is the source of truth for the card. Keep the
+                // dashboard section in sync so a successful first connection
+                // immediately makes the card visible, while turning it off in
+                // NAS settings removes it without touching other sections.
+                val visible = homeDashboardUseCase.observeVisibleSections()
+                val current = visible.first()
+                // Keep an explicitly enabled card visible even while it is
+                // unconfigured, so the user can see the state and open NAS
+                // settings. The default remains hidden because showHomeCard is
+                // false for new installs.
+                val shouldContain = settings.showHomeCard
+                val next = if (shouldContain) current + HomeDashboardSection.NasLibrary
+                else current - HomeDashboardSection.NasLibrary
+                if (next != current) homeDashboardUseCase.updateVisibleSections(next)
+                if (settings.showHomeCard && configured && connectionInputsChanged) refreshNas()
+                observedNasSettings = settings
             }
         }
     }
@@ -203,11 +251,22 @@ class HomeViewModel(
         section: HomeDashboardSection,
         visible: Boolean,
     ) {
+        // NAS is intentionally opt-in only after a successful connection test.
+        // A restored URL or a token that has not been verified must never cause
+        // the home page to start probing the service.
+        if (section == HomeDashboardSection.NasLibrary && visible &&
+            !_nasState.value.isConnected
+        ) {
+            return
+        }
         val sections = uiState.value.visibleSections.toMutableSet().apply {
             if (visible) add(section) else remove(section)
         }
         viewModelScope.launch {
             homeDashboardUseCase.updateVisibleSections(sections)
+            if (section == HomeDashboardSection.NasLibrary) {
+                nasSettingsGateway.update { it.copy(showHomeCard = visible) }
+            }
         }
     }
 
@@ -348,22 +407,66 @@ class HomeViewModel(
         }
     }
 
-    private fun refreshNas() {
-        viewModelScope.launch(Dispatchers.IO) {
+    fun refreshNas() {
+        nasRefreshJob?.cancel()
+        nasRefreshJob = viewModelScope.launch(Dispatchers.IO) {
             val settings = nasSettingsGateway.currentSettings
-            if (!settings.showHomeCard || settings.apiUrl.isBlank()) return@launch
+            if (!settings.showHomeCard || settings.apiUrl.isBlank() ||
+                settings.apiToken.isBlank() || !settings.connectionVerified
+            ) {
+                _nasState.value = NasHomeUiState(configured = false)
+                return@launch
+            }
             _nasState.update { it.copy(configured = true, isLoading = true, error = null) }
             runCatching {
-                val connection = nasLibraryRepository.checkConnection(settings)
-                nasLibraryRepository.listBooks(page = 1, pageSize = 1, settings = settings).total
-                    to connection
-            }.onSuccess { (total, _) ->
+                val connection = nasLibraryUseCase.checkConnection(settings)
+                val total = nasLibraryUseCase.listBooks(
+                    page = 1,
+                    pageSize = 1,
+                    settings = settings,
+                ).total
+                Pair(total, connection)
+            }.onSuccess { result ->
+                if (nasSettingsGateway.currentSettings != settings) return@onSuccess
+                val total = result.first
                 _nasState.update { it.copy(isLoading = false, isConnected = true, bookCount = total, error = null) }
+                persistNasConnectionError(settings, null)
             }.onFailure { error ->
-                _nasState.update { it.copy(isLoading = false, isConnected = false, error = error.localizedMessage ?: "NAS 连接失败") }
+                if (error is CancellationException && error !is TimeoutCancellationException) throw error
+                if (nasSettingsGateway.currentSettings != settings) return@onFailure
+                val message = error.toNasErrorMessage()
+                _nasState.update {
+                    it.copy(
+                        isLoading = false,
+                        isConnected = false,
+                        error = message,
+                    )
+                }
+                persistNasConnectionError(settings, message)
             }
         }
     }
+
+    private suspend fun persistNasConnectionError(
+        snapshot: NasSettings,
+        message: String?,
+    ) {
+        runCatching {
+            nasSettingsGateway.update { current ->
+                if (sameNasConnectionInputs(current, snapshot)) {
+                    current.copy(lastConnectionError = message)
+                } else {
+                    current
+                }
+            }
+        }
+    }
+
+    private fun sameNasConnectionInputs(left: NasSettings, right: NasSettings): Boolean =
+        left.apiUrl == right.apiUrl &&
+            left.apiToken == right.apiToken &&
+            left.showHomeCard == right.showHomeCard &&
+            left.connectionVerified == right.connectionVerified
 
     private suspend fun loadLatestBackup() {
         _backupState.update {
@@ -414,4 +517,15 @@ class HomeViewModel(
         chapterTitle = chapterTitle,
         chapterProgress = chapterProgress,
     )
+}
+
+private fun Throwable.toNasErrorMessage(): String = when (this) {
+    is TimeoutCancellationException -> "NAS 请求超时，请检查服务是否在线"
+    is java.io.IOException -> "无法连接 NAS，请检查网络和服务地址"
+    is NasHttpException -> when (statusCode) {
+        401 -> "NAS 访问令牌无效或已过期（401）"
+        403 -> "NAS 令牌没有访问权限（403）"
+        else -> message ?: "NAS 请求失败（HTTP $statusCode）"
+    }
+    else -> localizedMessage?.takeIf { it.isNotBlank() } ?: "NAS 连接失败，请检查网络和服务地址"
 }

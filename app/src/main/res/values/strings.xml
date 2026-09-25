@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <!--App-->
-    <string name="app_name">Legado</string>
+    <string name="app_name">MD3阅读</string>
     <string name="app_name_a">Legado·A</string>
     <string name="receiving_shared_label">Legado·search</string>
     <string name="tip_perm_request_storage">Legado needs storage access to find and read books. Please go "App Settings" to allow "Storage Permission".</string>
@@ -823,6 +823,22 @@
     <string name="web_dav_url_s">Input your WebDAV server address</string>
     <string name="web_dav_account">WebDAV Account</string>
     <string name="web_dav_account_d">Input your WebDAV account</string>
+    <string name="nas_settings">NAS settings</string>
+    <string name="nas_service_url">NAS service address</string>
+    <string name="nas_service_url_s">Address of the legado-nas-indexer service</string>
+    <string name="nas_access_token">NAS access token</string>
+    <string name="nas_access_token_s">Bearer token used only for NAS requests</string>
+    <string name="nas_test_connection">Test NAS connection</string>
+    <string name="nas_test_connection_s">Checks health, authentication and the books API</string>
+    <string name="nas_show_home_card">Show “My NAS” on home</string>
+    <string name="nas_show_home_card_s">Show the NAS library card on HomeDashboard</string>
+    <string name="nas_status_not_configured">Not configured</string>
+    <string name="nas_status_idle">Not tested</string>
+    <string name="nas_status_testing">Testing connection…</string>
+    <string name="nas_status_connected">Connected</string>
+    <string name="nas_status_failed">Connection failed: %1$s</string>
+    <string name="nas_test_success">NAS connection succeeded</string>
+    <string name="nas_test_failed">NAS connection failed: %1$s</string>
     <string name="rss_source">RSS source</string>
     <string name="rss_source_edit">Edit RSS source</string>
     <string name="screen">Filter</string>
@@ -2403,6 +2419,7 @@
     <string name="home_loading_webdav_backup">Loading backup information…</string>
     <string name="home_webdav_backup_load_error">Couldn\'t load backup information</string>
     <string name="home_nas_library">我的 NAS</string>
+    <string name="home_nas_not_configured">尚未配置 NAS，请先测试连接</string>
     <string name="home_nas_loading">正在连接 NAS…</string>
     <string name="home_nas_book_count">书库共 %1$d 本</string>
     <string name="home_nas_connection_failed">NAS 连接失败</string>
