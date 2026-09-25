@@ -1,0 +1,126 @@
+name: Verify sync PR
+
+on:
+  workflow_call:
+    inputs:
+      ref:
+        required: true
+        type: string
+      base:
+        required: true
+        type: string
+      stage:
+        required: true
+        type: string
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: 待验证提交 SHA
+        required: true
+        type: string
+      base:
+        description: 目标基线 SHA
+        required: true
+        type: string
+      stage:
+        description: 同步阶段
+        type: choice
+        options: [upstream, nas]
+        required: true
+  pull_request:
+    branches: [main, nas-md3]
+    types: [opened, synchronize, reopened]
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    if: >-
+      github.repository == 'King976567/legado-with-MD3' &&
+      (github.event_name != 'pull_request' ||
+      (github.event.pull_request.head.repo.full_name == github.repository &&
+      startsWith(github.head_ref, 'automation/sync-')))
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    env:
+      VERIFY_SHA: ${{ inputs.ref || github.event.pull_request.head.sha }}
+      VERIFY_BASE: ${{ inputs.base || github.event.pull_request.base.sha }}
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: ${{ env.VERIFY_SHA }}
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Verify target baseline
+        run: |
+          test "$(git rev-parse HEAD)" = "$VERIFY_SHA"
+          git merge-base --is-ancestor "$VERIFY_BASE" HEAD
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: 21
+      - uses: gradle/actions/setup-gradle@v4
+      - name: Tests, lint, architecture and arm64 APK
+        run: |
+          sed -i '/maven.aliyun.com/d' settings.gradle
+          chmod +x gradlew
+          ./gradlew testAppDebugUnitTest lintAppDebug verifyConfigArchitecture assembleAppDebug \
+            --init-script .github/scripts/arm64-only.gradle \
+            --project-prop ksp.incremental=false \
+            --continue --no-daemon --no-configuration-cache
+      - name: Upload arm64 trial APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: nas-sync-arm64-${{ env.VERIFY_SHA }}
+          path: app/build/outputs/apk/app/debug/*arm64-v8a*.apk
+          if-no-files-found: error
+          retention-days: 14
+      - name: Upload reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: sync-reports-${{ env.VERIFY_SHA }}
+          if-no-files-found: warn
+          retention-days: 14
+          path: |
+            app/build/test-results/testAppDebugUnitTest/**
+            app/build/reports/tests/testAppDebugUnitTest/**
+            app/build/reports/lint-results-appDebug.*
+
+  result:
+    needs: build
+    if: ${{ always() && needs.build.result != 'skipped' }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      statuses: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      VERIFY_SHA: ${{ inputs.ref || github.event.pull_request.head.sha }}
+      VERIFY_BASE: ${{ inputs.base || github.event.pull_request.base.sha }}
+      STAGE: ${{ inputs.stage || (github.base_ref == 'main' && 'upstream' || 'nas') }}
+      BUILD_RESULT: ${{ needs.build.result }}
+    steps:
+      # Candidate Gradle code never receives this job's write token.
+      - name: Publish verification status
+        shell: bash
+        run: |
+          set -euo pipefail
+          target=main
+          if [[ "$STAGE" == nas ]]; then target=nas-md3; fi
+          current_base="$(gh api "repos/$GITHUB_REPOSITORY/git/ref/heads/$target" --jq .object.sha)"
+          state=failure
+          description="验证失败或已取消，请查看报告"
+          if [[ "$BUILD_RESULT" == success && "$current_base" == "$VERIFY_BASE" ]]; then
+            state=success
+            description="测试、lint、架构检查、arm64 APK 全部通过，请人工确认合并"
+          elif [[ "$current_base" != "$VERIFY_BASE" ]]; then
+            description="目标分支已更新，请重新运行同步验证最新结果"
+          fi
+          run_url="$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"
+          gh api --method POST "repos/$GITHUB_REPOSITORY/statuses/$VERIFY_SHA" \
+            -f "state=$state" -f "context=Sync verification ($STAGE)" \
+            -f "description=$description" -f "target_url=$run_url"
+          echo "$description — $run_url" >> "$GITHUB_STEP_SUMMARY"
+          test "$state" = success

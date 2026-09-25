@@ -1,0 +1,13 @@
+// Register before Android's afterEvaluate finalization; only CI output changes.
+gradle.beforeProject { project ->
+    project.afterEvaluate {
+        if (project.plugins.hasPlugin('com.android.application')) {
+            project.android.splits.abi {
+                enable true
+                reset()
+                include 'arm64-v8a'
+                universalApk false
+            }
+        }
+    }
+}
