@@ -27,6 +27,7 @@
 - 若 NAS 分支在 PR 创建后新增了功能，重新从 `main` 手动运行 **Sync upstream**、选择 `nas`。流程会保留同步分支的人工修复，合入当前 NAS 基线并更新原 PR；仅重跑旧 run 仍验证旧 SHA。
 - `concurrent-futures{,-ktx}` 的 `1.1.0` 与 `1.2.0` 冲突来自 AGP 对应用/Android 测试 classpath 的一致性约束，不是仓库下载失败，也没有需要删除的项目 lockfile。应用侧两个依赖约束与 Espresso 3.7 / AndroidX Test 1.7 对齐到至少 `1.2.0`，不关闭一致性检查或跳过 AndroidTest lint。
 - `LatestChapterTaskSchedulerTest` 使用注入的测试调度器，明确执行到 worker 的 `finally` 清理完成再检查空闲状态，避免实际 IO 线程与 `Deferred.await()` 的竞争；生产调度和原断言不变。
+- Compose 测试依赖不单独写版本号，JVM 与 Android 测试都显式引入和应用相同的 Compose BOM，避免独立测试 runtime 解析出 `ui-test-junit4:` 空版本。
 - 本地 NAS 专项单测、APK 打包通过不等同于云端全量 JVM 测试及 lint 已通过，合并以当前候选 SHA 的完整验证为准。
 
 ## 重复执行和冲突
