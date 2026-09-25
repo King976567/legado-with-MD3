@@ -168,6 +168,29 @@ class NasLibraryRepositoryHttpTest {
     }
 
     @Test
+    fun redirectsAreNotFollowedWithTheNasBearerToken() = runBlocking {
+        server.enqueue(
+            MockResponse.Builder()
+                .code(302)
+                .setHeader("Location", "/admin/config")
+                .build(),
+        )
+
+        val error = try {
+            repository.listBooks(settings = settings)
+            throw AssertionError("expected redirect to remain a failed response")
+        } catch (expected: NasHttpException) {
+            expected
+        }
+
+        assertEquals(302, error.statusCode)
+        assertEquals(1, server.requestCount)
+        val request = takeRequest()
+        assertEquals("Bearer test-token", request.headers["Authorization"])
+        assertEquals("/api/books", requireNotNull(request.url).encodedPath)
+    }
+
+    @Test
     fun forbiddenResponseIsTypedForWriteOperations() = runBlocking {
         server.enqueue(MockResponse.Builder().code(403).body("forbidden").build())
 

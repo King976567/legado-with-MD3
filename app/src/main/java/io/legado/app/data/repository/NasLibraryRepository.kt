@@ -59,6 +59,15 @@ class NasLibraryRepository(
     private val requestTimeoutMs: Long = DEFAULT_REQUEST_TIMEOUT_MS,
 ) : NasLibraryGateway {
 
+    // NAS credentials must never be forwarded to an unrelated redirect target.
+    // Keep the injected client for testability, but make the production request
+    // client independent of the app's cookie/user-agent interceptors and disable
+    // both HTTP and HTTPS redirects.
+    private val requestClient: OkHttpClient = httpClient.newBuilder()
+        .followRedirects(false)
+        .followSslRedirects(false)
+        .build()
+
     override suspend fun checkConnection(settings: NasSettings): NasConnection =
         withContext(Dispatchers.IO) {
             val base = requireBaseUrl(settings.apiUrl)
@@ -541,7 +550,7 @@ class NasLibraryRepository(
         settings: NasSettings,
         configure: okhttp3.Request.Builder.() -> Unit,
     ): okhttp3.Response = withTimeout(requestTimeoutMs) {
-        httpClient.newCallResponse {
+        requestClient.newCallResponse {
             configure()
             addHeaders(nasAuthorizationHeaders(settings.apiToken))
         }

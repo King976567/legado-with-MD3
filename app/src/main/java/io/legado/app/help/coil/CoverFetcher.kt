@@ -98,6 +98,18 @@ class CoverFetcher(
         // credentials in the URL. Apply the same set to cache and network
         // requests; an empty map keeps the existing source-cover behavior.
         val requestHeaders = options.extras[CoverExtras.Headers].orEmpty()
+        // A NAS cover request carries a bearer token. Do not follow redirects
+        // for that request: otherwise an indexer could redirect `/covers/*` to
+        // another same-host path and OkHttp would forward the token there.
+        val requestCallFactory = if (requestHeaders.keys.any { it.equals("Authorization", true) }) {
+            (callFactory as? OkHttpClient)?.newBuilder()
+                ?.followRedirects(false)
+                ?.followSslRedirects(false)
+                ?.build()
+                ?: callFactory
+        } else {
+            callFactory
+        }
 
         // ===== 第二级：OkHttp HTTP 缓存（FORCE_CACHE 只读缓存，miss 返回 504，不碰网络）=====
         // 注意：WiFi 限制与失败冷却不能挡在本地缓存读取之前，
@@ -112,7 +124,7 @@ class CoverFetcher(
                     .apply { requestHeaders.forEach { (key, value) -> addHeader(key, value) } }
                     .cacheControl(CacheControl.FORCE_CACHE)
                     .build()
-                val cacheResponse = callFactory.newCall(cacheRequest).execute()
+                val cacheResponse = requestCallFactory.newCall(cacheRequest).execute()
                 if (cacheResponse.isSuccessful) {
                     fromCache = true
                     cacheResponse.body.use { rawBytes = it.bytes() }
@@ -150,7 +162,7 @@ class CoverFetcher(
                                 .build()
                         )
                         .build()
-                    val networkResponse = callFactory.newCall(networkRequest).execute()
+                    val networkResponse = requestCallFactory.newCall(networkRequest).execute()
                     val body = networkResponse.body
                     if (!networkResponse.isSuccessful) {
                         body.close()
