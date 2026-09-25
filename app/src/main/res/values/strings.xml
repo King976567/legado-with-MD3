@@ -2082,7 +2082,6 @@
     <string name="tool_bar_style">Tool bar style</string>
     <string name="bookshelf_total_count">%1$d books</string>
     <string name="bookshelf_selected_count">%1$d selected</string>
-    <string name="bookshelf_edit_subtitle">%1$s · %2$s</string>
     <string name="bookshelf_empty_global_search">No books here. Try global search.</string>
     <string name="global_search">Global search</string>
     <string name="cache_management">Cache management</string>
@@ -2774,6 +2773,7 @@
     <string name="long_press_select_mode">Tap items to select, back to exit</string>
     <string name="confirm_delete_read_record">Delete reading record?</string>
     <string name="delete_read_record_message">Delete this reading record?</string>
+    <string name="delete_reading_period_message">Delete this reading period? All continuous sessions in this row, including sessions from other devices, will be removed.</string>
     <string name="delete_selected_read_records_message">Delete %1$d selected reading records?</string>
     <string name="clear_read_records">Clear reading records</string>
     <string name="clear_read_records_summary">Delete all reading records, daily details, and timeline reading-period records</string>
@@ -2796,6 +2796,14 @@
     <string name="read_record_repair">Repair reading records</string>
     <string name="read_record_repair_summary">Merge records with a determined owner and remove reading-period records with identical fields</string>
     <string name="operation_failed">Operation failed</string>
+    <string name="do_not_remind_again_this_page">Don’t ask again until this screen is closed</string>
+    <string name="do_not_remind_again_long_term">Do not remind me again in the future</string>
+    <string name="restore_delete_confirmation">Restore delete confirmation</string>
+    <string name="restore_delete_confirmation_summary">Ask for confirmation before deleting reading records again</string>
+    <string name="delete_confirmation_restored">Delete confirmation restored</string>
+    <string name="read_record_deleted">Reading record deleted</string>
+    <string name="read_records_cleared">Reading records cleared</string>
+    <string name="read_records_merged">Reading records merged</string>
     <string name="merge_read_records_message">Merge selected reading records into “%1$s” by %2$s.</string>
     <string name="merge_read_record_candidate">%1$s / %2$s (%3$s)</string>
     <string name="no_merge_candidates">No other reading records can be merged</string>
@@ -3419,6 +3427,12 @@
     <string name="feature_bookmarks_chapter_fallback">Chapter %1$d</string>
 
     <string name="bookshelf_conflict_title">Possible Duplicate</string>
+    <!-- 详情页「加入书架」按钮的冲突态文案（按钮上的文字 / 读屏描述） -->
+    <string name="bookshelf_conflict_hint">Possible Duplicate</string>
+    <string name="bookshelf_conflict_hint_desc">Possible duplicate, tap to add to bookshelf</string>
+    <!-- 已入架书籍的「书架操作」Sheet：标题与副本列表的分组标题 -->
+    <string name="shelf_actions_title">On-shelf Actions</string>
+    <string name="shelf_duplicate_count">Other copies: %1$d</string>
     <string name="bookshelf_conflict_existing_title">Already on bookshelf</string>
     <string name="bookshelf_conflict_open_hint">Tap a book to open its details</string>
     <string name="bookshelf_conflict_coexist">Keep Both</string>

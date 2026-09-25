@@ -306,6 +306,7 @@ import io.legado.app.ui.login.SourceLoginViewModel
 import io.legado.app.ui.main.MainNavRouteTracker
 import io.legado.app.ui.main.MainRouteSearchContent
 import io.legado.app.ui.main.MainViewModel
+import io.legado.app.ui.main.bookshelf.BookshelfCoverPreloader
 import io.legado.app.ui.main.bookshelf.BookshelfViewModel
 import io.legado.app.ui.main.bookshelf.autoGroup.AiAutoGroupViewModel
 import io.legado.app.ui.main.explore.ExploreViewModel
@@ -567,6 +568,8 @@ val appModule = module {
             .crossfade(true)
             .build()
     }
+    // 书架首屏封面预热：依赖上面的 ImageLoader 单例，进程内复用已缓存封面
+    singleOf(::BookshelfCoverPreloader)
 
     viewModelOf(::DictRuleViewModel)
     viewModelOf(::ImportDictRuleViewModel)
