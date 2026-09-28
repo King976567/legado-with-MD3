@@ -210,6 +210,8 @@ sealed interface MangaReaderIntent {
     data object OpenSourceLogin : MangaReaderIntent
     data object OpenSourceEdit : MangaReaderIntent
     data class SourceCustomButton(val longClick: Boolean) : MangaReaderIntent
+    /** Top-bar back button: leave the reader even when the reader menu is open. */
+    data object CloseReader : MangaReaderIntent
     data object BackPressed : MangaReaderIntent
     data object ToggleMenu : MangaReaderIntent
     data object HideMenu : MangaReaderIntent

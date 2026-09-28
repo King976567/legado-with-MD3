@@ -112,6 +112,8 @@ import me.saket.telephoto.zoomable.rememberZoomableImageState
 import me.saket.telephoto.zoomable.rememberZoomableState
 import me.saket.telephoto.zoomable.zoomable
 import org.koin.compose.koinInject
+import java.io.File
+import java.net.URI
 import kotlin.math.ceil
 import kotlin.math.roundToInt
 
@@ -1121,72 +1123,37 @@ private fun MangaReaderItem(
         }
         is MangaReaderItemUi.ChapterTransition -> Box(
             modifier = modifier
-                .then(if (paged) Modifier.fillMaxHeight() else Modifier.heightIn(min = 160.dp)),
+                // In webtoon mode this is a separator, not a full black "page".
+                // Keeping it compact prevents the last page of one chapter and the
+                // first page of the next chapter from looking like an error screen.
+                .then(if (paged) Modifier.fillMaxHeight() else Modifier.heightIn(min = 76.dp))
+                .background(MaterialTheme.colorScheme.surfaceContainer.copy(alpha = 0.96f)),
             contentAlignment = Alignment.Center,
         ) {
             Column(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .widthIn(max = 460.dp)
-                    .padding(horizontal = 32.dp, vertical = 24.dp),
-                horizontalAlignment = Alignment.Start,
-                verticalArrangement = Arrangement.spacedBy(6.dp),
+                    .widthIn(max = 680.dp)
+                    .padding(horizontal = 20.dp, vertical = if (paged) 32.dp else 10.dp),
+                horizontalAlignment = Alignment.CenterHorizontally,
+                verticalArrangement = Arrangement.spacedBy(if (paged) 10.dp else 4.dp),
             ) {
-                val topLabel = if (item.direction == MangaChapterTransitionDirection.PREVIOUS) {
+                // A chapter boundary only needs to identify the chapter we are
+                // entering. Showing both "上一章" and "当前章节" duplicates long
+                // comic titles and creates the large dark block seen between pages.
+                val targetLabel = if (item.direction == MangaChapterTransitionDirection.PREVIOUS) {
                     stringResource(R.string.manga_reader_transition_previous)
-                } else {
-                    stringResource(R.string.manga_reader_transition_current)
-                }
-                val bottomLabel = if (item.direction == MangaChapterTransitionDirection.PREVIOUS) {
-                    stringResource(R.string.manga_reader_transition_current)
                 } else {
                     stringResource(R.string.manga_reader_transition_next)
                 }
-                val topChapter = if (item.direction == MangaChapterTransitionDirection.PREVIOUS) {
-                    item.targetChapterName
-                } else {
-                    item.currentChapterName
-                }
-                val bottomChapter = if (item.direction == MangaChapterTransitionDirection.PREVIOUS) {
-                    item.currentChapterName
-                } else {
-                    item.targetChapterName
-                }
+                val targetChapter = item.targetChapterName
                 Text(
-                    "$topLabel：",
+                    targetChapter?.let { "$targetLabel：$it" }
+                        ?: targetLabel,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    style = MaterialTheme.typography.titleMedium,
-                )
-                Text(
-                    topChapter ?: stringResource(
-                        if (item.direction == MangaChapterTransitionDirection.PREVIOUS) {
-                            R.string.manga_reader_no_previous_chapter
-                        } else {
-                            R.string.manga_reader_no_next_chapter
-                        }
-                    ),
-                    color = MaterialTheme.colorScheme.onSurface,
-                    style = MaterialTheme.typography.titleLarge,
-                    maxLines = 5,
-                    overflow = TextOverflow.Ellipsis,
-                )
-                Text(
-                    "$bottomLabel：",
-                    modifier = Modifier.padding(top = 18.dp),
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    style = MaterialTheme.typography.titleMedium,
-                )
-                Text(
-                    bottomChapter ?: stringResource(
-                        if (item.direction == MangaChapterTransitionDirection.PREVIOUS) {
-                            R.string.manga_reader_no_previous_chapter
-                        } else {
-                            R.string.manga_reader_no_next_chapter
-                        }
-                    ),
-                    color = MaterialTheme.colorScheme.onSurface,
-                    style = MaterialTheme.typography.titleLarge,
-                    maxLines = 5,
+                    style = if (paged) MaterialTheme.typography.titleLarge
+                    else MaterialTheme.typography.labelLarge,
+                    maxLines = if (paged) 3 else 1,
                     overflow = TextOverflow.Ellipsis,
                 )
                 if (item.targetStatus == MangaChapterTransitionStatus.LOADING) {
@@ -1454,7 +1421,11 @@ private fun MangaReaderItemUi.Page.imageRequest(
     val memoryCacheKey = "manga-page:$bookUrl:$imageUrl:${settings.sourceOrigin}:" +
         "${settings.enableEInk}:${settings.eInkThreshold}:${settings.enableGray}"
     return ImageRequest.Builder(context)
-        .data(imageUrl)
+        // Local CBZ pages are emitted as file:// URLs by LocalMangaLoader. Pass a
+        // File/Uri object to Coil instead of relying on the String mapper; this
+        // avoids routing a local page through the HTTP/source fetcher and also
+        // handles percent-encoded Chinese archive paths correctly.
+        .data(mangaImageRequestData(imageUrl))
         .allowHardware(true)
         // The preload request has no view-size resolver while the displayed request does. A
         // shared key lets the displayed request reuse it immediately, then crossfade only if a
@@ -1492,7 +1463,7 @@ private fun MangaReaderItemUi.Page.backgroundColorRequest(
     aspectRatio: Float,
     onColors: (MangaPageEdgeColors) -> Unit,
 ): ImageRequest = ImageRequest.Builder(context)
-    .data(imageUrl)
+    .data(mangaImageRequestData(imageUrl))
     .let { builder ->
         backgroundDecodeSize(aspectRatio).let { size ->
             builder.size(size.width, size.height)
@@ -1508,6 +1479,15 @@ private fun MangaReaderItemUi.Page.backgroundColorRequest(
         onColors(extractMangaEdgeColors(result.image.toBitmap(), fallbackColor))
     })
     .build()
+
+private fun mangaImageRequestData(imageUrl: String): Any = when {
+    imageUrl.startsWith("file:", ignoreCase = true) ->
+        runCatching { File(URI(imageUrl)) }.getOrDefault(imageUrl)
+    imageUrl.startsWith("content:", ignoreCase = true) ->
+        android.net.Uri.parse(imageUrl)
+    imageUrl.startsWith("/" ) -> File(imageUrl)
+    else -> imageUrl
+}
 
 private fun backgroundDecodeSize(aspectRatio: Float): IntSize {
     val shortEdge = 256

@@ -28,8 +28,8 @@ import io.legado.app.R
 import io.legado.app.constant.AppLog
 import io.legado.app.data.entities.BookGroup
 import io.legado.app.help.book.isAudio
+import io.legado.app.help.book.isArchive
 import io.legado.app.help.book.isImage
-import io.legado.app.help.book.isLocal
 import io.legado.app.help.security.BiometricUnlockLauncher
 import io.legado.app.model.SourceCallBack
 import io.legado.app.ui.book.info.edit.BookInfoEditActivity
@@ -158,7 +158,7 @@ fun BookInfoRouteScreen(
                             effect.inBookshelf
                         )
 
-                        !effect.book.isLocal && effect.book.isImage && showMangaUi -> {
+                        effect.book.isImage && (showMangaUi || effect.book.isArchive) -> {
                             onOpenMangaReader(
                                 effect.book.bookUrl,
                                 effect.inBookshelf,

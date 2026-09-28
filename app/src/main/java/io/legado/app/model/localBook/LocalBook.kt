@@ -509,6 +509,27 @@ object LocalBook {
         }
     }
 
+    /**
+     * Stores a downloaded NAS book in app-private storage.
+     *
+     * NAS transfers must still work when the user-selected SAF tree was
+     * revoked by Android or points at a provider that no longer grants write
+     * access.  The returned file URI is fully compatible with importFile(s)
+     * and remains available across process restarts without broad storage
+     * permissions.
+     */
+    fun saveBookFileInAppStorage(
+        inputStream: InputStream,
+        fileName: String,
+    ): Uri {
+        val directory = File(appCtx.filesDir, "nas-books").apply { mkdirs() }
+        val file = File(directory, fileName)
+        inputStream.use { input ->
+            FileOutputStream(file).use { output -> input.copyTo(output) }
+        }
+        return Uri.fromFile(file)
+    }
+
     fun isOnBookShelf(
         fileName: String
     ): Boolean {

@@ -5,6 +5,7 @@ import android.net.Uri
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import io.legado.app.data.entities.Book
+import io.legado.app.data.repository.NasTransferHistoryRepository
 import io.legado.app.domain.gateway.NasDownloadSink
 import io.legado.app.domain.gateway.NasUploadSource
 import io.legado.app.domain.gateway.NasSettingsGateway
@@ -20,6 +21,8 @@ import io.legado.app.domain.model.NasTaskStatus
 import io.legado.app.domain.model.NasWriteAccess
 import io.legado.app.domain.model.settings.NasSettings
 import io.legado.app.domain.usecase.NasLibraryUseCase
+import io.legado.app.exception.NoBooksDirException
+import io.legado.app.help.book.isImage
 import io.legado.app.model.localBook.LocalBook
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
@@ -46,6 +49,44 @@ import java.io.IOException
  */
 private const val NAS_DEFAULT_PAGE_SIZE = 30
 
+internal fun nasDownloadFileName(book: NasBook): String {
+    val rawName = book.fileName.ifBlank {
+        book.relativePath.substringAfterLast('/').ifBlank { book.displayTitle }
+    }
+    val safeBaseName = rawName
+        .replace(Regex("[\\\\/:*?\"<>|]"), "_")
+        .trim()
+        .ifBlank { "nas-download" }
+    val declaredExtension = book.extension.trim().trimStart('.')
+        .ifBlank { book.kind.trim().trimStart('.') }
+        .lowercase()
+    val isComicArchive = declaredExtension == "cbz" ||
+        safeBaseName.substringAfterLast('.', "").equals("cbz", ignoreCase = true)
+    val suffix = if (isComicArchive) "cbz" else declaredExtension
+    return if (suffix.isNotBlank() &&
+        !safeBaseName.endsWith(".$suffix", ignoreCase = true)
+    ) {
+        "$safeBaseName.$suffix"
+    } else {
+        safeBaseName
+    }
+}
+
+internal fun isNasComicArchive(book: NasBook, fileName: String): Boolean =
+    book.chapterCount > 0 ||
+        book.kind.equals("cbz", ignoreCase = true) ||
+        book.extension.trimStart('.').equals("cbz", ignoreCase = true) ||
+        fileName.substringAfterLast('.', "").equals("cbz", ignoreCase = true)
+
+private fun isZipArchive(file: File): Boolean = runCatching {
+    file.inputStream().use { input ->
+        val header = ByteArray(4)
+        input.read(header) == 4 && header[0] == 'P'.code.toByte() &&
+            header[1] == 'K'.code.toByte() &&
+            (header[2] == 3.toByte() || header[2] == 5.toByte() || header[2] == 7.toByte())
+    }
+}.getOrDefault(false)
+
 data class NasLibraryUiState(
     val books: List<NasBook> = emptyList(),
     val page: Int = 1,
@@ -67,6 +108,7 @@ data class NasLibraryUiState(
     val directoryPath: String? = null,
     val isLoadingDirectories: Boolean = false,
     val selectedBook: NasBook? = null,
+    val deletingBook: NasBook? = null,
     val editingBook: NasBook? = null,
     val movingBook: NasBook? = null,
     val tasks: List<NasTask> = emptyList(),
@@ -121,6 +163,9 @@ sealed interface NasLibraryIntent {
     ) : NasLibraryIntent
     data class RequestEdit(val book: NasBook) : NasLibraryIntent
     data class RequestMove(val book: NasBook) : NasLibraryIntent
+    data class RequestDelete(val book: NasBook) : NasLibraryIntent
+    data object DismissDelete : NasLibraryIntent
+    data class DeleteBook(val book: NasBook) : NasLibraryIntent
     data class MoveBook(
         val book: NasBook,
         val targetDirectoryPath: String,
@@ -143,6 +188,7 @@ class NasLibraryViewModel(
     private val context: Context,
     private val nasLibraryUseCase: NasLibraryUseCase,
     private val nasSettingsGateway: NasSettingsGateway,
+    private val nasTransferHistoryRepository: NasTransferHistoryRepository,
 ) : ViewModel() {
 
     private val _uiState = MutableStateFlow(NasLibraryUiState())
@@ -260,6 +306,9 @@ class NasLibraryViewModel(
             is NasLibraryIntent.SaveMetadata -> saveMetadata(intent)
             is NasLibraryIntent.RequestEdit -> _uiState.update { it.copy(editingBook = intent.book) }
             is NasLibraryIntent.RequestMove -> _uiState.update { it.copy(movingBook = intent.book) }
+            is NasLibraryIntent.RequestDelete -> _uiState.update { it.copy(deletingBook = intent.book) }
+            NasLibraryIntent.DismissDelete -> _uiState.update { it.copy(deletingBook = null) }
+            is NasLibraryIntent.DeleteBook -> deleteBookFile(intent.book)
             is NasLibraryIntent.MoveBook -> moveBook(intent)
             NasLibraryIntent.DismissEditor -> _uiState.update { it.copy(editingBook = null) }
             NasLibraryIntent.DismissMove -> _uiState.update { it.copy(movingBook = null) }
@@ -495,12 +544,21 @@ class NasLibraryViewModel(
 
     private fun downloadBook(book: NasBook) {
         if (!canReadAction("download")) return
+        val historyId = "nas-download:${book.id}:${System.currentTimeMillis()}"
+        val safeName = nasDownloadFileName(book)
+        val isComicArchive = isNasComicArchive(book, safeName)
+        nasTransferHistoryRepository.recordStarted(
+            id = historyId,
+            direction = "download",
+            title = book.displayTitle,
+            kind = if (isComicArchive) "comic" else "book",
+            remotePath = book.relativePath,
+            retryKey = book.id,
+        )
         viewModelScope.launch(Dispatchers.IO) {
             _uiState.update { it.copy(isActionRunning = true, actionError = null) }
             var temporaryFile: File? = null
             runCatching {
-                val safeName = book.fileName.ifBlank { "${book.displayTitle}.txt" }
-                    .replace(Regex("[\\\\/:*?\"<>|]"), "_")
                 val file = File(context.cacheDir, "nas-download-${System.currentTimeMillis()}-$safeName")
                 temporaryFile = file
                 FileOutputStream(file).use { output ->
@@ -511,17 +569,48 @@ class NasLibraryViewModel(
                         },
                     )
                 }
-                val uri = FileInputStream(file).use { input ->
-                    LocalBook.saveBookFile(input, safeName)
+                val comicArchive = isComicArchive || isZipArchive(file)
+                val importName = if (comicArchive && !safeName.endsWith(".cbz", ignoreCase = true)) {
+                    "$safeName.cbz"
+                } else {
+                    safeName
                 }
-                LocalBook.importFile(uri)
+                val uri = saveNasBookFile(file, importName)
+                // importFiles detects image entries in CBZ/ZIP archives and
+                // creates a local image book with the manga chapter loader.
+                if (comicArchive) {
+                    LocalBook.importFiles(uri).singleOrNull()
+                        ?: throw IOException("NAS 漫画压缩包导入失败")
+                } else {
+                    LocalBook.importFile(uri)
+                }
             }.onSuccess { imported ->
+                // The CBZ deliberately contains only reading pages.  NAS stores
+                // its curated cover beside the archive, so fetch it separately
+                // after the local import.  A cover outage must never turn a
+                // successful comic download into a failed transfer.
+                if (isComicArchive) tryDownloadNasCover(book, imported)
+                nasTransferHistoryRepository.recordFinished(
+                    id = historyId,
+                    state = NasTransferHistoryRepository.SUCCEEDED,
+                    remotePath = book.relativePath,
+                )
                 _uiState.update { it.copy(isActionRunning = false, selectedBook = null) }
                 _effects.emit(NasLibraryEffect.OpenLocalBook(imported))
             }.onFailure { error ->
                 if (error is CancellationException && error !is TimeoutCancellationException) {
+                    nasTransferHistoryRepository.recordFinished(
+                        id = historyId,
+                        state = NasTransferHistoryRepository.CANCELLED,
+                        message = error.localizedMessage,
+                    )
                     throw error
                 }
+                nasTransferHistoryRepository.recordFinished(
+                    id = historyId,
+                    state = NasTransferHistoryRepository.FAILED,
+                    message = error.localizedMessage,
+                )
                 _uiState.update {
                     it.copy(
                         isActionRunning = false,
@@ -531,6 +620,42 @@ class NasLibraryViewModel(
                 _effects.emit(NasLibraryEffect.ShowMessage(error.toNasMessage()))
             }.also {
                 temporaryFile?.delete()
+            }
+        }
+    }
+
+    private fun saveNasBookFile(file: File, fileName: String): Uri =
+        runCatching { FileInputStream(file).use { LocalBook.saveBookFile(it, fileName) } }.getOrElse { error ->
+            if (error is SecurityException || error is NoBooksDirException) {
+                // SAF permissions can be revoked while the app is not running.
+                // Keep NAS downloads usable by falling back to app-private
+                // storage instead of asking the user to repeat the transfer.
+                FileInputStream(file).use { LocalBook.saveBookFileInAppStorage(it, fileName) }
+            } else {
+                throw error
+            }
+        }
+
+    private suspend fun tryDownloadNasCover(remoteBook: NasBook, localBook: Book) {
+        if (remoteBook.coverUrl.isNullOrBlank() || !localBook.isImage) return
+        runCatching {
+            val temporary = File(context.cacheDir, "nas-cover-${remoteBook.id}-${System.nanoTime()}.tmp")
+            try {
+                FileOutputStream(temporary).use { output ->
+                    nasLibraryUseCase.downloadCover(
+                        id = remoteBook.id,
+                        sink = NasDownloadSink { chunk, offset, length ->
+                            output.write(chunk, offset, length)
+                        },
+                    )
+                }
+                if (temporary.length() <= 0L) return@runCatching
+                val target = File(LocalBook.getCoverPath(localBook)).apply { parentFile?.mkdirs() }
+                temporary.copyTo(target, overwrite = true)
+                localBook.coverUrl = target.toURI().toString()
+                localBook.save()
+            } finally {
+                temporary.delete()
             }
         }
     }
@@ -770,6 +895,40 @@ class NasLibraryViewModel(
         }
     }
 
+    private fun deleteBookFile(book: NasBook) {
+        if (!canWriteAction("deleteBookFile")) return
+        viewModelScope.launch(Dispatchers.IO) {
+            _uiState.update { it.copy(isActionRunning = true, actionError = null) }
+            runCatching { nasLibraryUseCase.deleteBookFile(book.id) }
+                .onSuccess {
+                    _uiState.update { state ->
+                        state.copy(
+                            isActionRunning = false,
+                            deletingBook = null,
+                            selectedBook = null,
+                            books = state.books.filterNot { it.id == book.id },
+                            total = (state.total - 1).coerceAtLeast(0),
+                        )
+                    }
+                    _effects.emit(NasLibraryEffect.ShowMessage("NAS 源文件和书库索引已删除"))
+                }
+                .onFailure { error ->
+                    if (error is CancellationException && error !is TimeoutCancellationException) {
+                        throw error
+                    }
+                    _uiState.update {
+                        it.copy(
+                            isActionRunning = false,
+                            deletingBook = null,
+                            writeAccessDenied = it.writeAccessDenied || error.isWritePermissionError(),
+                            actionError = error.toNasMessage(),
+                        )
+                    }
+                    _effects.emit(NasLibraryEffect.ShowMessage(error.toNasMessage()))
+                }
+        }
+    }
+
     override fun onCleared() {
         loadJob?.cancel()
         connectionJob?.cancel()
@@ -784,6 +943,11 @@ class NasLibraryViewModel(
         is NasHttpException -> when (statusCode) {
             401 -> "NAS 访问令牌无效或已过期（401）"
             403 -> "NAS 令牌没有访问权限（403）"
+            404 -> if (message.orEmpty().contains("Book file not found", ignoreCase = true)) {
+                "NAS 书库记录存在，但源文件已被删除或移动，请刷新索引或重新上传（404）"
+            } else {
+                message ?: "NAS 资源不存在（404）"
+            }
             else -> message ?: "NAS 请求失败（HTTP $statusCode）"
         }
         else -> localizedMessage?.takeIf { it.isNotBlank() } ?: "NAS 连接失败，请检查网络和服务地址"

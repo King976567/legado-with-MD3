@@ -83,9 +83,13 @@ class MangaReaderDataRepository(
             }
         }
         var chapterCount = database.bookChapterDao.getChapterCount(book.bookUrl)
-        if (chapterCount == 0 || book.isLocalModified()) {
+        // Rebuild local comic chapters from the archive layout on every open.
+        // Older imports may have stored one chapter per image; using that stale
+        // table would keep a repaired CBZ unreadable until it was re-imported.
+        val isLocalManga = book.isLocal && localMangaLoader.supports(book)
+        if (chapterCount == 0 || book.isLocalModified() || isLocalManga) {
             if (book.isLocal) {
-                val chapters = if (localMangaLoader.supports(book)) {
+                val chapters = if (isLocalManga) {
                     localMangaLoader.chapters(book).also {
                         book.totalChapterNum = it.size
                         book.latestChapterTitle = it.lastOrNull()?.title.orEmpty()
@@ -113,6 +117,13 @@ class MangaReaderDataRepository(
             }
         }
         if (chapterCount == 0) chapterCount = database.bookChapterDao.getChapterCount(book.bookUrl)
+        // Older CBZ imports only indexed pages and left the bookshelf with the
+        // generic placeholder cover. Reuse the same extracted image set to
+        // materialize a stable cover without downloading or re-importing the
+        // comic.
+        if (isLocalManga && localMangaLoader.ensureCover(book)) {
+            database.bookDao.update(book)
+        }
         val simulatedCount = if (book.readSimulating()) {
             book.simulatedTotalChapterNum()
         } else chapterCount

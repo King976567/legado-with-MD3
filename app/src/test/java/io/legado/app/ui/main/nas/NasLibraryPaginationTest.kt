@@ -2,6 +2,7 @@ package io.legado.app.ui.main.nas
 
 import android.app.Application
 import androidx.lifecycle.ViewModelStore
+import io.legado.app.data.repository.NasTransferHistoryRepository
 import io.legado.app.domain.gateway.NasLibraryGateway
 import io.legado.app.domain.gateway.NasSettingsGateway
 import io.legado.app.domain.model.NasBook
@@ -47,7 +48,13 @@ class NasLibraryPaginationTest {
 
     @Before fun setUp() {
         Dispatchers.setMain(UnconfinedTestDispatcher())
-        model = NasLibraryViewModel(RuntimeEnvironment.getApplication(), NasLibraryUseCase(api, settings), settings)
+        val application: Application = RuntimeEnvironment.getApplication()
+        model = NasLibraryViewModel(
+            application,
+            NasLibraryUseCase(api, settings),
+            settings,
+            NasTransferHistoryRepository(application),
+        )
         store.put("nas", model)
     }
 

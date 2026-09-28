@@ -391,7 +391,15 @@ private fun BookInfoScreenContent(
                                     BookInfoHeader(
                                         book = book,
                                         highlightedTags = state.highlightedTags,
-                                        kindLabels = state.kindLabels,
+                                        // A local CBZ is an image book. Older imports could
+                                        // leave the archive byte count in the text-book
+                                        // word-count tag (for example "12602.2万字"). It is
+                                        // not meaningful for comics and makes the header look
+                                        // like a novel, so only render the real comic/file tags.
+                                        kindLabels = state.kindLabels.filterNot {
+                                            (book.type and BookType.image) != 0 &&
+                                                it.trim().matches(Regex(".*\\d.*字$"))
+                                        },
                                         groupNames = state.groupNames,
                                         onCoverClick = { onIntent(BookInfoIntent.CoverClick) },
                                         onCoverLongClick = { onIntent(BookInfoIntent.CoverLongClick) },
@@ -1005,6 +1013,13 @@ internal fun BookInfoOverflowMenu(
                 )
             }
         }
+        if (book?.isLocal == false && (book.type and BookType.image) != 0 && state.nasUploadVisible) {
+            RoundDropdownMenuItem(
+                text = stringResource(R.string.feature_book_info_nas_comic_title),
+                enabled = !state.isBusy && !state.nasComicPreparing && !state.nasComicUpload.running,
+                onClick = { onMenuAction(BookInfoMenuAction.UploadNasComic) },
+            )
+        }
         if (state.bookSourceUi?.hasLogin == true) {
             RoundDropdownMenuItem(
                 text = stringResource(R.string.login),
@@ -1487,7 +1502,9 @@ private fun BookInfoSummary(
             }
         }
         Spacer(modifier = Modifier.height(4.dp))
-        BookInfoIntro(
+        // Comic archives do not have a text introduction. The old importer could expose
+        // ComicInfo.xml or the ZIP bytes as `intro`; never render that as novel content.
+        if ((book.type and BookType.image) == 0) BookInfoIntro(
             intro = book.intro,
             baseUrl = book.bookUrl
                 .takeIf { it.startsWith("http", true) }
@@ -1909,6 +1926,36 @@ private fun BookInfoDialogs(
         confirmText = stringResource(android.R.string.ok),
         onConfirm = { onIntent(BookInfoIntent.DismissDialog) },
     )
+
+    val comicConfirm = dialog as? BookInfoDialog.NasComicUploadConfirm
+    AppAlertDialog(
+        show = comicConfirm != null,
+        onDismissRequest = { onIntent(BookInfoIntent.CancelNasComicUpload) },
+        title = stringResource(R.string.feature_book_info_nas_comic_title),
+        text = comicConfirm?.let { confirm ->
+            confirm.preparation.remoteBook?.let { remote ->
+                stringResource(
+                    R.string.feature_book_info_nas_comic_replace_confirm,
+                    remote.chapterCount,
+                    remote.fileName,
+                )
+            } ?: stringResource(
+                R.string.feature_book_info_nas_comic_first_confirm,
+                confirm.preparation.title,
+                confirm.preparation.chapterCount,
+            )
+        },
+        confirmText = stringResource(
+            if (comicConfirm?.preparation?.remoteBook != null) {
+                R.string.feature_book_info_nas_comic_update
+            } else {
+                R.string.feature_book_info_nas_comic_start
+            }
+        ),
+        onConfirm = { onIntent(BookInfoIntent.ConfirmNasComicUpload) },
+        dismissText = stringResource(android.R.string.cancel),
+        onDismiss = { onIntent(BookInfoIntent.CancelNasComicUpload) },
+    )
     var deleteOriginal by remember(dialog, state.deleteOriginal) { mutableStateOf(state.deleteOriginal) }
     var remarkText by remember(dialog) { mutableStateOf((dialog as? BookInfoDialog.EditRemark)?.remark.orEmpty()) }
 
@@ -2020,6 +2067,20 @@ private fun BookInfoDialogs(
                 AppCircularProgressIndicator()
             }
         }
+    )
+
+    AppAlertDialog(
+        show = state.nasComicPreparing,
+        onDismissRequest = { onIntent(BookInfoIntent.CancelNasComicUpload) },
+        title = stringResource(R.string.feature_book_info_nas_comic_title),
+        text = stringResource(R.string.feature_book_info_nas_comic_stage_refreshing),
+        dismissText = stringResource(android.R.string.cancel),
+        onDismiss = { onIntent(BookInfoIntent.CancelNasComicUpload) },
+        content = {
+            Box(modifier = Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) {
+                AppCircularProgressIndicator()
+            }
+        },
     )
 
     AppLogSheet(show = state.showAppLogSheet, onDismissRequest = { onIntent(BookInfoIntent.DismissAppLogSheet) })

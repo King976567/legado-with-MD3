@@ -91,7 +91,7 @@ class NasLocalBookUploadRepositoryTest {
                 NasBookPage(listOf(NasBook("existing", relativePath = "other/renamed.txt", contentHash = knownHash)), 1, 200, 1)
         override suspend fun uploadBook(source: NasUploadSource, fileName: String, contentLength: Long?,
             duplicatePolicy: String, title: String, author: String, intro: String, directoryPath: String,
-            settings: NasSettings): NasUploadResult {
+            settings: NasSettings, clientSourceKey: String, chapterCount: Int, replaceBookId: String?): NasUploadResult {
             this.fileName = fileName
             source.writeTo { data, offset, length ->
                 maxChunk = maxOf(maxChunk, length)

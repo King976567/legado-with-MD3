@@ -473,6 +473,14 @@
             android:name=".service.DownloadService"
             android:foregroundServiceType="dataSync" />
 
+        <!-- WorkManager uses this service for foreground workers such as NAS comic uploads.
+             Declare the type explicitly for Android 14+ and Android 16 target enforcement. -->
+        <service
+            android:name="androidx.work.impl.foreground.SystemForegroundService"
+            android:foregroundServiceType="dataSync"
+            android:exported="false"
+            tools:replace="android:foregroundServiceType" />
+
         <service
             android:name="androidx.appcompat.app.AppLocalesMetadataHolderService"
             android:enabled="false"

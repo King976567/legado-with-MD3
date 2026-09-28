@@ -68,6 +68,9 @@ import io.legado.app.data.repository.LocalPasswordRepository
 import io.legado.app.data.repository.MangaSettingsRepository
 import io.legado.app.data.repository.NasLibraryRepository
 import io.legado.app.data.repository.NasLocalBookUploadRepository
+import io.legado.app.data.repository.NasTransferHistoryRepository
+import io.legado.app.data.repository.NasTransferRetryRepository
+import io.legado.app.data.repository.NasUploadTaskRepository
 import io.legado.app.data.repository.NasSettingsRepository
 import io.legado.app.data.repository.OtherConfigSystemRepository
 import io.legado.app.data.repository.OtherSettingsRepository
@@ -104,6 +107,7 @@ import io.legado.app.data.repository.WebDavReadingProgressRepository
 import io.legado.app.data.repository.manga.DefaultMangaReaderSession
 import io.legado.app.data.repository.manga.MangaReaderActionRepository
 import io.legado.app.data.repository.manga.MangaReaderDataRepository
+import io.legado.app.data.repository.manga.NasComicUploadRepository
 import io.legado.app.data.security.CloudTtsCredentialCipher
 import io.legado.app.domain.gateway.AiArtifactGateway
 import io.legado.app.domain.gateway.AiChatGateway
@@ -462,6 +466,10 @@ val appModule = module {
     singleOf(::NasLibraryUseCase)
     singleOf(::UploadNasBookUseCase)
     singleOf(::NasLocalBookUploadRepository)
+    singleOf(::NasTransferHistoryRepository)
+    singleOf(::NasTransferRetryRepository)
+    singleOf(::NasUploadTaskRepository)
+    singleOf(::NasComicUploadRepository)
     singleOf(::RemoveBookGroupAssignmentUseCase)
     singleOf(::UpdateBooksGroupUseCase)
     singleOf(::UploadReadingProgressUseCase)

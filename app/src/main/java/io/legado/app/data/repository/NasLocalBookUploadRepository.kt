@@ -1,6 +1,13 @@
 package io.legado.app.data.repository
 
 import android.content.Context
+import androidx.work.BackoffPolicy
+import androidx.work.Constraints
+import androidx.work.Data
+import androidx.work.ExistingWorkPolicy
+import androidx.work.NetworkType
+import androidx.work.OneTimeWorkRequestBuilder
+import androidx.work.WorkManager
 import io.legado.app.data.entities.Book
 import io.legado.app.domain.gateway.NasUploadSource
 import io.legado.app.domain.model.settings.NasSettings
@@ -18,12 +25,54 @@ import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.withContext
 import java.io.File
 import java.security.MessageDigest
+import java.util.concurrent.TimeUnit
 
 /** Spools a local/content URI so the hashed bytes and uploaded bytes cannot diverge. */
 class NasLocalBookUploadRepository(
     private val context: Context,
     private val upload: UploadNasBookUseCase,
 ) {
+    private val workManager by lazy(LazyThreadSafetyMode.NONE) {
+        WorkManager.getInstance(context)
+    }
+
+    fun enqueue(book: Book) = enqueue(book.bookUrl, book.name)
+
+    fun retry(bookUrl: String, title: String) = enqueue(bookUrl, title)
+
+    private fun enqueue(bookUrl: String, title: String) {
+        val createdAt = System.currentTimeMillis()
+        val request = OneTimeWorkRequestBuilder<NasLocalBookUploadWorker>()
+            .setInputData(
+                Data.Builder()
+                    .putString(NasLocalBookUploadWorker.KEY_BOOK_URL, bookUrl)
+                    .putString(NasUploadTaskRepository.KEY_TITLE, title)
+                    .putString(NasUploadTaskRepository.KEY_KIND, "book")
+                    .putLong(NasUploadTaskRepository.KEY_CREATED_AT, createdAt)
+                    .build(),
+            )
+            .setConstraints(
+                Constraints.Builder()
+                    .setRequiredNetworkType(NetworkType.UNMETERED)
+                    .build(),
+            )
+            .setBackoffCriteria(BackoffPolicy.EXPONENTIAL, 10, TimeUnit.SECONDS)
+            .addTag(NasUploadTaskRepository.TAG)
+            .addTag(NasUploadTaskRepository.TITLE_TAG_PREFIX + title.take(180))
+            .addTag(NasUploadTaskRepository.CREATED_TAG_PREFIX + createdAt)
+            .addTag(NasUploadTaskRepository.RETRY_KEY_TAG_PREFIX + bookUrl)
+            .build()
+        workManager.enqueueUniqueWork(
+            "${NasLocalBookUploadWorker.WORK_PREFIX}${bookUrl.hashCode()}",
+            ExistingWorkPolicy.KEEP,
+            request,
+        )
+    }
+
+    fun cancel(bookUrl: String) {
+        workManager.cancelUniqueWork("${NasLocalBookUploadWorker.WORK_PREFIX}${bookUrl.hashCode()}")
+    }
+
     suspend fun upload(book: Book, settings: NasSettings, onStage: (NasBookUploadStage) -> Unit): NasBookUploadOutcome =
         withContext(Dispatchers.IO) {
             if (!book.isLocal) throw NasBookUploadException(NasBookUploadError.InvalidFile)

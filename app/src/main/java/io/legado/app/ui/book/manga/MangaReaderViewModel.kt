@@ -185,6 +185,7 @@ class MangaReaderViewModel(
                     )
                 )
             }
+            MangaReaderIntent.CloseReader -> closeReader()
             MangaReaderIntent.BackPressed -> {
                 when {
                     _uiState.value.activeDialog != null -> {
@@ -322,6 +323,27 @@ class MangaReaderViewModel(
                         .toImmutableList()
                 )
             }
+        }
+    }
+
+    /**
+     * The title-bar button follows the normal reader's close affordance.  It
+     * must not be treated as Android back: Android back dismisses the reader
+     * menu first, while an explicit top-bar close should leave the reader in a
+     * single tap even when that menu is visible.
+     */
+    private fun closeReader() {
+        when {
+            readerSession.state.value.book != null &&
+                    readerSession.state.value.book?.inBookshelf == false &&
+                    _uiState.value.confirmAddToShelf -> {
+                _uiState.update { it.copy(activeDialog = MangaReaderDialog.AddToShelf) }
+            }
+            readerSession.state.value.book != null &&
+                    readerSession.state.value.book?.inBookshelf == false -> onIntent(
+                MangaReaderIntent.DiscardCurrentBookAndExit
+            )
+            else -> _effects.tryEmit(MangaReaderEffect.Finish())
         }
     }
 

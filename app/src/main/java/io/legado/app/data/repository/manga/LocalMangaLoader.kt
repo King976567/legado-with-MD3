@@ -7,16 +7,19 @@ import io.legado.app.data.entities.BookChapter
 import io.legado.app.domain.model.manga.MangaChapterContent
 import io.legado.app.domain.model.manga.MangaPageContent
 import io.legado.app.exception.NoStackTraceException
+import io.legado.app.model.localBook.LocalBook
 import io.legado.app.utils.AlphanumComparator
 import io.legado.app.utils.ArchiveUtils
 import io.legado.app.utils.MD5Utils
 import splitties.init.appCtx
 import java.io.File
+import java.io.FileOutputStream
+import java.net.URI
 
 /** Dedicated local comic metadata loader for image directories and comic archives. */
 internal class LocalMangaLoader(private val cacheRoot: File) : AutoCloseable {
     private val extractedRoots = linkedSetOf<File>()
-    private val extractedBooks = mutableMapOf<String, File>()
+    private val extractedBooks = mutableMapOf<String, ExtractedArchive>()
 
     fun supports(book: Book): Boolean = book.originName.endsWith(".cbz", true) ||
             book.originName.endsWith(".zip", true) || localDirectory(book) != null
@@ -55,26 +58,88 @@ internal class LocalMangaLoader(private val cacheRoot: File) : AutoCloseable {
     }
 
     private fun archiveImages(book: Book): List<ImageEntry> {
-        val root = extractedBooks.getOrPut(book.bookUrl) { extract(book) }
-        return root.walkTopDown()
+        val archive = extractedBooks.getOrPut(book.bookUrl) { extract(book) }
+        return archive.files
+            .asSequence()
             .filter { it.isFile && it.extension.lowercase() in IMAGE_EXTENSIONS }
-            .map { ImageEntry(it.relativeTo(root).invariantSeparatorsPath, it.toURI().toString()) }
+            .map {
+                ImageEntry(
+                    it.relativeTo(archive.root).invariantSeparatorsPath,
+                    it.toURI().toString(),
+                )
+            }
             .toList()
     }
 
-    private fun extract(book: Book): File {
+    /**
+     * Materialize a stable local cover for an imported comic archive/directory.
+     *
+     * CBZ files do not have a separate cover URL. The first explicitly named
+     * cover image is preferred, otherwise the first naturally sorted page is
+     * used. Keeping the copy under the normal book cover directory means the
+     * bookshelf and book-info screens can use the existing cover pipeline.
+     */
+    fun ensureCover(book: Book): Boolean {
+        if (!book.coverUrl.isNullOrBlank() || !book.customCoverUrl.isNullOrBlank()) return false
+        val image = runCatching {
+            imageGroups(book).values.flatten()
+                .sortedWith(compareBy(AlphanumComparator) { it.path })
+                .minWithOrNull(
+                    compareBy<ImageEntry> {
+                        val name = it.path.substringAfterLast('/').lowercase()
+                        if (name.substringBeforeLast('.').contains("cover") ||
+                            name.substringBeforeLast('.').contains("front") ||
+                            name.substringBeforeLast('.').contains("folder")
+                        ) 0 else 1
+                    }.thenBy(AlphanumComparator) { it.path }
+                )
+        }.getOrNull() ?: return false
+        val destination = File(LocalBook.getCoverPath(book)).apply { parentFile?.mkdirs() }
+        return runCatching {
+            openImage(image.url).use { input ->
+                FileOutputStream(destination).use { output -> input.copyTo(output) }
+            }
+            if (destination.length() <= 0L) {
+                destination.delete()
+                false
+            } else {
+                book.coverUrl = destination.toURI().toString()
+                true
+            }
+        }.getOrDefault(false)
+    }
+
+    private fun openImage(url: String): java.io.InputStream {
+        return when {
+            url.startsWith("content:", ignoreCase = true) ->
+                appCtx.contentResolver.openInputStream(android.net.Uri.parse(url))
+                    ?: error("漫画封面不可读")
+            url.startsWith("file:", ignoreCase = true) -> File(URI(url)).inputStream()
+            else -> File(url).inputStream()
+        }
+    }
+
+    private fun extract(book: Book): ExtractedArchive {
         val base = File(cacheRoot, MD5Utils.md5Encode16(book.bookUrl)).apply { mkdirs() }
         extractedRoots += base
         val files = ArchiveUtils.deCompress(book.bookUrl, base.path) { path ->
             path.substringAfterLast('.').lowercase() in IMAGE_EXTENSIONS
         }
-        return files.map(File::getParentFile).filterNotNull().reduceOrNull(::commonParent) ?: base
+        val root = files.map(File::getParentFile).filterNotNull().reduceOrNull(::commonParent) ?: base
+        return ExtractedArchive(root, files)
     }
 
     private fun localDirectory(book: Book): Any? {
         return if (book.bookUrl.startsWith("content://")) {
             val uri = book.bookUrl.toUri()
-            DocumentFile.fromTreeUri(appCtx, uri)?.takeIf { it.isDirectory }
+            // A persisted SAF file URI contains both /tree/ and /document/.
+            // Treating it as a tree makes a CBZ look like an empty directory.
+            val document = if (uri.pathSegments.any { it == "document" }) {
+                DocumentFile.fromSingleUri(appCtx, uri)
+            } else {
+                DocumentFile.fromTreeUri(appCtx, uri)
+            }
+            document?.takeIf { it.isDirectory }
         } else {
             val path = if (book.bookUrl.startsWith("file:")) {
                 java.net.URI(book.bookUrl).path
@@ -125,4 +190,6 @@ internal class LocalMangaLoader(private val cacheRoot: File) : AutoCloseable {
     }
 
     private data class ImageEntry(val path: String, val url: String)
+
+    private data class ExtractedArchive(val root: File, val files: List<File>)
 }

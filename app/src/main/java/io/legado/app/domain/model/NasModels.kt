@@ -19,7 +19,13 @@ data class NasBook(
     val confidence: Double = 0.0,
     val needsReview: Boolean = false,
     val coverUrl: String? = null,
+    val coverRevision: String = "",
     val contentHash: String = "",
+    val clientSourceKey: String = "",
+    val chapterCount: Int = 0,
+    /** Server-side file metadata used to preserve comic archive imports. */
+    val extension: String = "",
+    val kind: String = "",
 ) {
     val directoryPath: String
         get() = relativePath.substringBeforeLast('/', "")
@@ -48,6 +54,12 @@ data class NasBookDetail(
     val confidence: Double = 0.0,
     val needsReview: Boolean = false,
     val coverUrl: String? = null,
+    val coverRevision: String = "",
+    val contentHash: String = "",
+    val clientSourceKey: String = "",
+    val chapterCount: Int = 0,
+    val extension: String = "",
+    val kind: String = "",
 ) {
     fun toBook() = NasBook(
         id = id,
@@ -67,6 +79,12 @@ data class NasBookDetail(
         confidence = confidence,
         needsReview = needsReview,
         coverUrl = coverUrl,
+        coverRevision = coverRevision,
+        contentHash = contentHash,
+        clientSourceKey = clientSourceKey,
+        chapterCount = chapterCount,
+        extension = extension,
+        kind = kind,
     )
 }
 
@@ -100,12 +118,18 @@ data class NasCapabilities(
     val service: String = "",
     val version: String = "",
     val defaultUploadDirectory: String = "",
+    val supportedUploadExtensions: Set<String> = emptySet(),
+    val maxUploadBytes: Long = 0,
     val paths: Map<String, NasCapabilityPath> = emptyMap(),
 ) {
     fun supports(feature: String): Boolean = feature in features
 
     val supportsIndexer: Boolean get() = supports("indexer")
     val supportsLibraryDirectories: Boolean get() = supports("libraryDirectories")
+    val supportsDeleteBookFile: Boolean get() = supports("deleteBookFile")
+    val supportsComicCbzUpload: Boolean
+        get() = supports("comicCbzUpload") && supports("clientSourceIdentity") &&
+            supportedUploadExtensions.any { it.equals(".cbz", ignoreCase = true) }
 }
 
 enum class NasWriteAccess { ALLOWED, DENIED, UNKNOWN }

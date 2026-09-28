@@ -292,6 +292,14 @@ fun NasLibraryScreen(
             },
         )
     }
+    state.deletingBook?.let { book ->
+        DeleteBookDialog(
+            book = book,
+            enabled = !state.isActionRunning && !state.writeAccessDenied,
+            onDismiss = { onIntent(NasLibraryIntent.DismissDelete) },
+            onConfirm = { onIntent(NasLibraryIntent.DeleteBook(book)) },
+        )
+    }
     if (state.isDiagnosing || state.diagnostic != null || state.diagnosticError != null) {
         NasDiagnosticDialog(
             isRunning = state.isDiagnosing,
@@ -837,6 +845,34 @@ private fun MetadataDialog(
             ) { Text("保存") }
         },
         dismissButton = { TextButton(onClick = onDismiss) { Text("取消") } },
+    )
+}
+
+@Composable
+private fun DeleteBookDialog(
+    book: NasBook,
+    enabled: Boolean,
+    onDismiss: () -> Unit,
+    onConfirm: () -> Unit,
+) {
+    AlertDialog(
+        onDismissRequest = { if (enabled) onDismiss() },
+        title = { Text(stringResource(R.string.feature_nas_book_remove_title)) },
+        text = {
+            Text(
+                stringResource(R.string.feature_nas_book_remove_message, book.displayTitle),
+            )
+        },
+        confirmButton = {
+            TextButton(onClick = onConfirm, enabled = enabled) {
+                Text(stringResource(R.string.feature_nas_book_remove_confirm))
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss, enabled = enabled) {
+                Text(stringResource(R.string.cancel))
+            }
+        },
     )
 }
 

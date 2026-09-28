@@ -61,6 +61,11 @@ class NasLibraryUseCase(
         settings: NasSettings = settingsGateway.currentSettings,
     ): NasBookDetail = gateway.updateMetadata(id, title, author, intro, settings)
 
+    suspend fun deleteBookFile(
+        id: String,
+        settings: NasSettings = settingsGateway.currentSettings,
+    ) = gateway.deleteBookFile(id, settings)
+
     suspend fun moveBook(
         id: String,
         targetDirectoryPath: String,
@@ -95,6 +100,12 @@ class NasLibraryUseCase(
         sink: NasDownloadSink,
         settings: NasSettings = settingsGateway.currentSettings,
     ) = gateway.downloadBook(id, sink, settings)
+
+    suspend fun downloadCover(
+        id: String,
+        sink: NasDownloadSink,
+        settings: NasSettings = settingsGateway.currentSettings,
+    ) = gateway.downloadCover(id, sink, settings)
 
     suspend fun refreshIndex(settings: NasSettings = settingsGateway.currentSettings): NasTaskStatus =
         gateway.refreshIndex(settings)

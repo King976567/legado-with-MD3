@@ -211,6 +211,18 @@ class NasLibraryRepositoryHttpTest {
     }
 
     @Test
+    fun deleteBookFileUsesDedicatedDestructiveEndpoint() = runBlocking {
+        server.enqueue(jsonResponse("""{"message":"Book file deleted","fileDeleted":true,"indexDeleted":true}"""))
+
+        repository.deleteBookFile("book id/中文", settings)
+
+        val request = takeRequest()
+        assertEquals("DELETE", request.method)
+        assertEquals("/api/books/book%20id%2F%E4%B8%AD%E6%96%87/file", requireNotNull(request.url).encodedPath)
+        assertEquals("Bearer test-token", request.headers["Authorization"])
+    }
+
+    @Test
     fun taskConflictPreservesCurrentTaskDetails() = runBlocking {
         server.enqueue(
             jsonResponse(
@@ -303,6 +315,44 @@ class NasLibraryRepositoryHttpTest {
         val request = takeRequest()
         assertEquals("/api/books/book-1/download", requireNotNull(request.url).encodedPath)
         assertEquals("Bearer test-token", request.headers["Authorization"])
+    }
+
+    @Test
+    fun downloadCoverStreamsResponseBodyToSink() = runBlocking {
+        server.enqueue(MockResponse.Builder().body("cover-bytes").build())
+        val received = StringBuilder()
+        repository.downloadCover(
+            id = "book/中文",
+            sink = NasDownloadSink { bytes, offset, length ->
+                received.append(String(bytes, offset, length))
+            },
+            settings = settings,
+        )
+
+        assertEquals("cover-bytes", received.toString())
+        val request = takeRequest()
+        assertEquals("/api/books/book%2F%E4%B8%AD%E6%96%87/cover", requireNotNull(request.url).encodedPath)
+        assertEquals("Bearer test-token", request.headers["Authorization"])
+    }
+
+    @Test
+    fun download404KeepsServerDiagnostic() = runBlocking {
+        server.enqueue(
+            MockResponse.Builder()
+                .code(404)
+                .body("{\"error\":\"Book file not found on NAS\"}")
+                .build(),
+        )
+
+        val error = try {
+            repository.downloadBook("book-1", NasDownloadSink { _, _, _ -> }, settings)
+            throw AssertionError("expected 404")
+        } catch (expected: NasHttpException) {
+            expected
+        }
+
+        assertEquals(404, error.statusCode)
+        assertTrue(error.message.orEmpty().contains("Book file not found on NAS"))
     }
 
     @Test

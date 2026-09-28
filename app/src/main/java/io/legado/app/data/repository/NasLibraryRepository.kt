@@ -251,6 +251,21 @@ class NasLibraryRepository(
             }
         }
 
+    override suspend fun findByClientSourceKey(
+        clientSourceKey: String,
+        settings: NasSettings,
+    ): NasBookDetail? = withContext(Dispatchers.IO) {
+        require(clientSourceKey.matches(Regex("[a-fA-F0-9]{64}")))
+        val base = requireBaseUrl(settings.apiUrl)
+        call(settings) {
+            url(apiUrl(base, "books/by-client-source/${encode(clientSourceKey.lowercase())}"))
+        }.use { response ->
+            if (response.code == 404) return@withContext null
+            ensureSuccess(response, "NAS 同源书籍查询失败")
+            parseDetail(response.body.text(), base)
+        }
+    }
+
     override suspend fun updateMetadata(
         id: String,
         title: String,
@@ -270,6 +285,17 @@ class NasLibraryRepository(
             ensureSuccess(response, "NAS 元数据保存失败")
             parseDetail(response.body.text(), base)
         }
+    }
+
+    override suspend fun deleteBookFile(
+        id: String,
+        settings: NasSettings,
+    ): Unit = withContext(Dispatchers.IO) {
+        val base = requireBaseUrl(settings.apiUrl)
+        call(settings) {
+            url(apiUrl(base, "books/${encode(id)}/file"))
+            delete()
+        }.use { response -> ensureSuccess(response, "NAS 源文件删除失败") }
     }
 
     override suspend fun moveBook(
@@ -300,6 +326,9 @@ class NasLibraryRepository(
         intro: String,
         directoryPath: String,
         settings: NasSettings,
+        clientSourceKey: String,
+        chapterCount: Int,
+        replaceBookId: String?,
     ): NasUploadResult = withContext(Dispatchers.IO) {
         val base = requireBaseUrl(settings.apiUrl)
         val uploadBody = object : okhttp3.RequestBody() {
@@ -323,6 +352,9 @@ class NasLibraryRepository(
                 "contentType" to "application/octet-stream",
             ),
         )
+        clientSourceKey.takeIf(String::isNotBlank)?.let { form["clientSourceKey"] = it }
+        if (chapterCount > 0) form["chapterCount"] = chapterCount.toString()
+        replaceBookId?.takeIf(String::isNotBlank)?.let { form["replaceBookId"] = it }
         call(settings) {
             url(apiUrl(base, "books/upload"))
             postMultipart("multipart/form-data", form)
@@ -334,6 +366,30 @@ class NasLibraryRepository(
         }
     }
 
+    override suspend fun uploadCover(
+        id: String,
+        source: NasUploadSource,
+        fileName: String,
+        contentLength: Long?,
+        settings: NasSettings,
+    ): Unit = withContext(Dispatchers.IO) {
+        val base = requireBaseUrl(settings.apiUrl)
+        val body = object : okhttp3.RequestBody() {
+            override fun contentType() = "application/octet-stream".toMediaType()
+            override fun contentLength(): Long = contentLength ?: -1L
+            override fun writeTo(sink: okio.BufferedSink) {
+                source.writeTo(NasChunkSink { chunk, offset, length -> sink.write(chunk, offset, length) })
+            }
+        }
+        call(settings) {
+            url(apiUrl(base, "books/${encode(id)}/cover"))
+            postMultipart(
+                "multipart/form-data",
+                mapOf("cover" to mapOf("fileName" to fileName, "file" to body, "contentType" to "application/octet-stream")),
+            )
+        }.use { response -> ensureSuccess(response, "NAS 封面上传失败") }
+    }
+
     override suspend fun downloadBook(
         id: String,
         sink: NasDownloadSink,
@@ -342,6 +398,25 @@ class NasLibraryRepository(
         val base = requireBaseUrl(settings.apiUrl)
         call(settings) { url(apiUrl(base, "books/${encode(id)}/download")) }.use { response ->
             ensureSuccess(response, "NAS 下载失败")
+            response.body.byteStream().use { input ->
+                val buffer = ByteArray(DEFAULT_TRANSFER_BUFFER_SIZE)
+                while (true) {
+                    val count = input.read(buffer)
+                    if (count < 0) break
+                    if (count > 0) sink.write(buffer, 0, count)
+                }
+            }
+        }
+    }
+
+    override suspend fun downloadCover(
+        id: String,
+        sink: NasDownloadSink,
+        settings: NasSettings,
+    ): Unit = withContext(Dispatchers.IO) {
+        val base = requireBaseUrl(settings.apiUrl)
+        call(settings) { url(apiUrl(base, "books/${encode(id)}/cover")) }.use { response ->
+            ensureSuccess(response, "NAS 封面下载失败")
             response.body.byteStream().use { input ->
                 val buffer = ByteArray(DEFAULT_TRANSFER_BUFFER_SIZE)
                 while (true) {
@@ -561,7 +636,22 @@ class NasLibraryRepository(
 
     private fun ensureSuccess(response: okhttp3.Response, message: String) {
         if (!response.isSuccessful) {
-            throw NasHttpException(response.code, "$message：HTTP ${response.code}")
+            // The NAS API distinguishes a stale index record from a missing
+            // book ID in the response body. Preserve that small diagnostic so
+            // the UI can tell the user whether a refresh or re-upload is needed
+            // instead of reducing every 404 to the same status code.
+            val detail = runCatching {
+                response.body.text().trim().takeIf(String::isNotEmpty)?.let { body ->
+                    runCatching {
+                        GSON.fromJson(body, JsonObject::class.java)
+                            ?.string("error", "message")
+                            ?.trim()
+                            ?.takeIf(String::isNotEmpty)
+                    }.getOrNull() ?: body.take(160)
+                }
+            }.getOrNull()
+            val suffix = detail?.let { "：$it" }.orEmpty()
+            throw NasHttpException(response.code, "$message：HTTP ${response.code}$suffix")
         }
     }
 
@@ -617,6 +707,8 @@ class NasLibraryRepository(
             service = root.string("service").orEmpty(),
             version = root.string("version").orEmpty(),
             defaultUploadDirectory = root.string("defaultUploadDirectory", "default_upload_directory").orEmpty(),
+            supportedUploadExtensions = root.stringArray("supportedUploadExtensions", "supported_upload_extensions").toSet(),
+            maxUploadBytes = root.long("maxUploadBytes", "max_upload_bytes"),
             paths = paths,
         )
     }
@@ -667,6 +759,12 @@ class NasLibraryRepository(
                 confidence = it.confidence,
                 needsReview = it.needsReview,
                 coverUrl = it.coverUrl,
+                coverRevision = it.coverRevision,
+                contentHash = it.contentHash,
+                clientSourceKey = it.clientSourceKey,
+                chapterCount = it.chapterCount,
+                extension = it.extension,
+                kind = it.kind,
             )
         }
     }
@@ -689,6 +787,10 @@ class NasLibraryRepository(
             intro = item.string("manualIntro", "manual_intro", "scrapedIntro", "scraped_intro", "intro"),
             size = item.long("fileSize", "file_size", "size"),
             contentHash = item.string("contentHash", "content_hash").orEmpty(),
+            clientSourceKey = item.string("clientSourceKey", "client_source_key").orEmpty(),
+            chapterCount = item.int("chapterCount", "chapter_count") ?: 0,
+            extension = item.string("extension", "fileExtension", "file_extension").orEmpty(),
+            kind = item.string("kind", "fileType", "file_type").orEmpty(),
             lastModified = item.long("lastModified", "last_modified", "updatedAt", "updated_at"),
             indexedAt = item.long("indexedAt", "indexed_at"),
             scrapeStatus = item.string("scrapeStatus", "scrape_status").orEmpty(),
@@ -698,7 +800,9 @@ class NasLibraryRepository(
             suggestedRelativePath = item.string("suggestedRelativePath", "suggested_relative_path"),
             confidence = item.double("confidence"),
             needsReview = item.bool("needsReview", "needs_review"),
-            coverUrl = resolveCoverUrl(base, item.string("coverUrl", "cover_url", "cover")),
+            coverUrl = resolveCoverUrl(base, item.string("coverUrl", "cover_url", "cover"),
+                item.string("updatedAt", "updated_at").orEmpty()),
+            coverRevision = item.string("updatedAt", "updated_at").orEmpty(),
         )
     }
 
@@ -707,7 +811,7 @@ class NasLibraryRepository(
      * Compose/Coil cannot resolve those paths without the NAS origin, so turn
      * them into an absolute URL while preserving externally hosted covers.
      */
-    internal fun resolveCoverUrl(base: String?, raw: String?): String? {
+    internal fun resolveCoverUrl(base: String?, raw: String?, revision: String = ""): String? {
         val value = raw?.trim()?.takeIf(String::isNotEmpty) ?: return null
         val lower = value.lowercase()
         if (lower.startsWith("http://") || lower.startsWith("https://")) return value
@@ -716,7 +820,13 @@ class NasLibraryRepository(
             ?.toHttpUrlOrNull()
             ?: return value
         val path = if (value.startsWith('/')) value else "/$value"
-        return origin.resolve(path)?.toString() ?: value
+        val resolved = origin.resolve(path)?.toString() ?: value
+        if (revision.isBlank()) return resolved
+        return resolved.toHttpUrlOrNull()?.newBuilder()
+            ?.addQueryParameter("coverRevision", revision)
+            ?.build()
+            ?.toString()
+            ?: resolved
     }
 
     private fun serviceRoot(base: String): String = when {
@@ -821,8 +931,8 @@ class NasLibraryRepository(
         }
     }
 
-    private fun JsonObject.stringArray(name: String): List<String> =
-        get(name)?.takeIf(JsonElement::isJsonArray)?.asJsonArray?.mapNotNull {
+    private fun JsonObject.stringArray(vararg names: String): List<String> =
+        names.firstNotNullOfOrNull { name -> get(name)?.takeIf(JsonElement::isJsonArray)?.asJsonArray }?.mapNotNull {
             runCatching { it.asString }.getOrNull()
         }.orEmpty()
 

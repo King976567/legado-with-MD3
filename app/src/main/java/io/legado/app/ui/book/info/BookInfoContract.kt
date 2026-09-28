@@ -10,6 +10,8 @@ import io.legado.app.data.entities.readRecord.ReadRecordTimelineDay
 import io.legado.app.domain.model.BookshelfConflict
 import io.legado.app.domain.model.ConflictBookSummary
 import io.legado.app.domain.model.PrivateAccessState
+import io.legado.app.domain.model.NasComicUploadPreparation
+import io.legado.app.domain.model.NasComicUploadState
 import io.legado.app.domain.usecase.ChangeSourceMigrationOptions
 import io.legado.app.domain.usecase.NasBookUploadStage
 import io.legado.app.ui.widget.components.variable.VariableEditorUiState
@@ -47,6 +49,8 @@ data class BookInfoUiState(
     val nasUploadVisible: Boolean = false,
     val nasUploadDenied: Boolean = false,
     val nasUploadStage: NasBookUploadStage? = null,
+    val nasComicPreparing: Boolean = false,
+    val nasComicUpload: NasComicUploadState = NasComicUploadState(),
     val deleteAlertEnabled: Boolean = true,
     val deleteOriginal: Boolean = false,
     val showAppLogSheet: Boolean = false,
@@ -161,6 +165,9 @@ sealed interface BookInfoSheet {
 
 sealed interface BookInfoDialog {
     data class NasUploadResult(val message: String) : BookInfoDialog
+    data class NasComicUploadConfirm(
+        val preparation: NasComicUploadPreparation,
+    ) : BookInfoDialog
     data class DeleteBook(val isLocal: Boolean) : BookInfoDialog
     data class EditRemark(val remark: String?) : BookInfoDialog
     data class PhotoPreview(val path: String) : BookInfoDialog
@@ -189,6 +196,8 @@ sealed interface BookInfoIntent {
     data object CancelNasUpload : BookInfoIntent
     data object DismissSheet : BookInfoIntent
     data object DismissDialog : BookInfoIntent
+    data object ConfirmNasComicUpload : BookInfoIntent
+    data object CancelNasComicUpload : BookInfoIntent
     data object DismissAppLogSheet : BookInfoIntent
     data class UpdateVariable(val value: String) : BookInfoIntent
     data object SaveVariable : BookInfoIntent
@@ -377,6 +386,7 @@ enum class BookInfoMenuAction {
     Share,
     Upload,
     UploadNas,
+    UploadNasComic,
     SyncRemote,
     Refresh,
     ReadRecord,

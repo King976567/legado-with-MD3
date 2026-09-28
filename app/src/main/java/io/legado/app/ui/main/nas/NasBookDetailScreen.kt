@@ -76,6 +76,10 @@ internal fun NasBookDetailScreen(
 ) {
     val book = state.selectedBook ?: return
     key(book.id) {
+        val isComic = book.chapterCount > 0 ||
+            book.kind.equals("cbz", ignoreCase = true) ||
+            book.extension.trimStart('.').equals("cbz", ignoreCase = true) ||
+            book.fileName.substringAfterLast('.', "").equals("cbz", ignoreCase = true)
         var expandedTitle by rememberSaveable { mutableStateOf(false) }
         val listState = rememberLazyListState()
         val scrollBehavior = if (ThemeResolver.isMiuixEngine(LegadoTheme.composeEngine)) {
@@ -170,6 +174,9 @@ internal fun NasBookDetailScreen(
                                     val extension = book.fileName.substringAfterLast('.', "")
                                     if (extension.isNotBlank()) item { DetailTag(extension.uppercase()) }
                                     if (book.size > 0) item { DetailTag(formatBytes(book.size)) }
+                                    if (isComic && book.chapterCount > 0) {
+                                        item { DetailTag("共 ${book.chapterCount} 章") }
+                                    }
                                 }
                             },
                         )
@@ -194,9 +201,15 @@ internal fun NasBookDetailScreen(
                             Text(stringResource(R.string.feature_nas_book_download_hint),
                                 style = LegadoTheme.typography.labelMedium,
                                 color = LegadoTheme.colorScheme.onSurfaceVariant)
-                            AnimatedTextLine(book.intro?.takeIf(String::isNotBlank)
-                                ?: stringResource(R.string.intro_show_null),
-                                style = LegadoTheme.typography.bodyMedium)
+                            if (!isComic) {
+                                AnimatedTextLine(book.intro?.takeIf(String::isNotBlank)
+                                    ?: stringResource(R.string.intro_show_null),
+                                    style = LegadoTheme.typography.bodyMedium)
+                            } else if (book.chapterCount > 0) {
+                                AnimatedTextLine("漫画书库文件，共 ${book.chapterCount} 章",
+                                    style = LegadoTheme.typography.bodyMedium,
+                                    color = LegadoTheme.colorScheme.onSurfaceVariant)
+                            }
                         }
                     }
                     item(key = "file") {
@@ -247,6 +260,9 @@ private fun NasBookDetailMenu(state: NasLibraryUiState, onIntent: (NasLibraryInt
             RoundDropdownMenuItem(text = stringResource(R.string.feature_nas_book_scrape),
                 enabled = canWrite && state.capabilities.supports("scraper"),
                 onClick = { dispatch(NasLibraryIntent.ScrapeBook(book)) })
+            RoundDropdownMenuItem(text = stringResource(R.string.feature_nas_book_remove),
+                enabled = canWrite && state.capabilities.supportsDeleteBookFile,
+                onClick = { dispatch(NasLibraryIntent.RequestDelete(book)) })
         }
     }
 }

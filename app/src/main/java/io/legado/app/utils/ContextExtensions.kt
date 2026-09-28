@@ -37,6 +37,7 @@ import androidx.core.net.toUri
 import com.google.zxing.qrcode.decoder.ErrorCorrectionLevel
 import io.legado.app.R
 import io.legado.app.constant.AppConst
+import io.legado.app.constant.BookType
 import io.legado.app.data.entities.Book
 import io.legado.app.help.IntentHelp
 import io.legado.app.help.book.isAudio
@@ -75,13 +76,13 @@ fun Context.startActivityForBook(
 ) {
     val intent = when {
         book.isAudio -> MainActivity.createAudioPlayIntent(this, book.bookUrl)
-        book.isImage && mangaSettingsGateway.currentSettings.showMangaUi ->
+        book.isImage && (mangaSettingsGateway.currentSettings.showMangaUi || (book.type and BookType.archive) != 0) ->
             MainActivity.createReadMangaIntent(this, book.bookUrl)
 
         else -> MainActivity.createReadBookIntent(this, book.bookUrl)
     }
     intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-    if (book.isAudio || (book.isImage && mangaSettingsGateway.currentSettings.showMangaUi)) {
+    if (book.isAudio || (book.isImage && (mangaSettingsGateway.currentSettings.showMangaUi || (book.type and BookType.archive) != 0))) {
         intent.putExtra("bookUrl", book.bookUrl)
     }
     intent.apply(configIntent)
@@ -94,13 +95,13 @@ fun Context.startActivityForBook(
 ) {
     val intent = when {
         book.isAudio -> MainActivity.createAudioPlayIntent(this, book.bookUrl)
-        book.isImage && mangaSettingsGateway.currentSettings.showMangaUi ->
+        book.isImage && (mangaSettingsGateway.currentSettings.showMangaUi || (book.type and BookType.archive) != 0) ->
             MainActivity.createReadMangaIntent(this, book.bookUrl)
 
         else -> MainActivity.createReadBookIntent(this, book.bookUrl)
     }
     intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-    if (book.isAudio || (book.isImage && mangaSettingsGateway.currentSettings.showMangaUi)) {
+    if (book.isAudio || (book.isImage && (mangaSettingsGateway.currentSettings.showMangaUi || (book.type and BookType.archive) != 0))) {
         intent.putExtra("bookUrl", book.bookUrl)
     }
     intent.apply(configIntent)

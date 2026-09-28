@@ -2,14 +2,20 @@ package io.legado.app.ui.book.cache.manage
 
 import android.app.Application
 import androidx.lifecycle.viewModelScope
+import io.legado.app.R
 import io.legado.app.base.BaseViewModel
 import io.legado.app.data.entities.Book
 import io.legado.app.data.entities.BookChapter
 import io.legado.app.data.entities.BookGroup
 import io.legado.app.data.model.BookChapterCacheInfo
 import io.legado.app.data.repository.BookCacheManageRepository
+import io.legado.app.data.repository.NasUploadTaskRepository
+import io.legado.app.data.repository.NasTransferHistoryRepository
+import io.legado.app.data.repository.NasTransferRetryRepository
 import io.legado.app.domain.usecase.CacheBookChaptersUseCase
 import io.legado.app.domain.usecase.ClearBookCacheUseCase
+import io.legado.app.domain.model.NasUploadTask
+import io.legado.app.domain.model.NasTransferHistory
 import io.legado.app.help.book.BookHelp
 import io.legado.app.help.book.isAudio
 import io.legado.app.help.book.isLocal
@@ -44,6 +50,8 @@ data class BookCacheManageUiState(
     val chaptersByBookUrl: Map<String, List<BookCacheChapterItem>> = emptyMap(),
     val downloadSummary: String = "",
     val hasPausedDownloads: Boolean = false,
+    val nasUploads: List<NasUploadTask> = emptyList(),
+    val nasHistory: List<NasTransferHistory> = emptyList(),
     val version: Long = 0,
 )
 
@@ -92,6 +100,10 @@ sealed interface BookCacheManageIntent {
     data class DeleteBookCache(val bookUrl: String) : BookCacheManageIntent
     data class DownloadChapter(val bookUrl: String, val chapterIndex: Int) : BookCacheManageIntent
     data class StopChapterDownload(val bookUrl: String, val chapterIndex: Int) : BookCacheManageIntent
+    data class CancelNasUpload(val taskId: String) : BookCacheManageIntent
+    data class RetryNasHistory(val id: String) : BookCacheManageIntent
+    data class DeleteNasHistory(val id: String) : BookCacheManageIntent
+    data object ClearNasHistory : BookCacheManageIntent
     data class DeleteChapterCache(
         val bookUrl: String,
         val chapterUrl: String,
@@ -109,6 +121,9 @@ class BookCacheManageViewModel(
     private val repository: BookCacheManageRepository,
     private val cacheBookChaptersUseCase: CacheBookChaptersUseCase,
     private val clearBookCacheUseCase: ClearBookCacheUseCase,
+    private val nasUploadTaskRepository: NasUploadTaskRepository,
+    private val nasTransferHistoryRepository: NasTransferHistoryRepository,
+    private val nasTransferRetryRepository: NasTransferRetryRepository,
 ) : BaseViewModel(application) {
 
     private companion object {
@@ -154,6 +169,60 @@ class BookCacheManageViewModel(
                 intent.chapterTitle,
                 intent.chapterIndex,
             )
+            is BookCacheManageIntent.CancelNasUpload -> {
+                viewModelScope.launch(Dispatchers.IO) {
+                    nasUploadTaskRepository.cancel(intent.taskId)
+                }
+            }
+            is BookCacheManageIntent.RetryNasHistory -> retryNasHistory(intent.id)
+            is BookCacheManageIntent.DeleteNasHistory -> {
+                val historyItem = uiState.value.nasHistory.firstOrNull { it.id == intent.id }
+                viewModelScope.launch(Dispatchers.IO) {
+                    historyItem?.let(nasTransferRetryRepository::deleteHistoryArtifacts)
+                    nasTransferHistoryRepository.delete(intent.id)
+                }
+            }
+            BookCacheManageIntent.ClearNasHistory -> {
+                viewModelScope.launch(Dispatchers.IO) {
+                    nasTransferRetryRepository.clearHistoryArtifacts()
+                    nasTransferHistoryRepository.clear()
+                }
+            }
+        }
+    }
+
+    private fun retryNasHistory(id: String) {
+        val item = uiState.value.nasHistory.firstOrNull { it.id == id }
+        if (item == null || item.retryKey.isNullOrBlank() ||
+            (item.state != NasTransferHistoryRepository.FAILED &&
+                item.state != NasTransferHistoryRepository.CANCELLED)
+        ) {
+            _effects.tryEmit(
+                BookCacheManageEffect.ShowMessage(
+                    context.getString(R.string.cache_nas_retry_unavailable),
+                ),
+            )
+            return
+        }
+        viewModelScope.launch(Dispatchers.IO) {
+            runCatching { nasTransferRetryRepository.retry(item) }
+                .onSuccess {
+                    _effects.emit(
+                        BookCacheManageEffect.ShowMessage(
+                            context.getString(R.string.cache_nas_retry_started),
+                        ),
+                    )
+                }
+                .onFailure { error ->
+                    _effects.emit(
+                        BookCacheManageEffect.ShowMessage(
+                            context.getString(
+                                R.string.cache_nas_retry_failed,
+                                error.localizedMessage.orEmpty(),
+                            ),
+                        ),
+                    )
+                }
         }
     }
 
@@ -162,6 +231,22 @@ class BookCacheManageViewModel(
         observeJob = viewModelScope.launch {
             repository.flowBooks().collect { books ->
                 reloadAll(books = books, forceDatabase = false)
+            }
+        }
+        viewModelScope.launch {
+            nasUploadTaskRepository.observe().collect { uploads ->
+                uploads.filter(NasUploadTask::isFinished).forEach(nasTransferHistoryRepository::recordUpload)
+                _uiState.update {
+                    it.copy(
+                        nasUploads = uploads.filterNot(NasUploadTask::isFinished),
+                        version = it.version + 1,
+                    )
+                }
+            }
+        }
+        viewModelScope.launch {
+            nasTransferHistoryRepository.history.collect { history ->
+                _uiState.update { it.copy(nasHistory = history, version = it.version + 1) }
             }
         }
         viewModelScope.launch {

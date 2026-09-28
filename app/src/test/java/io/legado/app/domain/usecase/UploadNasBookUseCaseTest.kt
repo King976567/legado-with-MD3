@@ -139,7 +139,7 @@ class UploadNasBookUseCaseTest {
         }
         override suspend fun uploadBook(source: NasUploadSource, fileName: String, contentLength: Long?,
             duplicatePolicy: String, title: String, author: String, intro: String, directoryPath: String,
-            settings: NasSettings): NasUploadResult {
+            settings: NasSettings, clientSourceKey: String, chapterCount: Int, replaceBookId: String?): NasUploadResult {
             uploads++
             policy = duplicatePolicy
             uploadSettings = settings

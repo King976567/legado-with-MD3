@@ -51,6 +51,11 @@ interface NasLibraryGateway {
 
     suspend fun detail(id: String, settings: NasSettings): NasBookDetail
 
+    suspend fun findByClientSourceKey(
+        clientSourceKey: String,
+        settings: NasSettings,
+    ): NasBookDetail?
+
     suspend fun updateMetadata(
         id: String,
         title: String,
@@ -58,6 +63,9 @@ interface NasLibraryGateway {
         intro: String,
         settings: NasSettings,
     ): NasBookDetail
+
+    /** Permanently removes the NAS source file and its index record. */
+    suspend fun deleteBookFile(id: String, settings: NasSettings)
 
     suspend fun moveBook(
         id: String,
@@ -76,9 +84,23 @@ interface NasLibraryGateway {
         intro: String = "",
         directoryPath: String = "",
         settings: NasSettings,
+        clientSourceKey: String = "",
+        chapterCount: Int = 0,
+        replaceBookId: String? = null,
     ): NasUploadResult
 
+    suspend fun uploadCover(
+        id: String,
+        source: NasUploadSource,
+        fileName: String,
+        contentLength: Long? = null,
+        settings: NasSettings,
+    )
+
     suspend fun downloadBook(id: String, sink: NasDownloadSink, settings: NasSettings)
+
+    /** Streams the optional cover stored alongside a NAS book. */
+    suspend fun downloadCover(id: String, sink: NasDownloadSink, settings: NasSettings)
 
     suspend fun refreshIndex(settings: NasSettings): NasTaskStatus
 

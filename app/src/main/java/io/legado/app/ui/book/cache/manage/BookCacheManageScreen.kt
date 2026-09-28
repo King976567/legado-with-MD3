@@ -15,6 +15,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Download
+import androidx.compose.material.icons.filled.CloudUpload
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Stop
@@ -43,6 +44,8 @@ import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import io.legado.app.R
 import io.legado.app.data.entities.BookGroup
+import io.legado.app.domain.model.NasTransferHistory
+import io.legado.app.domain.model.NasUploadTask
 import io.legado.app.ui.theme.LegadoTheme
 import io.legado.app.ui.theme.adaptiveContentPadding
 import io.legado.app.ui.widget.components.AppFloatingActionButton
@@ -109,6 +112,7 @@ private fun BookCacheManageScreen(
     val scrollBehavior = GlassTopAppBarDefaults.defaultScrollBehavior()
     var pendingDeleteBook by remember { mutableStateOf<BookCacheBookItem?>(null) }
     var pendingDeleteChapter by remember { mutableStateOf<Pair<BookCacheBookItem, BookCacheChapterItem>?>(null) }
+    var pendingClearNasHistory by remember { mutableStateOf(false) }
     var isSearchMode by remember { mutableStateOf(false) }
     var searchKey by remember { mutableStateOf("") }
     var selectedGroupId by remember { mutableStateOf(BookGroup.IdAll) }
@@ -243,6 +247,20 @@ private fun BookCacheManageScreen(
                 ),
                 verticalArrangement = Arrangement.spacedBy(8.dp)
             ) {
+                nasUploadSection(
+                    tasks = state.nasUploads,
+                    onCancel = { task -> onIntent(BookCacheManageIntent.CancelNasUpload(task.id)) },
+                )
+                nasHistorySection(
+                    history = state.nasHistory,
+                    onRetry = { item ->
+                        onIntent(BookCacheManageIntent.RetryNasHistory(item.id))
+                    },
+                    onDelete = { item ->
+                        onIntent(BookCacheManageIntent.DeleteNasHistory(item.id))
+                    },
+                    onClear = { pendingClearNasHistory = true },
+                )
                 cacheSection(
                     title = bookshelfSectionTitle,
                     emptyText = bookshelfSectionEmptyText,
@@ -300,6 +318,295 @@ private fun BookCacheManageScreen(
         },
         onDismiss = { pendingDeleteChapter = null }
     )
+    AppAlertDialog(
+        show = pendingClearNasHistory,
+        onDismissRequest = { pendingClearNasHistory = false },
+        title = stringResource(R.string.cache_nas_clear_history),
+        text = stringResource(R.string.cache_nas_clear_history_message),
+        confirmText = stringResource(android.R.string.ok),
+        onConfirm = {
+            onIntent(BookCacheManageIntent.ClearNasHistory)
+            pendingClearNasHistory = false
+        },
+        dismissText = stringResource(android.R.string.cancel),
+        onDismiss = { pendingClearNasHistory = false },
+    )
+}
+
+private fun LazyListScope.nasUploadSection(
+    tasks: List<NasUploadTask>,
+    onCancel: (NasUploadTask) -> Unit,
+) {
+    if (tasks.isEmpty()) return
+    item(key = "nas-upload-header") {
+        AppText(
+            text = stringResource(R.string.cache_nas_uploads),
+            modifier = Modifier.padding(horizontal = 12.dp, vertical = 4.dp),
+            style = LegadoTheme.typography.titleSmallEmphasized,
+            color = LegadoTheme.colorScheme.primary,
+        )
+    }
+    items(tasks, key = { "nas-upload-${it.id}" }) { task ->
+        NasUploadTaskCard(task = task, onCancel = { onCancel(task) })
+    }
+}
+
+private fun LazyListScope.nasHistorySection(
+    history: List<NasTransferHistory>,
+    onRetry: (NasTransferHistory) -> Unit,
+    onDelete: (NasTransferHistory) -> Unit,
+    onClear: () -> Unit,
+) {
+    if (history.isEmpty()) return
+    item(key = "nas-transfer-history-header") {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 12.dp, vertical = 4.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            AppText(
+                text = stringResource(R.string.cache_nas_history),
+                modifier = Modifier.weight(1f),
+                style = LegadoTheme.typography.titleSmallEmphasized,
+                color = LegadoTheme.colorScheme.primary,
+            )
+            SmallTonalButton(
+                onClick = onClear,
+                icon = Icons.Default.Delete,
+                contentDescription = stringResource(R.string.cache_nas_clear_history),
+            )
+        }
+    }
+    items(history, key = { "nas-transfer-history-${it.id}" }) { item ->
+        NasTransferHistoryCard(
+            item = item,
+            onRetry = { onRetry(item) },
+            onDelete = { onDelete(item) },
+        )
+    }
+}
+
+@Composable
+private fun NasTransferHistoryCard(
+    item: NasTransferHistory,
+    onRetry: () -> Unit,
+    onDelete: () -> Unit,
+) {
+    val kind = stringResource(
+        if (item.kind == "comic") R.string.cache_nas_comic else R.string.cache_nas_book,
+    )
+    val direction = stringResource(
+        if (item.direction == "download") R.string.cache_nas_download else R.string.cache_nas_upload,
+    )
+    val stateText = when (item.state) {
+        "SUCCEEDED" -> stringResource(R.string.cache_nas_completed)
+        "CANCELLED" -> stringResource(R.string.cache_nas_cancelled)
+        "FAILED" -> stringResource(R.string.cache_nas_failed)
+        "RUNNING" -> stringResource(R.string.cache_nas_running)
+        else -> item.state
+    }
+    val finishedAt = item.finishedAt?.takeIf { it > 0 }?.let {
+        android.text.format.DateFormat.getMediumDateFormat(LocalContext.current).format(java.util.Date(it))
+    }
+    val canRetry = !item.retryKey.isNullOrBlank() &&
+        (item.state == "FAILED" || item.state == "CANCELLED")
+    NormalCard(
+        modifier = Modifier.fillMaxWidth(),
+        containerColor = LegadoTheme.colorScheme.surfaceContainer,
+    ) {
+        Column(
+            modifier = Modifier.fillMaxWidth().padding(12.dp),
+            verticalArrangement = Arrangement.spacedBy(4.dp),
+        ) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                AppIcon(
+                    imageVector = if (item.direction == "download") Icons.Default.Download else Icons.Default.CloudUpload,
+                    contentDescription = null,
+                )
+                Column(modifier = Modifier.weight(1f)) {
+                    AppText(
+                        text = item.title.ifBlank { direction },
+                        style = LegadoTheme.typography.titleSmallEmphasized,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                    AppText(
+                        text = "$direction · $kind · $stateText",
+                        style = LegadoTheme.typography.labelSmall,
+                        color = if (item.state == "FAILED") LegadoTheme.colorScheme.error
+                        else LegadoTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+            }
+            finishedAt?.let {
+                AppText(
+                    text = it,
+                    style = LegadoTheme.typography.labelSmall,
+                    color = LegadoTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+            item.message?.takeIf { it.isNotBlank() }?.let {
+                AppText(
+                    text = it,
+                    style = LegadoTheme.typography.labelSmall,
+                    color = LegadoTheme.colorScheme.error,
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis,
+                )
+            }
+            item.remotePath?.takeIf { it.isNotBlank() }?.let {
+                AppText(
+                    text = it,
+                    style = LegadoTheme.typography.labelSmall,
+                    color = LegadoTheme.colorScheme.onSurfaceVariant,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+            }
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.End,
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                if (canRetry) {
+                    SmallTonalButton(
+                        onClick = onRetry,
+                        icon = Icons.Default.Refresh,
+                        contentDescription = stringResource(R.string.cache_nas_retry),
+                    )
+                }
+                SmallTonalButton(
+                    onClick = onDelete,
+                    icon = Icons.Default.Delete,
+                    contentDescription = stringResource(R.string.cache_nas_delete_history),
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun NasUploadTaskCard(
+    task: NasUploadTask,
+    onCancel: () -> Unit,
+) {
+    val kind = stringResource(
+        if (task.kind == "comic") R.string.cache_nas_comic else R.string.cache_nas_book,
+    )
+    val stateText = when (task.state) {
+        "ENQUEUED" -> stringResource(R.string.cache_nas_waiting_wifi)
+        "BLOCKED" -> stringResource(R.string.cache_nas_waiting)
+        "RUNNING" -> task.stage.orEmpty().ifBlank { stringResource(R.string.cache_nas_uploading) }
+        "SUCCEEDED" -> stringResource(R.string.cache_nas_completed)
+        "CANCELLED" -> stringResource(R.string.cache_nas_cancelled)
+        "FAILED" -> stringResource(R.string.cache_nas_failed)
+        else -> task.state
+    }
+    val progress = if (task.total > 0) {
+        (task.current.toFloat() / task.total).coerceIn(0f, 1f)
+    } else {
+        null
+    }
+    NormalCard(
+        modifier = Modifier.fillMaxWidth(),
+        containerColor = LegadoTheme.colorScheme.surfaceContainer,
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(12.dp),
+            verticalArrangement = Arrangement.spacedBy(6.dp),
+        ) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                AppIcon(imageVector = Icons.Default.CloudUpload, contentDescription = null)
+                Column(modifier = Modifier.weight(1f)) {
+                    AppText(
+                        text = task.title.ifBlank { "NAS 上传" },
+                        style = LegadoTheme.typography.titleSmallEmphasized,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                    AppText(
+                        text = "$kind · $stateText",
+                        style = LegadoTheme.typography.labelSmall,
+                        color = if (task.state == "FAILED") {
+                            LegadoTheme.colorScheme.error
+                        } else {
+                            LegadoTheme.colorScheme.onSurfaceVariant
+                        },
+                    )
+                }
+                if (task.isRunning) {
+                    SmallTonalButton(
+                        onClick = onCancel,
+                        icon = Icons.Default.Stop,
+                        contentDescription = stringResource(R.string.cache_nas_cancel_upload),
+                    )
+                }
+            }
+            progress?.let {
+                AppLinearProgressIndicator(progress = it, modifier = Modifier.fillMaxWidth())
+                if (task.kind == "comic") {
+                    if (task.chapterCount > 0) {
+                        AppText(
+                            text = stringResource(
+                                R.string.cache_nas_comic_progress,
+                                task.chapter,
+                                task.chapterCount,
+                                task.page,
+                                task.pageCount,
+                            ),
+                            style = LegadoTheme.typography.labelSmall,
+                            color = LegadoTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                    AppText(
+                        text = stringResource(
+                            R.string.cache_nas_comic_cache_stats,
+                            task.cacheReused,
+                            task.downloaded,
+                        ),
+                        style = LegadoTheme.typography.labelSmall,
+                        color = LegadoTheme.colorScheme.onSurfaceVariant,
+                    )
+                } else {
+                    AppText(
+                        text = "${task.current}/${task.total}",
+                        style = LegadoTheme.typography.labelSmall,
+                        color = LegadoTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+            }
+            task.message?.takeIf { it.isNotBlank() }?.let {
+                AppText(
+                    text = it,
+                    style = LegadoTheme.typography.labelSmall,
+                    color = LegadoTheme.colorScheme.error,
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis,
+                )
+            }
+            task.remotePath?.takeIf { it.isNotBlank() }?.let {
+                AppText(
+                    text = it,
+                    style = LegadoTheme.typography.labelSmall,
+                    color = LegadoTheme.colorScheme.onSurfaceVariant,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+            }
+        }
+    }
 }
 
 /**
