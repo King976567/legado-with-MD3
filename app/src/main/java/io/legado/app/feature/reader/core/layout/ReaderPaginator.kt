@@ -220,6 +220,12 @@ sealed interface ReaderMeasuredInlineItem {
         val heightPx: Float,
         override val chapterPosition: Int,
         val action: String? = null,
+        /**
+         * 旧 `setTypeHtml` 的**行末**特例：`charRight` 取不到下一字的横向位置时改用
+         * `measureText("\uFFFC")`，于是落在行末的行内图比行中更窄（旧版同时留下空档）。
+         * 非 `null` 时只影响绘制宽度，断行推进仍用 [widthPx]（旧版布局推进用的是 span advance）。
+         */
+        val lineFinalWidthPx: Float? = null,
     ) : ReaderMeasuredInlineItem
 }
 
@@ -655,8 +661,14 @@ internal class ReaderPaginationSession(
                 is ReaderMeasuredInlineItem.Image -> "\uFFFC"
             }
         }
-        val lineGapPx =
-            (paragraph.lineSpacingMultiplier - 1f).coerceAtLeast(0f) * paragraph.lineHeightPx
+        // 纵向预算取「本段行距」与「正文行距」的较大者：旧 View
+        // `TextLine.drawNineSliceFrames` 的 `gap` 用的是全局（正文）的
+        // `ChapterProvider.lineSpacingExtra`，标题与正文共用一份。只按本段行距算时，
+        // 标题行距被设成 1.0（设置值 10，"标题不加行距"）就会得到 0 预算，九宫格上下两条边
+        // 随之被压成 0 高度整条消失——只剩中心格和左右两条边在上下切分线之间的那一段。
+        val lineGapPx = (
+                maxOf(paragraph.lineSpacingMultiplier, config.lineSpacingMultiplier) - 1f
+                ).coerceAtLeast(0f) * paragraph.lineHeightPx
         val halfLineGapPx = lineGapPx / 2f
 
         fun itemFrame(index: Int) =
@@ -956,16 +968,23 @@ internal class ReaderPaginationSession(
 
                     is ReaderMeasuredInlineItem.Image -> {
                         val imageTop = y + (actualLineHeight - item.heightPx) / 2f
+                        // 旧 `setTypeHtml` 行末图用 `measureText("\uFFFC")` 当宽度（行中才用 span
+                        // advance）；断行推进仍按 item.widthPx，因此行末会像旧版一样留出空档。
+                        val drawnWidthPx = item.lineFinalWidthPx
+                            ?.takeIf { itemIndex == itemCount - 1 }
+                            ?: item.widthPx
                         elements += ReaderElement.Image(
                             bounds = ReaderRect(
                                 x,
                                 imageTop,
-                                x + item.widthPx,
+                                x + drawnWidthPx,
                                 imageTop + item.heightPx
                             ),
                             source = item.source,
                             action = item.action,
                             chapterPosition = item.chapterPosition,
+                            // 行内图必须带标记：绘制期按位图长宽比重新算几何（旧 ImageColumn）。
+                            inline = true,
                         )
                     }
                 }
