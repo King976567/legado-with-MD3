@@ -3494,4 +3494,5 @@
     <string name="feature_nas_book_remove_title">Delete NAS source file?</string>
     <string name="feature_nas_book_remove_message">Permanently delete the NAS source file and library entry for “%1$s”? This cannot be undone.</string>
     <string name="feature_nas_book_remove_confirm">Delete source file</string>
+    <string name="cache_count_checking">Checking cached chapters…</string>
 </resources>

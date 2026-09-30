@@ -3485,4 +3485,5 @@
     <string name="feature_nas_book_remove_title">删除 NAS 源文件？</string>
     <string name="feature_nas_book_remove_message">确定永久删除“%1$s”的 NAS 源文件和书库记录吗？此操作不可恢复。</string>
     <string name="feature_nas_book_remove_confirm">删除源文件</string>
+    <string name="cache_count_checking">正在统计缓存…</string>
 </resources>

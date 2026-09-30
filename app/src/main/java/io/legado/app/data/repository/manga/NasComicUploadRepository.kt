@@ -1,7 +1,6 @@
 package io.legado.app.data.repository.manga
 
 import android.app.Application
-import androidx.lifecycle.Observer
 import androidx.work.BackoffPolicy
 import androidx.work.Constraints
 import androidx.work.Data
@@ -33,10 +32,9 @@ import coil3.request.ImageRequest
 import coil3.request.SuccessResult
 import coil3.request.allowHardware
 import coil3.toBitmap
-import kotlinx.coroutines.channels.awaitClose
 import kotlinx.coroutines.flow.Flow
-import kotlinx.coroutines.flow.callbackFlow
 import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.map
 import java.io.ByteArrayOutputStream
 import java.io.File
 import java.security.MessageDigest
@@ -194,14 +192,12 @@ class NasComicUploadRepository(
         workManager.cancelUniqueWork(workName(clientSourceKey))
     }
 
-    fun observe(clientSourceKey: String): Flow<NasComicUploadState> = callbackFlow {
-        val liveData = workManager.getWorkInfosForUniqueWorkLiveData(workName(clientSourceKey))
-        val observer = Observer<List<WorkInfo>> { infos ->
-            trySend(infos.maxByOrNull { it.runAttemptCount }?.toComicState() ?: NasComicUploadState())
+    fun observe(clientSourceKey: String): Flow<NasComicUploadState> = workManager
+        .getWorkInfosForUniqueWorkFlow(workName(clientSourceKey))
+        .map { infos ->
+            infos.maxByOrNull { it.runAttemptCount }?.toComicState() ?: NasComicUploadState()
         }
-        liveData.observeForever(observer)
-        awaitClose { liveData.removeObserver(observer) }
-    }.distinctUntilChanged()
+        .distinctUntilChanged()
 
     internal fun loadSnapshot(sourceKey: String): ComicSnapshot? = snapshotFile(sourceKey)
         .takeIf(File::isFile)

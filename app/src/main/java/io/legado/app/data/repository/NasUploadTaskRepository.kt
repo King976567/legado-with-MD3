@@ -1,15 +1,13 @@
 package io.legado.app.data.repository
 
 import android.app.Application
-import androidx.lifecycle.Observer
 import androidx.work.WorkInfo
 import androidx.work.WorkManager
 import io.legado.app.data.repository.manga.NasComicUploadRepository
 import io.legado.app.domain.model.NasUploadTask
-import kotlinx.coroutines.channels.awaitClose
 import kotlinx.coroutines.flow.Flow
-import kotlinx.coroutines.flow.callbackFlow
 import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.map
 import java.util.UUID
 
 class NasUploadTaskRepository(application: Application) {
@@ -18,14 +16,11 @@ class NasUploadTaskRepository(application: Application) {
         WorkManager.getInstance(application)
     }
 
-    fun observe(): Flow<List<NasUploadTask>> = callbackFlow {
-        val liveData = workManager.getWorkInfosByTagLiveData(TAG)
-        val observer = Observer<List<WorkInfo>> { infos ->
-            trySend(infos.orEmpty().map(WorkInfo::toNasUploadTask).sortedByDescending { it.id })
+    fun observe(): Flow<List<NasUploadTask>> = workManager.getWorkInfosByTagFlow(TAG)
+        .map { infos ->
+            infos.map(WorkInfo::toNasUploadTask).sortedByDescending { it.id }
         }
-        liveData.observeForever(observer)
-        awaitClose { liveData.removeObserver(observer) }
-    }.distinctUntilChanged()
+        .distinctUntilChanged()
 
     fun cancel(id: String) {
         runCatching {

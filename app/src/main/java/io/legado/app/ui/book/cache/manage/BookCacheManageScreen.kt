@@ -1,6 +1,7 @@
 package io.legado.app.ui.book.cache.manage
 
 import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -8,6 +9,7 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyListScope
 import androidx.compose.foundation.lazy.items
@@ -25,6 +27,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -113,6 +116,10 @@ private fun BookCacheManageScreen(
     var pendingDeleteBook by remember { mutableStateOf<BookCacheBookItem?>(null) }
     var pendingDeleteChapter by remember { mutableStateOf<Pair<BookCacheBookItem, BookCacheChapterItem>?>(null) }
     var pendingClearNasHistory by remember { mutableStateOf(false) }
+    var nasUploadsExpanded by rememberSaveable { mutableStateOf(true) }
+    var nasHistoryExpanded by rememberSaveable { mutableStateOf(false) }
+    var bookshelfExpanded by rememberSaveable { mutableStateOf(true) }
+    var notBookshelfExpanded by rememberSaveable { mutableStateOf(true) }
     var isSearchMode by remember { mutableStateOf(false) }
     var searchKey by remember { mutableStateOf("") }
     var selectedGroupId by remember { mutableStateOf(BookGroup.IdAll) }
@@ -133,8 +140,15 @@ private fun BookCacheManageScreen(
     }
     val filteredShelfBooks = remember(filteredBooks) { filteredBooks.filterNot { it.isNotShelf } }
     val filteredNotShelfBooks = remember(filteredBooks) { filteredBooks.filter { it.isNotShelf } }
+    val hasSearchQuery = isSearchMode && searchKey.isNotBlank()
+    LaunchedEffect(hasSearchQuery) {
+        if (hasSearchQuery) {
+            bookshelfExpanded = true
+            notBookshelfExpanded = true
+        }
+    }
     val hasRunningDownload = filteredBooks.any { it.hasActiveDownload }
-    val hasDownloadTarget = filteredBooks.any { it.cachedCount < it.totalCount }
+    val hasDownloadTarget = filteredBooks.any { !it.isCheckingCache && it.cachedCount < it.totalCount }
     val listUiState = remember(filteredBooks, searchKey, isSearchMode) {
         BookCacheManageListState(
             items = filteredBooks,
@@ -224,47 +238,71 @@ private fun BookCacheManageScreen(
             }
         }
     ) { paddingValues ->
-        if (state.isLoading) {
-            Column(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .padding(paddingValues),
-                horizontalAlignment = Alignment.CenterHorizontally,
-                verticalArrangement = Arrangement.Center,
-            ) {
-                AppCircularProgressIndicator()
-            }
-        } else {
-            // 私密且未获准的书：缓存条目保留（缓存管理要能清缓存），但不显示书名与作者
-            val lockedBookUrls = rememberPrivateLockedBookUrls(
-                (filteredShelfBooks + filteredNotShelfBooks).map { it.bookUrl }
+        // 私密且未获准的书：缓存条目保留（缓存管理要能清缓存），但不显示书名与作者
+        val lockedBookUrls = rememberPrivateLockedBookUrls(
+            (filteredShelfBooks + filteredNotShelfBooks).map { it.bookUrl }
+        )
+        FastScrollLazyColumn(
+            modifier = Modifier.fillMaxSize(),
+            contentPadding = adaptiveContentPadding(
+                top = paddingValues.calculateTopPadding(),
+                bottom = paddingValues.calculateBottomPadding() + 24.dp
+            ),
+            verticalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            nasUploadSection(
+                tasks = state.nasUploads,
+                expanded = nasUploadsExpanded,
+                onToggleSection = { nasUploadsExpanded = !nasUploadsExpanded },
+                onCancel = { task -> onIntent(BookCacheManageIntent.CancelNasUpload(task.id)) },
             )
-            FastScrollLazyColumn(
-                modifier = Modifier.fillMaxSize(),
-                contentPadding = adaptiveContentPadding(
-                    top = paddingValues.calculateTopPadding(),
-                    bottom = paddingValues.calculateBottomPadding() + 24.dp
-                ),
-                verticalArrangement = Arrangement.spacedBy(8.dp)
-            ) {
-                nasUploadSection(
-                    tasks = state.nasUploads,
-                    onCancel = { task -> onIntent(BookCacheManageIntent.CancelNasUpload(task.id)) },
-                )
-                nasHistorySection(
-                    history = state.nasHistory,
-                    onRetry = { item ->
-                        onIntent(BookCacheManageIntent.RetryNasHistory(item.id))
-                    },
-                    onDelete = { item ->
-                        onIntent(BookCacheManageIntent.DeleteNasHistory(item.id))
-                    },
-                    onClear = { pendingClearNasHistory = true },
-                )
+            nasHistorySection(
+                history = state.nasHistory,
+                expanded = nasHistoryExpanded,
+                onToggleSection = { nasHistoryExpanded = !nasHistoryExpanded },
+                onRetry = { item ->
+                    onIntent(BookCacheManageIntent.RetryNasHistory(item.id))
+                },
+                onDelete = { item ->
+                    onIntent(BookCacheManageIntent.DeleteNasHistory(item.id))
+                },
+                onClear = { pendingClearNasHistory = true },
+            )
+            if (state.isLoading) {
+                item(key = "cache-summary-loading") {
+                    Row(
+                        modifier = Modifier.fillMaxWidth().padding(12.dp),
+                        horizontalArrangement = Arrangement.spacedBy(12.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        AppCircularProgressIndicator(modifier = Modifier.size(24.dp))
+                        AppText(text = stringResource(R.string.cache_count_checking))
+                    }
+                }
+                return@FastScrollLazyColumn
+            }
+            cacheSection(
+                title = bookshelfSectionTitle,
+                emptyText = bookshelfSectionEmptyText,
+                books = filteredShelfBooks.redactLocked(lockedBookUrls),
+                sectionExpanded = bookshelfExpanded,
+                onToggleSection = { bookshelfExpanded = !bookshelfExpanded },
+                expandedBookUrls = state.expandedBookUrls,
+                chaptersByBookUrl = state.chaptersByBookUrl,
+                onToggleExpanded = { bookUrl ->
+                    onIntent(BookCacheManageIntent.ToggleBookExpanded(bookUrl))
+                },
+                onIntent = onIntent,
+                onDeleteBook = { pendingDeleteBook = it },
+                onDeleteChapter = { book, chapter -> pendingDeleteChapter = book to chapter }
+            )
+            if (selectedGroupId == BookGroup.IdAll) {
                 cacheSection(
-                    title = bookshelfSectionTitle,
-                    emptyText = bookshelfSectionEmptyText,
-                    books = filteredShelfBooks.redactLocked(lockedBookUrls),
+                    title = notBookshelfSectionTitle,
+                    emptyText = notBookshelfSectionEmptyText,
+                    books = filteredNotShelfBooks.redactLocked(lockedBookUrls),
+                    sectionExpanded = notBookshelfExpanded,
+                    onToggleSection = { notBookshelfExpanded = !notBookshelfExpanded },
                     expandedBookUrls = state.expandedBookUrls,
                     chaptersByBookUrl = state.chaptersByBookUrl,
                     onToggleExpanded = { bookUrl ->
@@ -272,25 +310,10 @@ private fun BookCacheManageScreen(
                     },
                     onIntent = onIntent,
                     onDeleteBook = { pendingDeleteBook = it },
-                    onDeleteChapter = { book, chapter -> pendingDeleteChapter = book to chapter }
+                    onDeleteChapter = { book, chapter ->
+                        pendingDeleteChapter = book to chapter
+                    }
                 )
-                if (selectedGroupId == BookGroup.IdAll) {
-                    cacheSection(
-                        title = notBookshelfSectionTitle,
-                        emptyText = notBookshelfSectionEmptyText,
-                        books = filteredNotShelfBooks.redactLocked(lockedBookUrls),
-                        expandedBookUrls = state.expandedBookUrls,
-                        chaptersByBookUrl = state.chaptersByBookUrl,
-                        onToggleExpanded = { bookUrl ->
-                            onIntent(BookCacheManageIntent.ToggleBookExpanded(bookUrl))
-                        },
-                        onIntent = onIntent,
-                        onDeleteBook = { pendingDeleteBook = it },
-                        onDeleteChapter = { book, chapter ->
-                            pendingDeleteChapter = book to chapter
-                        }
-                    )
-                }
             }
         }
     }
@@ -335,17 +358,20 @@ private fun BookCacheManageScreen(
 
 private fun LazyListScope.nasUploadSection(
     tasks: List<NasUploadTask>,
+    expanded: Boolean,
+    onToggleSection: () -> Unit,
     onCancel: (NasUploadTask) -> Unit,
 ) {
     if (tasks.isEmpty()) return
     item(key = "nas-upload-header") {
-        AppText(
-            text = stringResource(R.string.cache_nas_uploads),
-            modifier = Modifier.padding(horizontal = 12.dp, vertical = 4.dp),
-            style = LegadoTheme.typography.titleSmallEmphasized,
-            color = LegadoTheme.colorScheme.primary,
+        CacheSectionHeader(
+            title = stringResource(R.string.cache_nas_uploads),
+            count = tasks.size,
+            expanded = expanded,
+            onToggle = onToggleSection,
         )
     }
+    if (!expanded) return
     items(tasks, key = { "nas-upload-${it.id}" }) { task ->
         NasUploadTaskCard(task = task, onCancel = { onCancel(task) })
     }
@@ -353,25 +379,20 @@ private fun LazyListScope.nasUploadSection(
 
 private fun LazyListScope.nasHistorySection(
     history: List<NasTransferHistory>,
+    expanded: Boolean,
+    onToggleSection: () -> Unit,
     onRetry: (NasTransferHistory) -> Unit,
     onDelete: (NasTransferHistory) -> Unit,
     onClear: () -> Unit,
 ) {
     if (history.isEmpty()) return
     item(key = "nas-transfer-history-header") {
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(horizontal = 12.dp, vertical = 4.dp),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(8.dp),
+        CacheSectionHeader(
+            title = stringResource(R.string.cache_nas_history),
+            count = history.size,
+            expanded = expanded,
+            onToggle = onToggleSection,
         ) {
-            AppText(
-                text = stringResource(R.string.cache_nas_history),
-                modifier = Modifier.weight(1f),
-                style = LegadoTheme.typography.titleSmallEmphasized,
-                color = LegadoTheme.colorScheme.primary,
-            )
             SmallTonalButton(
                 onClick = onClear,
                 icon = Icons.Default.Delete,
@@ -379,12 +400,63 @@ private fun LazyListScope.nasHistorySection(
             )
         }
     }
+    if (!expanded) return
     items(history, key = { "nas-transfer-history-${it.id}" }) { item ->
         NasTransferHistoryCard(
             item = item,
             onRetry = { onRetry(item) },
             onDelete = { onDelete(item) },
         )
+    }
+}
+
+@Composable
+private fun CacheSectionHeader(
+    title: String,
+    count: Int,
+    expanded: Boolean,
+    onToggle: () -> Unit,
+    trailingContent: @Composable () -> Unit = {},
+) {
+    val arrowRotation by animateFloatAsState(
+        targetValue = if (expanded) 90f else 0f,
+        label = "CacheSectionExpandArrow",
+    )
+    val expandedState = stringResource(
+        if (expanded) R.string.a11y_expanded else R.string.a11y_collapsed,
+    )
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Row(
+            modifier = Modifier
+                .weight(1f)
+                .semantics { stateDescription = expandedState }
+                .clickable(role = Role.Button, onClick = onToggle)
+                .heightIn(min = 48.dp)
+                .padding(horizontal = 12.dp, vertical = 4.dp),
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            AppIcon(
+                imageVector = Icons.AutoMirrored.Filled.KeyboardArrowRight,
+                contentDescription = null,
+                modifier = Modifier.size(20.dp).graphicsLayer(rotationZ = arrowRotation),
+            )
+            AppText(
+                text = title,
+                modifier = Modifier.weight(1f),
+                style = LegadoTheme.typography.titleSmallEmphasized,
+                color = LegadoTheme.colorScheme.primary,
+            )
+            AppText(
+                text = count.toString(),
+                style = LegadoTheme.typography.labelMediumEmphasized,
+                color = LegadoTheme.colorScheme.onSurfaceVariant,
+            )
+        }
+        trailingContent()
     }
 }
 
@@ -626,6 +698,8 @@ private fun LazyListScope.cacheSection(
     title: String,
     emptyText: String,
     books: List<BookCacheBookItem>,
+    sectionExpanded: Boolean,
+    onToggleSection: () -> Unit,
     expandedBookUrls: Set<String>,
     chaptersByBookUrl: Map<String, List<BookCacheChapterItem>>,
     onToggleExpanded: (String) -> Unit,
@@ -634,13 +708,14 @@ private fun LazyListScope.cacheSection(
     onDeleteChapter: (BookCacheBookItem, BookCacheChapterItem) -> Unit,
 ) {
     item(key = "$title-header") {
-        AppText(
-            text = title,
-            modifier = Modifier.padding(horizontal = 12.dp, vertical = 4.dp),
-            style = LegadoTheme.typography.titleSmallEmphasized,
-            color = LegadoTheme.colorScheme.primary
+        CacheSectionHeader(
+            title = title,
+            count = books.size,
+            expanded = sectionExpanded,
+            onToggle = onToggleSection,
         )
     }
+    if (!sectionExpanded) return
     if (books.isEmpty()) {
         item(key = "$title-empty") {
             TextCard(
@@ -717,12 +792,11 @@ private fun BookCacheBookCard(
         item.pausedCount,
         item.errorCount
     )
-    val progressDescription = stringResource(
-        R.string.cache_progress_description,
-        item.cachedCount,
-        item.totalCount,
-        progressPercent
-    )
+    val progressDescription = if (item.isCheckingCache) {
+        stringResource(R.string.cache_count_checking)
+    } else {
+        stringResource(R.string.cache_progress_description, item.cachedCount, item.totalCount, progressPercent)
+    }
     val expandedState = stringResource(
         if (expanded) R.string.a11y_expanded else R.string.a11y_collapsed
     )
@@ -778,17 +852,18 @@ private fun BookCacheBookCard(
                     )
                 }
                 TextCard(
-                    text = "${item.cachedCount}/${item.totalCount}",
+                    text = if (item.isCheckingCache) "…/${item.totalCount}" else "${item.cachedCount}/${item.totalCount}",
                     backgroundColor = LegadoTheme.colorScheme.cardContainer,
                 )
             }
             AppLinearProgressIndicator(
-                progress = item.progress,
+                progress = if (item.isCheckingCache) null else item.progress,
                 modifier = Modifier
                     .fillMaxWidth()
                     .semantics {
                         contentDescription = progressDescription
-                        progressBarRangeInfo = ProgressBarRangeInfo(item.progress, 0f..1f)
+                        progressBarRangeInfo = if (item.isCheckingCache) ProgressBarRangeInfo.Indeterminate
+                            else ProgressBarRangeInfo(item.progress, 0f..1f)
                     }
             )
             Row(
@@ -802,7 +877,7 @@ private fun BookCacheBookCard(
                     style = LegadoTheme.typography.labelMediumEmphasized,
                     color = LegadoTheme.colorScheme.onSurfaceVariant
                 )
-                if (item.hasDownloadTask || item.cachedCount < item.totalCount) {
+                if (item.hasDownloadTask || (!item.isCheckingCache && item.cachedCount < item.totalCount)) {
                     SmallTonalButton(
                         onClick = {
                             if (item.hasActiveDownload) {
