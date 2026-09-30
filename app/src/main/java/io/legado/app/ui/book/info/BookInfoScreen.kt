@@ -106,6 +106,7 @@ import io.legado.app.R
 import io.legado.app.constant.BookType
 import io.legado.app.core.ui.book.BookDetailHeaderLayout
 import io.legado.app.core.ui.book.BookDetailTopBar
+import io.legado.app.core.ui.morph.trackBookMorphCover
 import io.legado.app.data.entities.BaseSource
 import io.legado.app.data.entities.BookGroup
 import io.legado.app.data.entities.BookSource
@@ -1138,7 +1139,8 @@ private fun BookInfoHeader(
                         bookUrl = book.bookUrl,
                         modifier = Modifier
                             .width(112.dp)
-                            .aspectRatio(5f / 7f),
+                            .aspectRatio(5f / 7f)
+                            .trackBookMorphCover(4.dp),
                         // 同一个 key + 同一个 scope：共享元素动画在脱敏态下依然连续
                         sharedCoverKey = sharedCoverKey,
                         sharedTransitionScope = sharedTransitionScope,
@@ -1157,7 +1159,8 @@ private fun BookInfoHeader(
                         onError = onNetworkCoverLoadError,
                         modifier = Modifier
                             .width(112.dp)
-                            .aspectRatio(5f / 7f),
+                            .aspectRatio(5f / 7f)
+                            .trackBookMorphCover(4.dp),
                         showLoadingPlaceholder = sharedCoverKey == null,
                         sharedTransitionScope = sharedTransitionScope,
                         animatedVisibilityScope = animatedVisibilityScope,

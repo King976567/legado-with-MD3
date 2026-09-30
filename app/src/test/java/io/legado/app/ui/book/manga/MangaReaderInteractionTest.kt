@@ -13,6 +13,33 @@ import org.junit.Test
 
 class MangaReaderInteractionTest {
     @Test
+    fun `only a shelved reader without overlays can be dismissed by the morph host`() {
+        assertFalse(mangaReaderScreenHandlesBack(MangaReaderUiState(inBookshelf = true), true))
+        val viewModelOwnedStates = listOf(
+            MangaReaderUiState(inBookshelf = false, confirmAddToShelf = true),
+            MangaReaderUiState(inBookshelf = false, confirmAddToShelf = false),
+            MangaReaderUiState(menuVisible = true),
+            MangaReaderUiState(activeDialog = MangaReaderDialog.AddToShelf),
+            MangaReaderUiState(activeSheet = MangaReaderSheet.Catalog),
+            MangaReaderUiState(settingsCategory = MangaReaderSettingsCategory.READER),
+        )
+        viewModelOwnedStates.forEach { state ->
+            assertFalse(canMangaReaderMorphBack(state))
+            assertTrue(mangaReaderScreenHandlesBack(state, hostHandlesBack = true))
+        }
+    }
+
+    @Test
+    fun `compatibility activity keeps back in the view model even without a morph host`() {
+        assertTrue(
+            mangaReaderScreenHandlesBack(
+                MangaReaderUiState(inBookshelf = true),
+                hostHandlesBack = false,
+            )
+        )
+    }
+
+    @Test
     fun `dimension regrouping preserves the second half of a split wide page`() {
         val items = listOf(page(0), page(1), page(2))
         val old = buildMangaSpreads(items, false, mapOf("p0" to 2f), splitWidePages = true)

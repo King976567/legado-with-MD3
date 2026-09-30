@@ -27,12 +27,17 @@ import androidx.compose.ui.draw.BlurredEdgeTreatment
 import androidx.compose.ui.draw.blur
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.layout.boundsInRoot
+import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import coil3.request.allowHardware
 import coil3.request.transformations
 import coil3.size.Size
+import io.legado.app.core.ui.morph.BookCoverMorphAnchors
 import io.legado.app.ui.theme.LegadoTheme
 import io.legado.app.ui.widget.components.button.PrimaryButton
 import io.legado.app.ui.widget.components.icon.AppIcon
@@ -123,8 +128,20 @@ fun PrivateLockedCover(
     val blurEnabled = blurRadius > 0.dp
     val useRuntimeBlur = blurEnabled && RuntimeBlurSupported
     val useCoilBlur = blurEnabled && !RuntimeBlurSupported
+    val density = LocalDensity.current
     Box(
         modifier = modifier
+            .onGloballyPositioned { coordinates ->
+                BookCoverMorphAnchors.report(
+                    key = sharedCoverKey,
+                    bounds = coordinates.boundsInRoot(),
+                    cornerRadiusPx = with(density) { transitionRadius.toPx() },
+                    isRedacted = true,
+                )
+            }
+            .graphicsLayer {
+                alpha = if (BookCoverMorphAnchors.isOriginCoverHidden(sharedCoverKey)) 0f else 1f
+            }
             .then(
                 with(sharedTransitionScope) {
                     if (this != null && animatedVisibilityScope != null && sharedCoverKey != null) {

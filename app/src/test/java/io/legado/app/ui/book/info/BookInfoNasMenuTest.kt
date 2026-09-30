@@ -3,6 +3,7 @@ package io.legado.app.ui.book.info
 import android.app.Application
 import androidx.compose.ui.test.*
 import androidx.compose.ui.test.junit4.createComposeRule
+import io.legado.app.constant.BookType
 import io.legado.app.ui.theme.LocalLegadoThemeColors
 import io.legado.app.ui.theme.MaterialThemeWrapper
 import org.junit.Assert.assertEquals
@@ -47,6 +48,24 @@ class BookInfoNasMenuTest {
     @Test fun onlineBookDoesNotPretendToHaveUploadableFile() {
         show(BookInfoUiState(book = book.copy(isLocal = false), nasUploadVisible = true))
         compose.onNodeWithText("Upload to NAS").assertDoesNotExist()
+        compose.onNodeWithText("Upload comic to NAS").assertDoesNotExist()
+    }
+    @Test fun onlineComicKeepsFullUploadEntryAfterUpstreamMerge() {
+        show(BookInfoUiState(
+            book = book.copy(isLocal = false, type = BookType.image),
+            nasUploadVisible = true,
+        ))
+        compose.onNodeWithText("Upload comic to NAS").assertIsDisplayed().performClick()
+        compose.runOnIdle { assertEquals(listOf(BookInfoMenuAction.UploadNasComic), actions) }
+    }
+    @Test fun localComicUsesLocalFileUploadRatherThanSourcePackaging() {
+        show(BookInfoUiState(
+            book = book.copy(type = BookType.image or BookType.archive),
+            nasUploadVisible = true,
+        ))
+        compose.onNodeWithText("Upload to NAS").assertIsDisplayed().performClick()
+        compose.onNodeWithText("Upload comic to NAS").assertDoesNotExist()
+        compose.runOnIdle { assertEquals(listOf(BookInfoMenuAction.UploadNas), actions) }
     }
     @Test fun readOnlyEntryIsDisabled() {
         show(BookInfoUiState(book = book, nasUploadVisible = true, nasUploadDenied = true))
