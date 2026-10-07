@@ -61,13 +61,34 @@ jobs:
           distribution: temurin
           java-version: 21
       - uses: gradle/actions/setup-gradle@v4
-      - name: Tests, lint, architecture and arm64 APK
+      - name: Prepare verification
         run: |
           sed -i '/maven.aliyun.com/d' settings.gradle
           chmod +x gradlew
-          ./gradlew testAppDebugUnitTest lintAppDebug verifyConfigArchitecture assembleAppDebug \
+      - name: JVM tests
+        id: tests
+        timeout-minutes: 20
+        run: |
+          ./gradlew testAppDebugUnitTest \
+            --project-prop ksp.incremental=false \
+            --max-workers=2 --no-parallel --info \
+            --continue --no-daemon --no-configuration-cache
+      - name: Lint and architecture
+        if: ${{ !cancelled() && steps.tests.outcome != 'skipped' }}
+        timeout-minutes: 20
+        run: |
+          ./gradlew lintAppDebug verifyConfigArchitecture \
+            --project-prop ksp.incremental=false \
+            --max-workers=2 --no-parallel --info \
+            --continue --no-daemon --no-configuration-cache
+      - name: Arm64 debug APK
+        if: ${{ !cancelled() && steps.tests.outcome != 'skipped' }}
+        timeout-minutes: 20
+        run: |
+          ./gradlew assembleAppDebug \
             --init-script .github/scripts/arm64-only.gradle \
             --project-prop ksp.incremental=false \
+            --max-workers=2 --no-parallel --info \
             --continue --no-daemon --no-configuration-cache
       - name: Upload arm64 trial APK
         uses: actions/upload-artifact@v4
@@ -87,6 +108,15 @@ jobs:
             app/build/test-results/testAppDebugUnitTest/**
             app/build/reports/tests/testAppDebugUnitTest/**
             app/build/reports/lint-results-appDebug.*
+      - name: JVM diagnostics on failure
+        if: ${{ always() && (failure() || cancelled()) }}
+        run: |
+          ps -eo pid,ppid,stat,etime,rss,args
+          jps -l | while read -r pid command; do
+            if [[ "$command" != *Jps ]]; then
+              timeout 10s jcmd "$pid" Thread.print || true
+            fi
+          done
 
   result:
     needs: build
