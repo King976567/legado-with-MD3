@@ -177,8 +177,11 @@ fun MangaReaderScreen(
     modifier: Modifier = Modifier,
     imageLoader: ImageLoader = koinInject(),
     hazeState: HazeState? = null,
+    hostHandlesBack: Boolean = false,
 ) {
-    BackHandler { onIntent(MangaReaderIntent.BackPressed) }
+    BackHandler(
+        enabled = mangaReaderScreenHandlesBack(state, hostHandlesBack),
+    ) { onIntent(MangaReaderIntent.BackPressed) }
     var viewportSize by remember { mutableStateOf(IntSize.Zero) }
     var viewportOrigin by remember { mutableStateOf(Offset.Zero) }
     val aspectRatios = remember(state.bookUrl) { mutableStateMapOf<String, Float>() }
@@ -353,6 +356,19 @@ fun MangaReaderScreen(
         onDismiss = { onIntent(MangaReaderIntent.DismissDialog) },
     )
 }
+
+// Temporary books need the ViewModel's add-to-shelf confirmation or cleanup before exit.
+internal fun canMangaReaderMorphBack(state: MangaReaderUiState): Boolean =
+    state.inBookshelf &&
+            state.activeDialog == null &&
+            state.activeSheet == null &&
+            state.settingsCategory == null &&
+            !state.menuVisible
+
+internal fun mangaReaderScreenHandlesBack(
+    state: MangaReaderUiState,
+    hostHandlesBack: Boolean,
+): Boolean = !canMangaReaderMorphBack(state) || !hostHandlesBack
 
 private fun MangaReaderText.resolve(context: android.content.Context): String = when (this) {
     is MangaReaderText.Dynamic -> value

@@ -2970,7 +2970,7 @@
     <string name="clear_voice_binding">Clear voice assignment</string>
     <string name="http_tts">HTTP TTS</string>
     <string name="show_read_aloud_capsule">Show read-aloud capsule</string>
-    <string name="show_read_aloud_capsule_summary">Show cover, pause and stop controls over the reading page</string>
+    <string name="show_read_aloud_capsule_summary">Show read-aloud controls across the app. Grant overlay permission to use them in other apps.</string>
     <string name="read_aloud_keep_on_exit">Keep reading aloud after exit</string>
     <string name="read_aloud_keep_on_exit_summary">Keep reading aloud in the background after leaving the reader</string>
     <string name="reset_read_aloud_capsule_position">Reset capsule position</string>
@@ -3495,4 +3495,11 @@
     <string name="feature_nas_book_remove_message">Permanently delete the NAS source file and library entry for “%1$s”? This cannot be undone.</string>
     <string name="feature_nas_book_remove_confirm">Delete source file</string>
     <string name="cache_count_checking">Checking cached chapters…</string>
+    <string name="read_aloud_overlay_permission">Display capsule over other apps</string>
+    <string name="read_aloud_overlay_granted">Allowed. The capsule appears outside this app while read aloud is running.</string>
+    <string name="read_aloud_overlay_required">Grant permission to use the capsule on the home screen and in other apps. The in-app capsule works without it.</string>
+    <string name="read_aloud_overlay_unavailable">This device cannot open overlay permission settings.</string>
+    <string name="home_capsule_restore_navigation">Restore navigation</string>
+    <string name="home_capsule_expand_controls">Show playback controls</string>
+    <string name="home_capsule_chapter">Chapter %d</string>
 </resources>
