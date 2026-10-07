@@ -92,13 +92,15 @@ fun BookMorphHost(
     backEnabled: Boolean = true,
     predictiveBackEnabled: Boolean = true,
     hasTargetCover: Boolean = false,
-    onDismiss: () -> Unit,
+    onDismiss: () -> Boolean,
+    onBackRequested: (() -> Unit)? = null,
     content: @Composable (onCollapse: () -> Unit) -> Unit,
 ) {
     val view = LocalView.current
     val scope = rememberCoroutineScope()
     val morph = rememberBookMorphState(anchorKey, hasTargetCover)
     val currentDismiss by rememberUpdatedState(onDismiss)
+    val currentBackRequested by rememberUpdatedState(onBackRequested)
     val currentBackEnabled by rememberUpdatedState(backEnabled)
     var backSettleJob by remember { mutableStateOf<Job?>(null) }
 
@@ -118,14 +120,17 @@ fun BookMorphHost(
         }
     }
 
-    val collapse: () -> Unit = {
-        scope.launch {
-            if (!anchorKey.isNullOrBlank()) {
-                BookCoverMorphAnchors.setActiveMorph(anchorKey, morph)
+    val collapse: () -> Unit = remember(scope, morph, anchorKey) {
+        {
+            backSettleJob?.cancel()
+            backSettleJob = scope.launch {
+                if (!anchorKey.isNullOrBlank()) {
+                    BookCoverMorphAnchors.setActiveMorph(anchorKey, morph)
+                }
+                BookCoverMorphAnchors.get(anchorKey)?.let(morph::updateAnchor)
+                morph.animateTo(0f, initialVelocity = morph.consumeCollapseVelocity())
+                if (!currentDismiss()) morph.animateTo(1f)
             }
-            refreshAnchor()
-            morph.animateTo(0f)
-            currentDismiss()
         }
     }
 
@@ -171,9 +176,19 @@ fun BookMorphHost(
                 morph.progress.snapTo(preview)
             }
             if (!predictiveBackEnabled) morph.progress.stop()
-            backSettleJob = scope.launch {
-                morph.animateTo(0f, initialVelocity = releaseVelocity)
-                currentDismiss()
+            val requestBack = currentBackRequested
+            // 手势速度先寄存：业务授权后的收起由 collapse 取走，未授权（弹确认框）则由过期的
+            // 进度判断丢弃，不会把旧动量带到下一次收起。
+            morph.recordCollapseVelocity(releaseVelocity)
+            if (requestBack != null) {
+                // Reader business logic authorizes the exit through Finish. It then calls
+                // collapse; the animation completion must never issue another close request.
+                requestBack()
+            } else {
+                backSettleJob = scope.launch {
+                    morph.animateTo(0f, initialVelocity = releaseVelocity)
+                    if (!currentDismiss()) morph.animateTo(1f)
+                }
             }
         } catch (cancelled: CancellationException) {
             morph.onPredictiveBackCancel()
@@ -269,7 +284,7 @@ fun BookMorphHost(
 
             // 3. 飞行封面：
             // 若页面有封面终点（如详情页），封面从起点连续飞向页面封面位置，全程保持连续；
-            // 若页面无封面终点（如小说/漫画阅读），封面随卡片展开并在前期（0.10f..0.25f）平滑淡出。
+            // 若页面无封面终点（如小说/漫画阅读），封面随卡片展开并在中段（0.10f..0.50f）平滑淡出。
             val coverAlpha by remember { derivedStateOf { morph.coverAlpha } }
             val flyingCoverVisible by remember {
                 derivedStateOf {

@@ -71,13 +71,13 @@ import io.legado.app.constant.AppLog
 import io.legado.app.constant.BookType
 import io.legado.app.constant.ReadMenuBlurMode
 import io.legado.app.core.ui.morph.BookMorphHost
+import io.legado.app.core.ui.morph.LocalBookMorph
 import io.legado.app.feature.reader.ReaderBackgroundSurface
 import io.legado.app.feature.reader.ReaderCanvasSurface
 import io.legado.app.feature.reader.core.gesture.ReaderTapActionGrid
 import io.legado.app.feature.reader.core.model.readerBackgroundAlpha
 import io.legado.app.feature.reader.core.transition.ReaderPageTurnSpeed
 import io.legado.app.feature.reader.core.transition.ReaderTransitionMode
-import io.legado.app.feature.reader.core.transition.ReaderViewportLayerPolicy
 import io.legado.app.feature.reader.platform.ReaderPerfTrace
 import io.legado.app.help.IntentHelp
 import io.legado.app.model.ReadBook
@@ -152,12 +152,13 @@ fun ReadBookRouteScreen(
     sharedTransitionScope: SharedTransitionScope? = null,
     animatedVisibilityScope: AnimatedVisibilityScope? = null,
     sharedCoverKey: String? = null,
+    isTopRoute: Boolean = true,
     onEffectsReady: () -> Unit = {},
     onOpenSearch: (word: String?, bookUrl: String, autoFocus: Boolean) -> Unit = { _, _, _ -> },
     onOpenVoiceCasting: (bookUrl: String) -> Unit = {},
     onOpenTtsEnginesAndVoices: () -> Unit = {},
     onOpenTtsCache: () -> Unit = {},
-    onNavigateBack: () -> Unit = {},
+    onNavigateBack: () -> Boolean = { true },
 ) {
     // 归因定界：与末尾 compose.screen.end 成对。若首帧 `Compose:recompose` 里出现
     // begin 之前的空档，说明那部分耗时在本屏之外（导航宿主 / 共享转场层）。
@@ -203,21 +204,45 @@ fun ReadBookRouteScreen(
                     !state.menuConfig.readMenuFloatingBottomBar &&
                             state.menuConfig.readMenuBottomBarBlurMode == ReadMenuBlurMode.LiquidGlass
                     )
-    val canMorphBack = state.activeSheet == null &&
+    val canHandleBack = isTopRoute
+    val canMorphBack = canHandleBack &&
+            state.inBookshelf &&
+            ReadBook.inBookshelf &&
+            state.activeSheet == null &&
             !state.isShowingSearchResult &&
             !state.isAutoPage &&
             !state.menuState.canNavigateBack &&
             state.activeDialog == null
 
-    BackHandler(enabled = !canMorphBack) {
+    var isDismissed by remember { mutableStateOf(false) }
+    var collapseTrigger by remember { mutableStateOf<(() -> Unit)?>(null) }
+
+    val performExit: () -> Boolean = {
+        if (isDismissed) {
+            true
+        } else {
+            onNavigateBack().also { popped ->
+                if (popped) isDismissed = true
+            }
+        }
+    }
+
+    val requestClose: () -> Unit = {
+        if (!isDismissed) {
+            viewModel.onIntent(ReadBookIntent.CloseReadBook())
+        }
+    }
+
+    BackHandler(enabled = canHandleBack && !canMorphBack) {
         when {
             state.activeSheet != null -> viewModel.onIntent(ReadBookIntent.DismissSheet)
             state.isShowingSearchResult -> viewModel.onIntent(ReadBookIntent.ExitSearch)
             state.isAutoPage -> viewModel.onIntent(ReadBookIntent.StopAutoPage)
             state.menuState.canNavigateBack -> viewModel.onIntent(ReadBookIntent.ReadMenuBack)
-            else -> viewModel.onIntent(ReadBookIntent.CloseReadBook())
+            else -> requestClose()
         }
     }
+
     DisposableEffect(controller) {
         controller.onComposeRendererAttached()
         onDispose {
@@ -513,6 +538,13 @@ fun ReadBookRouteScreen(
                                 exportHighlightRulePicker.launch("highlightRule.json")
                             }
 
+                            is ReadBookEffect.Finish -> {
+                                if (!isDismissed) {
+                                    val collapse = collapseTrigger
+                                    if (collapse != null) collapse() else performExit()
+                                }
+                            }
+
                             // All other effects — delegate to bridge (View/Window/Activity operations)
                             else -> controller.handleEffect(effect)
                         }
@@ -660,30 +692,23 @@ fun ReadBookRouteScreen(
             ReaderPerfTrace.marker("surface.page-ready")
         }
     }
-    var isDismissed by remember { mutableStateOf(false) }
-    var closingFromController by remember { mutableStateOf(false) }
-    val dismissReader: () -> Unit = {
-        if (!isDismissed) {
-            isDismissed = true
-            if (!closingFromController) {
-                viewModel.onIntent(ReadBookIntent.CloseReadBook())
-            }
-            onNavigateBack()
-        }
-    }
-
     BookMorphHost(
         anchorKey = sharedCoverKey,
         backgroundColor = readerSurfaceColor,
         backEnabled = canMorphBack,
         predictiveBackEnabled = true,
-        onDismiss = dismissReader,
+        onDismiss = performExit,
+        onBackRequested = requestClose,
     ) { onCollapse ->
+        val morph = LocalBookMorph.current
+        LaunchedEffect(state.activeDialog, morph) {
+            // Membership can change while a gesture is in progress. If the close request
+            // needs confirmation, restore the reader behind that dialog instead of exiting.
+            if (state.activeDialog != null) morph?.animateTo(1f)
+        }
         LaunchedEffect(onCollapse) {
-            controller.onClose = {
-                closingFromController = true
-                onCollapse()
-            }
+            collapseTrigger = onCollapse
+            controller.onClose = requestClose
         }
         Box(
             Modifier
@@ -703,14 +728,13 @@ fun ReadBookRouteScreen(
                     )
                 }
         ) {
-            // 滚动模式的背景由画布内的固定层绘制（画布还要当菜单 haze 的源），根层再画一遍
-            // 会让半透明背景图叠加两次、比设置值更浓，且与分页模式（页面自绘不透明底色挡住
-            // 根层，实际只画一次）观感不一致。画布可见时让出根层，其它状态仍由根层兜底。
+            // 背景由画布自己负责：滚动模式是画布内的固定层，分页模式是每页自绘的不透明底色
+            // 与背景图（`readerSurfaceColor` 不透明，根层这一遍会被整屏遮住）。画布可见时
+            // 一律让出根层，否则每个翻页帧都要重画一次未压缩的全屏背景位图；画布不可见
+            // （首个可读页之前、退出之后）仍由根层兜底。
             val readerCanvasVisible = hasReadablePage
             val readerTransitionMode = ReaderTransitionMode.fromPageAnim(controller.pageAnim)
-            if (!(ReaderViewportLayerPolicy.usesFixedBackground(readerTransitionMode) &&
-                        readerCanvasVisible)
-            ) {
+            if (!readerCanvasVisible) {
                 // 归因用：成对 marker 夹住子树，其间隔即该子树的组合耗时（都在
                 // `Compose:recompose` 之内）。子系统不用 tracing 时 marker 是空操作。
                 ReaderPerfTrace.marker("compose.background.begin")

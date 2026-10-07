@@ -198,27 +198,28 @@ class MangaReaderViewModel(
             }
             MangaReaderIntent.CloseReader -> closeReader()
             MangaReaderIntent.BackPressed -> {
-                when {
-                    _uiState.value.activeDialog != null -> {
+                when (
+                    resolveMangaBackAction(
+                        hasActiveDialog = _uiState.value.activeDialog != null,
+                        hasActiveSheet = _uiState.value.activeSheet != null,
+                        hasSettingsCategory = _uiState.value.settingsCategory != null,
+                        menuVisible = _uiState.value.menuVisible,
+                    )
+                ) {
+                    MangaBackAction.DISMISS_DIALOG -> {
                         _uiState.update { it.copy(activeDialog = null) }
                     }
-                    _uiState.value.activeSheet != null -> {
+
+                    MangaBackAction.DISMISS_SHEET -> {
                         _uiState.update { it.copy(activeSheet = null) }
                     }
-                    _uiState.value.settingsCategory != null -> closeSettings()
-                    _uiState.value.menuVisible -> setMenuVisible(false)
-                    readerSession.state.value.book != null &&
-                            readerSession.state.value.book?.inBookshelf == false &&
-                            _uiState.value.confirmAddToShelf -> {
-                        _uiState.update { it.copy(activeDialog = MangaReaderDialog.AddToShelf) }
-                    }
-                    readerSession.state.value.book != null &&
-                            readerSession.state.value.book?.inBookshelf == false -> onIntent(
-                        MangaReaderIntent.DiscardCurrentBookAndExit
-                    )
-                    else -> _effects.tryEmit(MangaReaderEffect.Finish())
+
+                    MangaBackAction.CLOSE_SETTINGS -> closeSettings()
+                    MangaBackAction.HIDE_MENU -> setMenuVisible(false)
+                    MangaBackAction.CLOSE_READER -> closeReader()
                 }
             }
+
             MangaReaderIntent.ToggleMenu -> setMenuVisible(!_uiState.value.menuVisible)
             MangaReaderIntent.HideMenu -> setMenuVisible(false)
             MangaReaderIntent.Retry -> launchAction {
@@ -331,27 +332,6 @@ class MangaReaderViewModel(
                         .toImmutableList()
                 )
             }
-        }
-    }
-
-    /**
-     * The title-bar button follows the normal reader's close affordance.  It
-     * must not be treated as Android back: Android back dismisses the reader
-     * menu first, while an explicit top-bar close should leave the reader in a
-     * single tap even when that menu is visible.
-     */
-    private fun closeReader() {
-        when {
-            readerSession.state.value.book != null &&
-                    readerSession.state.value.book?.inBookshelf == false &&
-                    _uiState.value.confirmAddToShelf -> {
-                _uiState.update { it.copy(activeDialog = MangaReaderDialog.AddToShelf) }
-            }
-            readerSession.state.value.book != null &&
-                    readerSession.state.value.book?.inBookshelf == false -> onIntent(
-                MangaReaderIntent.DiscardCurrentBookAndExit
-            )
-            else -> _effects.tryEmit(MangaReaderEffect.Finish())
         }
     }
 
@@ -781,6 +761,34 @@ class MangaReaderViewModel(
     private fun emitAndHide(effect: MangaReaderEffect) {
         setMenuVisible(false)
         _effects.tryEmit(effect)
+    }
+
+    /** Explicit top-bar close leaves in one tap, while retaining temporary-book confirmation. */
+    private fun closeReader() {
+        when {
+            readerSession.state.value.book != null &&
+                    readerSession.state.value.book?.inBookshelf == false &&
+                    _uiState.value.confirmAddToShelf -> {
+                setMenuVisible(false)
+                _uiState.update {
+                    it.copy(
+                        activeDialog = MangaReaderDialog.AddToShelf,
+                        activeSheet = null,
+                    )
+                }
+            }
+
+            readerSession.state.value.book != null &&
+                    readerSession.state.value.book?.inBookshelf == false -> {
+                setMenuVisible(false)
+                onIntent(MangaReaderIntent.DiscardCurrentBookAndExit)
+            }
+
+            else -> {
+                setMenuVisible(false)
+                _effects.tryEmit(MangaReaderEffect.Finish())
+            }
+        }
     }
 
     private fun showSheet(sheet: MangaReaderSheet) {

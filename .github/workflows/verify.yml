@@ -22,6 +22,7 @@ concurrency:
 jobs:
   verify:
     runs-on: ubuntu-latest
+    timeout-minutes: 60
     steps:
       - name: Checkout
         uses: actions/checkout@v5
@@ -41,17 +42,33 @@ jobs:
         run: |
           sed -i '/maven.aliyun.com/d' settings.gradle
 
-      - name: Run tests, lint, architecture check, and debug build
+      - name: JVM tests
+        id: tests
+        timeout-minutes: 20
         run: |
           chmod +x gradlew
-          ./gradlew \
-            testAppDebugUnitTest \
-            lintAppDebug \
-            verifyConfigArchitecture \
-            assembleAppDebug \
-            --continue \
-            --no-daemon \
-            --no-configuration-cache
+          ./gradlew testAppDebugUnitTest \
+            --project-prop ksp.incremental=false \
+            --max-workers=2 --no-parallel --info \
+            --continue --no-daemon --no-configuration-cache
+
+      - name: Lint and architecture
+        if: ${{ !cancelled() && steps.tests.outcome != 'skipped' }}
+        timeout-minutes: 20
+        run: |
+          ./gradlew lintAppDebug verifyConfigArchitecture \
+            --project-prop ksp.incremental=false \
+            --max-workers=2 --no-parallel --info \
+            --continue --no-daemon --no-configuration-cache
+
+      - name: Debug build
+        if: ${{ !cancelled() && steps.tests.outcome != 'skipped' }}
+        timeout-minutes: 20
+        run: |
+          ./gradlew assembleAppDebug \
+            --project-prop ksp.incremental=false \
+            --max-workers=2 --no-parallel --info \
+            --continue --no-daemon --no-configuration-cache
 
       - name: Upload unit test reports
         if: ${{ always() }}
@@ -74,3 +91,12 @@ jobs:
             app/build/reports/lint-results-appDebug.xml
             app/build/reports/lint-results-appDebug.txt
             app/build/reports/lint-results-appDebug.sarif
+      - name: JVM diagnostics on failure
+        if: ${{ always() && (failure() || cancelled()) }}
+        run: |
+          ps -eo pid,ppid,stat,etime,rss,args
+          jps -l | while read -r pid command; do
+            if [[ "$command" != *Jps ]]; then
+              timeout 10s jcmd "$pid" Thread.print || true
+            fi
+          done
