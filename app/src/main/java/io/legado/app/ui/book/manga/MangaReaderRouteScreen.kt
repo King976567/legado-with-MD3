@@ -25,6 +25,7 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import dev.chrisbanes.haze.HazeState
 import io.legado.app.constant.BookType
 import io.legado.app.core.ui.morph.BookMorphHost
+import io.legado.app.core.ui.morph.LocalBookMorph
 import io.legado.app.model.SourceCallBack
 import io.legado.app.receiver.NetworkChangedListener
 import io.legado.app.ui.book.read.sheet.ReaderBookSheetRoute
@@ -50,7 +51,8 @@ fun MangaReaderRouteScreen(
     sharedTransitionScope: SharedTransitionScope? = null,
     animatedVisibilityScope: AnimatedVisibilityScope? = null,
     sharedCoverKey: String? = null,
-    onFinish: (bookshelfChanged: Boolean) -> Unit,
+    isTopRoute: Boolean = true,
+    onFinish: (bookshelfChanged: Boolean) -> Boolean,
     onOpenBookInfo: (name: String, author: String, bookUrl: String) -> Unit,
     onOpenSourceLogin: (sourceUrl: String) -> Unit,
     onOpenSourceEdit: (sourceUrl: String) -> Unit,
@@ -83,10 +85,15 @@ fun MangaReaderRouteScreen(
     var isDismissed by remember { mutableStateOf(false) }
     var bookshelfChangedResult by remember { mutableStateOf(false) }
     var collapseTrigger by remember { mutableStateOf<(() -> Unit)?>(null) }
-    val dismissManga: () -> Unit = {
-        if (!isDismissed) {
-            isDismissed = true
-            onFinish(bookshelfChangedResult)
+    val dismissManga: () -> Boolean = {
+        if (isDismissed) {
+            true
+        } else {
+            // Finish already means that adding/discarding the book succeeded. UI state
+            // may still contain the pre-add snapshot; it must not initiate another delete.
+            onFinish(bookshelfChangedResult).also { popped ->
+                if (popped) isDismissed = true
+            }
         }
     }
 
@@ -230,7 +237,8 @@ fun MangaReaderRouteScreen(
         }
     }
 
-    val canMorphBack = canMangaReaderMorphBack(state)
+    val canHandleBack = isTopRoute
+    val canMorphBack = canHandleBack && canMangaReaderMorphBack(state)
 
     BookMorphHost(
         anchorKey = sharedCoverKey,
@@ -238,7 +246,12 @@ fun MangaReaderRouteScreen(
         backEnabled = canMorphBack,
         predictiveBackEnabled = true,
         onDismiss = dismissManga,
+        onBackRequested = { viewModel.onIntent(MangaReaderIntent.BackPressed) },
     ) { onCollapse ->
+        val morph = LocalBookMorph.current
+        LaunchedEffect(state.activeDialog, morph) {
+            if (state.activeDialog != null) morph?.animateTo(1f)
+        }
         LaunchedEffect(onCollapse) {
             collapseTrigger = onCollapse
         }
@@ -253,6 +266,7 @@ fun MangaReaderRouteScreen(
             hostHandlesBack = canMorphBack,
             hazeState = if (useMenuHaze) menuHazeState else null,
             modifier = Modifier.fillMaxSize(),
+            canHandleBack = canHandleBack,
         )
         if (state.activeSheet == MangaReaderSheet.Catalog && state.bookUrl.isNotEmpty()) {
             ReaderBookSheetRoute(
