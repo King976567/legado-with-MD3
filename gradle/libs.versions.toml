@@ -50,7 +50,7 @@ navigation3 = "1.2.0"
 navigationevent = "1.2.0-rc01"
 markwon = "4.6.2"
 material = "1.14.0"
-material3 = "1.5.0-alpha28"
+material3 = "1.5.0-alpha29"
 material3IconsExtended = "1.7.8"
 materialKolor = "5.0.1"
 media = "1.8.0"
@@ -122,6 +122,8 @@ androidx-navigationevent-compose = { module = "androidx.navigationevent:navigati
 compose-materialIcons = { group = "androidx.compose.material", name = "material-icons-extended", version.ref = "material3IconsExtended" }
 androidx-compose-material3 = { group = "androidx.compose.material3", name = "material3", version.ref = "material3" }
 androidx-compose-ui = { module = "androidx.compose.ui:ui" }
+androidx-compose-ui-test-junit4 = { module = "androidx.compose.ui:ui-test-junit4" }
+androidx-compose-ui-test-manifest = { module = "androidx.compose.ui:ui-test-manifest" }
 androidx-compose-ui-tooling = { module = "androidx.compose.ui:ui-tooling" }
 androidx-compose-ui-tooling-preview = { module = "androidx.compose.ui:ui-tooling-preview" }
 androidx-compose-ui-viewbinding = { module = "androidx.compose.ui:ui-viewbinding", version.ref = "uiViewbinding" }

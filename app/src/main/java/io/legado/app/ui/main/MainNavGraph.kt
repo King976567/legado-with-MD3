@@ -228,13 +228,8 @@ private fun readerEntryMetadata(predictiveBackEnabled: Boolean) =
         }
     }
 
-/**
- * 以底部弹层呈现的目的地（听书播放页、有声书播放页）。
- *
- * 上一站保持组合在弹层之下（真实背景可见），目的地自身不参与转场：
- * 进出动画完全由 `AppModalBottomSheet` 负责，导航层只负责栈。
- */
-private fun sheetEntryMetadata(): Map<String, Any> =
+/** Keep parent overlays composed while NavDisplay leaves animation to the search scene or player host. */
+private fun modalOverlayEntryMetadata(): Map<String, Any> =
     ModalOverlaySceneStrategy.modalOverlay() + metadata {
         put(NavDisplay.TransitionKey) { EnterTransition.None togetherWith ExitTransition.None }
         put(NavDisplay.PopTransitionKey) { EnterTransition.None togetherWith ExitTransition.None }
@@ -735,7 +730,12 @@ fun MainActivity.mainEntryProvider(
             bookUrl = route.bookUrl,
             onExit = {
                 if (backStack.size > 1) {
-                    onNavigateBack()
+                    MainNavigator.navigateBack(
+                        this@mainEntryProvider,
+                        backStack,
+                        navRouteTracker,
+                        fromRoute = route,
+                    )
                 } else {
                     // 通知 / 深链可能让阅读器成为栈里唯一一项：没有"当前页"可退，
                     // 按约定落到书架，而不是把应用关掉
@@ -817,6 +817,9 @@ fun MainActivity.mainEntryProvider(
                 sharedTransitionScope = sharedTransitionScope,
                 animatedVisibilityScope = LocalNavAnimatedContentScope.current,
                 sharedCoverKey = route.sharedCoverKey,
+                isTopRoute = (backStack.lastOrNull() as? MainRouteReadBook)?.let {
+                    route.bookUrl == null || it.bookUrl == route.bookUrl
+                } ?: false,
                 onEffectsReady = { effectsReady.complete(Unit) },
                 onOpenSearch = { word, bookUrl, autoFocus ->
                     onNavigateToRoute(
@@ -837,7 +840,14 @@ fun MainActivity.mainEntryProvider(
                 onOpenTtsCache = {
                     onNavigateToRoute(MainRouteTtsCache)
                 },
-                onNavigateBack = { onNavigateBack() },
+                onNavigateBack = {
+                    MainNavigator.navigateBack(
+                        this@mainEntryProvider,
+                        backStack,
+                        navRouteTracker,
+                        fromRoute = route,
+                    )
+                },
             )
 
             DisposableEffect(controller, lifecycleOwner, route.readAloud) {
@@ -873,6 +883,7 @@ fun MainActivity.mainEntryProvider(
                         activeReadBookRoute = null
                     }
                     MainActivity.hasActiveReadBookRoute = false
+                    controller.onClose = null
                     controller.clearTts()
                     this@mainEntryProvider.toggleSystemBar(configuration.appShell.showStatusBar)
                 }
@@ -911,7 +922,17 @@ fun MainActivity.mainEntryProvider(
             sharedTransitionScope = sharedTransitionScope,
             animatedVisibilityScope = LocalNavAnimatedContentScope.current,
             sharedCoverKey = route.sharedCoverKey,
-            onFinish = { onNavigateBack() },
+            isTopRoute = (backStack.lastOrNull() as? MainRouteReadManga)?.let {
+                route.bookUrl == null || it.bookUrl == route.bookUrl
+            } ?: false,
+            onFinish = {
+                MainNavigator.navigateBack(
+                    this@mainEntryProvider,
+                    backStack,
+                    navRouteTracker,
+                    fromRoute = route,
+                )
+            },
             onOpenBookInfo = { name, author, bookUrl ->
                 onNavigateToRoute(MainRouteBookInfo(name, author, bookUrl))
             },
@@ -929,7 +950,7 @@ fun MainActivity.mainEntryProvider(
         )
     }
 
-    entry<MainRouteReadAloudPlayer>(metadata = sheetEntryMetadata()) {
+    entry<MainRouteReadAloudPlayer>(metadata = modalOverlayEntryMetadata()) {
         LaunchedEffect(Unit) {
             ReadAloudPlayerOverlayBus.request(PlaybackCapsuleState(source = PlaybackCapsuleSource.ReadAloud))
             if (backStack.size > 1) onNavigateBack() else backStack[0] = MainRouteHome
@@ -937,7 +958,7 @@ fun MainActivity.mainEntryProvider(
     }
 
     // 兼容已保存的导航栈。新入口在 MainActivity 直接打开同窗口播放浮层。
-    entry<MainRouteAudioPlay>(metadata = sheetEntryMetadata()) { route ->
+    entry<MainRouteAudioPlay>(metadata = modalOverlayEntryMetadata()) { route ->
         LaunchedEffect(route) {
             ReadAloudPlayerOverlayBus.request(
                 PlaybackCapsuleState(
@@ -950,13 +971,17 @@ fun MainActivity.mainEntryProvider(
         }
     }
 
-    entry<MainRouteSearchContent> { route ->
+    entry<MainRouteSearchContent>(
+        metadata = modalOverlayEntryMetadata() + ModalOverlaySceneStrategy.searchSlide()
+    ) { route ->
         val viewModel = koinViewModel<SearchContentViewModel>(
             key = "SearchContent:${route.bookUrl}",
             parameters = { parametersOf(route) }
         )
         SearchContentRouteScreen(
             viewModel = viewModel,
+            isTopRoute = backStack.lastOrNull() == route,
+            predictiveBackEnabled = configuration.appShell.predictiveBackEnabled,
             autoFocus = route.autoFocus,
             onBack = { onNavigateBack() },
         )
@@ -1133,8 +1158,22 @@ fun MainActivity.mainEntryProvider(
             origin = route.origin,
             coverPath = route.coverPath,
             viewModel = bookInfoViewModel,
-            onBack = { onNavigateBack() },
-            onFinish = { _, _ -> onNavigateBack() },
+            onBack = {
+                MainNavigator.navigateBack(
+                    this@mainEntryProvider,
+                    backStack,
+                    navRouteTracker,
+                    fromRoute = route,
+                )
+            },
+            onFinish = { _, _ ->
+                MainNavigator.navigateBack(
+                    this@mainEntryProvider,
+                    backStack,
+                    navRouteTracker,
+                    fromRoute = route,
+                )
+            },
             onOpenSearch = { keyword ->
                 onNavigateToRoute(MainRouteSearch(key = keyword))
             },
@@ -1154,7 +1193,7 @@ fun MainActivity.mainEntryProvider(
                         bookUrl = bookUrl,
                         inBookshelf = inBookshelf,
                         chapterChanged = chapterChanged,
-                        sharedCoverKey = route.sharedCoverKey ?: bookCoverSharedElementKey(route.bookUrl),
+                        sharedCoverKey = bookInfoCoverSharedElementKey(bookUrl),
                     )
                 )
             },
@@ -1165,8 +1204,7 @@ fun MainActivity.mainEntryProvider(
                         inBookshelf = inBookshelf,
                         chapterChanged = chapterChanged,
                         openRequestId = System.nanoTime(),
-                        sharedCoverKey = route.sharedCoverKey
-                            ?: bookCoverSharedElementKey(route.bookUrl),
+                        sharedCoverKey = bookInfoCoverSharedElementKey(bookUrl),
                     )
                 )
             },
@@ -1175,8 +1213,7 @@ fun MainActivity.mainEntryProvider(
                     MainRouteAudioPlay(
                         bookUrl = bookUrl,
                         inBookshelf = inBookshelf,
-                        sharedCoverKey = route.sharedCoverKey
-                            ?: bookCoverSharedElementKey(route.bookUrl),
+                        sharedCoverKey = bookInfoCoverSharedElementKey(bookUrl),
                     )
                 )
             },
@@ -1204,6 +1241,7 @@ fun MainActivity.mainEntryProvider(
             sharedTransitionScope = sharedTransitionScope,
             animatedVisibilityScope = LocalNavAnimatedContentScope.current,
             sharedCoverKey = route.sharedCoverKey ?: bookCoverSharedElementKey(route.bookUrl),
+            isTopRoute = (backStack.lastOrNull() as? MainRouteBookInfo)?.bookUrl == route.bookUrl,
         )
     }
 
