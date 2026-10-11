@@ -89,7 +89,8 @@ fun MangaReaderRouteScreen(
         }
     }
 
-    LaunchedEffect(viewModel) {
+    // The stable reader entry survives new requests; bind effects to the current route callbacks.
+    LaunchedEffect(viewModel, bookUrl, inBookshelf, chapterChanged, openRequestId) {
         viewModel.effects.collectLatest { effect ->
             val currentState = viewModel.uiState.value
             when (effect) {

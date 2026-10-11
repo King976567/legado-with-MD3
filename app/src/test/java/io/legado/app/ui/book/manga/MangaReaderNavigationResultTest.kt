@@ -3,6 +3,8 @@ package io.legado.app.ui.book.manga
 import android.app.Application
 import androidx.lifecycle.ViewModelStore
 import coil3.ImageLoader
+import io.legado.app.data.dao.BookSourceDao
+import io.legado.app.data.entities.BookSource
 import io.legado.app.data.repository.manga.MangaReaderActionRepository
 import io.legado.app.domain.gateway.BookCacheDownloadGateway
 import io.legado.app.domain.gateway.MangaReaderSession
@@ -11,6 +13,9 @@ import io.legado.app.domain.gateway.MangaSettingsGateway
 import io.legado.app.domain.gateway.OtherSettingsGateway
 import io.legado.app.domain.gateway.ReadSettingsGateway
 import io.legado.app.domain.model.manga.MangaBookState
+import io.legado.app.domain.model.manga.MangaChapterContent
+import io.legado.app.domain.model.manga.MangaChapterState
+import io.legado.app.domain.model.manga.MangaPageContent
 import io.legado.app.domain.model.manga.MangaSessionCommand
 import io.legado.app.domain.model.manga.MangaSessionEvent
 import io.legado.app.domain.model.manga.MangaSessionId
@@ -133,6 +138,91 @@ class MangaReaderNavigationResultTest {
         }
 
     @Test
+    fun `cancelled source lookup cannot restore the previous book while a new open waits`() =
+        runTest(dispatcher) {
+            viewModel.onIntent(MangaReaderIntent.Initialize("old-comic", true, false, 1L))
+            runCurrent()
+            onNextSourceLookup {
+                // The current lookup is still on the stack when a new route requests another
+                // book. Its cancelled job must not commit even before Open updates the session.
+                viewModel.onIntent(MangaReaderIntent.Initialize("new-comic", true, false, 2L))
+            }
+            session.openReadyBook("old-comic")
+            runCurrent()
+
+            assertTrue(viewModel.uiState.value.isLoading)
+            assertTrue(viewModel.uiState.value.pages.isEmpty())
+            assertTrue(session.commands.filterIsInstance<MangaSessionCommand.VisiblePageChanged>().isEmpty())
+
+            session.openReadyBook("new-comic", chapterIndex = 1)
+            runCurrent()
+            assertEquals("new-comic", viewModel.uiState.value.bookUrl)
+            assertEquals(1, viewModel.uiState.value.chapterIndex)
+            assertFalse(viewModel.uiState.value.isLoading)
+            assertTrue(viewModel.uiState.value.pages.isNotEmpty())
+        }
+
+    @Test
+    fun `source lookup cannot publish a ready chapter from a replaced session revision`() =
+        runTest(dispatcher) {
+            onNextSourceLookup {
+                // A session's ordered Open has advanced while the old ready presentation
+                // lookup was in progress. It has no new chapter to cancel that old job yet.
+                session.beginOpen("new-comic")
+            }
+            session.openReadyBook("old-comic")
+            runCurrent()
+
+            assertTrue(viewModel.uiState.value.isLoading)
+            assertTrue(viewModel.uiState.value.pages.isEmpty())
+            assertTrue(session.commands.filterIsInstance<MangaSessionCommand.VisiblePageChanged>().isEmpty())
+
+            session.openReadyBook("new-comic", chapterIndex = 3)
+            runCurrent()
+            assertEquals("new-comic", viewModel.uiState.value.bookUrl)
+            assertEquals(3, viewModel.uiState.value.chapterIndex)
+            assertFalse(viewModel.uiState.value.isLoading)
+        }
+
+    @Test
+    fun `same book reopened during source lookup presents only the latest chapter`() =
+        runTest(dispatcher) {
+            onNextSourceLookup { session.openReadyBook("comic", chapterIndex = 2) }
+            session.openReadyBook("comic", chapterIndex = 0)
+            runCurrent()
+
+            assertEquals("comic", viewModel.uiState.value.bookUrl)
+            assertEquals(2, viewModel.uiState.value.chapterIndex)
+            assertFalse(viewModel.uiState.value.isLoading)
+            assertEquals(
+                listOf(MangaSessionCommand.VisiblePageChanged(2, 0)),
+                session.commands.filterIsInstance<MangaSessionCommand.VisiblePageChanged>(),
+            )
+        }
+
+    @Test
+    fun `new book initialization clears unfinished chapter and pager handoff gates`() =
+        runTest(dispatcher) {
+            viewModel.onIntent(MangaReaderIntent.Initialize("old-comic", true, false, 1L))
+            session.openReadyBook("old-comic")
+            runCurrent()
+            viewModel.onIntent(MangaReaderIntent.OpenChapter(2, 0))
+            viewModel.onIntent(MangaReaderIntent.PagerScrollChanged(true))
+            runCurrent()
+            assertEquals(2, viewModel.uiState.value.pendingChapterIndex)
+
+            viewModel.onIntent(MangaReaderIntent.Initialize("new-comic", true, false, 2L))
+            session.openReadyBook("new-comic", chapterIndex = 1)
+            runCurrent()
+
+            assertEquals("new-comic", viewModel.uiState.value.bookUrl)
+            assertEquals(1, viewModel.uiState.value.chapterIndex)
+            assertFalse(viewModel.uiState.value.isLoading)
+            assertFalse(viewModel.uiState.value.isChapterLoading)
+            assertTrue(viewModel.uiState.value.pages.isNotEmpty())
+        }
+
+    @Test
     fun `retained reader accepts a toc result without waiting for chapter images`() =
         runTest(dispatcher) {
             session.openBook("comic")
@@ -231,6 +321,25 @@ class MangaReaderNavigationResultTest {
             assertEquals(listOf(MangaSessionCommand.OpenChapter(1, 4)), session.chapterCommands())
         }
 
+    /** Intercept the real synchronous DAO lookup without a production test hook or mock library. */
+    private fun onNextSourceLookup(callback: () -> Unit) {
+        val original = fixture.database.bookSourceDao
+        var called = false
+        val intercepted = object : BookSourceDao by original {
+            override fun getBookSource(key: String): BookSource? {
+                if (!called) {
+                    called = true
+                    callback()
+                }
+                return original.getBookSource(key)
+            }
+        }
+        fixture.database.javaClass.declaredFields
+            .single { it.type == BookSourceDao::class.java }
+            .apply { isAccessible = true }
+            .set(fixture.database, intercepted)
+    }
+
     private class FakeSession : MangaReaderSession {
         override val state = MutableStateFlow(MangaSessionState(MangaSessionId("test")))
         override val events = MutableSharedFlow<MangaSessionEvent>()
@@ -242,6 +351,7 @@ class MangaReaderNavigationResultTest {
 
         fun openBook(bookUrl: String, requestedBookUrl: String = bookUrl) {
             state.value = state.value.copy(
+                revision = state.value.revision + 1,
                 book = MangaBookState(
                     bookUrl = bookUrl,
                     name = "Comic",
@@ -258,7 +368,36 @@ class MangaReaderNavigationResultTest {
                     chapterTitles = List(5) { "Chapter ${it + 1}" },
                 ),
                 chapterCount = 5,
+                currentChapter = MangaChapterState.Empty,
                 requestedBookUrl = requestedBookUrl,
+            )
+        }
+
+        fun beginOpen(bookUrl: String) {
+            state.value = MangaSessionState(
+                sessionId = state.value.sessionId,
+                revision = state.value.revision + 1,
+                requestedBookUrl = bookUrl,
+            )
+        }
+
+        fun openReadyBook(bookUrl: String, chapterIndex: Int = 0) {
+            openBook(bookUrl)
+            val opened = state.value
+            state.value = opened.copy(
+                chapterIndex = chapterIndex,
+                currentChapter = MangaChapterState.Ready(
+                    token = requireNotNull(opened.tokenFor(chapterIndex)),
+                    chapter = MangaChapterContent(
+                        chapterIndex = chapterIndex,
+                        chapterTitle = "Chapter ${chapterIndex + 1}",
+                        chapterUrl = null,
+                        pages = List(2) { page ->
+                            MangaPageContent("$bookUrl/$chapterIndex/$page.jpg", page, 2)
+                        },
+                        isVolume = false,
+                    ),
+                ),
             )
         }
 

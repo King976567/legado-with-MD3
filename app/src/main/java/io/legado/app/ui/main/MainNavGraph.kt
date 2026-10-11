@@ -1080,11 +1080,11 @@ fun MainActivity.mainEntryProvider(
         }
     }
 
-    entry<MainRouteReadManga>(
+    mangaReaderEntry(
         metadata = readerEntryMetadata(configuration.appShell.predictiveBackEnabled)
-    ) { route ->
+    ) { route, viewModelKey ->
         val mangaViewModel = koinViewModel<MangaReaderViewModel>(
-            key = "ReadManga:${route.bookUrl ?: "last-read"}",
+            key = viewModelKey,
         )
         ConsumeBookPageResult(route, backStack.lastOrNull() == route, navRouteTracker) { result ->
             when (result) {
