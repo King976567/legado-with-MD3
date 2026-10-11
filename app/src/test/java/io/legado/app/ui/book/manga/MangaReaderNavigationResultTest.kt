@@ -109,6 +109,30 @@ class MangaReaderNavigationResultTest {
         }
 
     @Test
+    fun `new explicit open ids reopen the retained book while identical requests remain deduplicated`() =
+        runTest(dispatcher) {
+            val first = MangaReaderIntent.Initialize("comic", true, true, openRequestId = 11L)
+            viewModel.onIntent(first)
+            viewModel.onIntent(first)
+            runCurrent()
+            assertEquals(
+                listOf(MangaSessionCommand.Open("comic", true, true)),
+                session.commands.filterIsInstance<MangaSessionCommand.Open>(),
+            )
+
+            // Details selected another chapter, then replaced the route of this same book.
+            // Its new id is the only changed field; it must still open the saved target.
+            val second = first.copy(openRequestId = 22L)
+            viewModel.onIntent(second)
+            viewModel.onIntent(second)
+            runCurrent()
+            assertEquals(
+                List(2) { MangaSessionCommand.Open("comic", true, true) },
+                session.commands.filterIsInstance<MangaSessionCommand.Open>(),
+            )
+        }
+
+    @Test
     fun `retained reader accepts a toc result without waiting for chapter images`() =
         runTest(dispatcher) {
             session.openBook("comic")

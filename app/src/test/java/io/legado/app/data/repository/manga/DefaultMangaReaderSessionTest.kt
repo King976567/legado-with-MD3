@@ -31,16 +31,33 @@ class DefaultMangaReaderSessionTest {
 
             session.execute(MangaSessionCommand.Open("book-a", true, false))
             advanceUntilIdle()
-            gateway.complete("book-a", 0)
+            session.execute(MangaSessionCommand.OpenChapter(2, 7))
             advanceUntilIdle()
-            session.execute(MangaSessionCommand.VisiblePageChanged(0, 7))
+            gateway.complete("book-a", 2)
             advanceUntilIdle()
+            assertEquals(2, session.state.value.chapterIndex)
+
+            // The detail page writes the selected second chapter before reopening the reader.
+            gateway.savedProgress["book-a"] = 1 to 4
             gateway.persisted.clear()
 
             session.execute(MangaSessionCommand.Open("book-a", true, true))
             advanceUntilIdle()
 
             assertTrue(gateway.persisted.isEmpty())
+            assertEquals(1, session.state.value.chapterIndex)
+            assertEquals(4, session.state.value.pageIndex)
+            assertEquals(1 to 4, gateway.savedProgress["book-a"])
+
+            // A second selection must work after the earlier chapterChanged=true request.
+            gateway.savedProgress["book-a"] = 0 to 2
+            session.execute(MangaSessionCommand.Open("book-a", true, true))
+            advanceUntilIdle()
+
+            assertTrue(gateway.persisted.isEmpty())
+            assertEquals(0, session.state.value.chapterIndex)
+            assertEquals(2, session.state.value.pageIndex)
+            assertEquals(0 to 2, gateway.savedProgress["book-a"])
             session.close()
         }
 
@@ -286,6 +303,7 @@ class DefaultMangaReaderSessionTest {
         var rewrittenBookUrl: String? = null
         var openGate: CompletableDeferred<Unit>? = null
         private val requests = mutableMapOf<Pair<String, Int>, CompletableDeferred<MangaChapterContent>>()
+        val savedProgress = mutableMapOf<String, Pair<Int, Int>>()
         val persisted = mutableListOf<Triple<String, Int, Int>>()
         val paused = mutableListOf<String>()
         val prefetched = mutableListOf<Pair<String, Int>>()
@@ -302,6 +320,7 @@ class DefaultMangaReaderSessionTest {
         ): OpenedMangaBook {
             openGate?.await()
             val requestedUrl = requireNotNull(bookUrl)
+            val progress = savedProgress[requestedUrl] ?: (0 to 0)
             return OpenedMangaBook(
                 book = MangaBookState(
                     bookUrl = rewrittenBookUrl ?: requestedUrl,
@@ -318,8 +337,8 @@ class DefaultMangaReaderSessionTest {
                     isLocal = false,
                     chapterTitles = List(5) { "Chapter ${it + 1}" },
                 ),
-                chapterIndex = 0,
-                pageIndex = 0,
+                chapterIndex = progress.first,
+                pageIndex = progress.second,
                 chapterCount = 5,
             )
         }
@@ -362,6 +381,7 @@ class DefaultMangaReaderSessionTest {
         )
 
         override suspend fun persistProgress(bookUrl: String, chapterIndex: Int, pageIndex: Int) {
+            savedProgress[bookUrl] = chapterIndex to pageIndex
             persisted += Triple(bookUrl, chapterIndex, pageIndex)
         }
 

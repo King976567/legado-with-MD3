@@ -1344,7 +1344,7 @@ fun MainActivity.mainEntryProvider(
         ConsumeBookPageResult(route, backStack.lastOrNull() == route, navRouteTracker) { result ->
             when (result) {
                 is BookPageResult.ChapterSelected -> bookInfoViewModel.onTocResult(
-                    Triple(result.index, result.position, false)
+                    Triple(result.index, result.position, true)
                 )
 
                 BookPageResult.TocCancelled -> bookInfoViewModel.onTocResult(null)

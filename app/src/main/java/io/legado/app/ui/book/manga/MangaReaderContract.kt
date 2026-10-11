@@ -191,6 +191,8 @@ sealed interface MangaReaderIntent {
         val bookUrl: String?,
         val inBookshelf: Boolean,
         val chapterChanged: Boolean,
+        /** A new explicit open must run again; recomposing the same request must not. */
+        val openRequestId: Long = 0L,
     ) : MangaReaderIntent
     data object ResumeSession : MangaReaderIntent
     data object PauseSession : MangaReaderIntent

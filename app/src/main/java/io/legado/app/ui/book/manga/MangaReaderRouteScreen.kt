@@ -71,7 +71,7 @@ fun MangaReaderRouteScreen(
 
     LaunchedEffect(viewModel, bookUrl, inBookshelf, chapterChanged, openRequestId) {
         viewModel.onIntent(
-            MangaReaderIntent.Initialize(bookUrl, inBookshelf, chapterChanged)
+            MangaReaderIntent.Initialize(bookUrl, inBookshelf, chapterChanged, openRequestId)
         )
     }
 
