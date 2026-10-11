@@ -33,14 +33,18 @@ import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Modifier
 import androidx.core.splashscreen.SplashScreen.Companion.installSplashScreen
+import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.lifecycleScope
+import androidx.lifecycle.repeatOnLifecycle
 import androidx.lifecycle.viewmodel.navigation3.rememberViewModelStoreNavEntryDecorator
+import androidx.navigation3.runtime.NavEntry
 import androidx.navigation3.runtime.NavKey
 import androidx.navigation3.runtime.rememberNavBackStack
 import androidx.navigation3.runtime.rememberSaveableStateHolderNavEntryDecorator
@@ -50,6 +54,7 @@ import io.legado.app.BuildConfig
 import io.legado.app.R
 import io.legado.app.base.BaseComposeActivity
 import io.legado.app.constant.AppConst.appInfo
+import io.legado.app.constant.EventBus
 import io.legado.app.core.ui.player.playerUnderlaySemantics
 import io.legado.app.data.repository.ReadAloudSettingsRepository
 import io.legado.app.domain.gateway.BackupSettingsGateway
@@ -58,9 +63,11 @@ import io.legado.app.domain.gateway.OtherSettingsGateway
 import io.legado.app.domain.gateway.PlaybackCapsuleGateway
 import io.legado.app.domain.model.PlaybackCapsuleSource
 import io.legado.app.domain.model.PlaybackCapsuleState
+import io.legado.app.help.LocalNetworkAccess
 import io.legado.app.help.book.BookHelp
 import io.legado.app.help.config.LocalConfig
 import io.legado.app.help.coroutine.Coroutine
+import io.legado.app.help.http.LocalNetworkBlockedNotifier
 import io.legado.app.help.storage.Backup
 import io.legado.app.help.update.AppUpdateGitHub
 import io.legado.app.lib.dialogs.alert
@@ -85,6 +92,7 @@ import io.legado.app.ui.theme.LocalAppUiConfiguration
 import io.legado.app.ui.welcome.WelcomeActivity
 import io.legado.app.ui.widget.components.privacy.PrivateAppStartGate
 import io.legado.app.utils.LogUtils
+import io.legado.app.utils.eventBus.FlowEventBus
 import io.legado.app.utils.showDialogFragment
 import io.legado.app.utils.startActivity
 import io.legado.app.utils.toastOnUi
@@ -320,13 +328,26 @@ open class MainActivity : BaseComposeActivity(), AudioPlay.CallBack {
     private val readAloudSettingsRepository by inject<ReadAloudSettingsRepository>()
     internal val navRouteTracker by inject<MainNavRouteTracker>()
     private val routeEvents = MutableSharedFlow<RouteEvent>(extraBufferCapacity = 1)
-    private val localNetworkPermissionLauncher = registerForActivityResult(
+    /**
+     * Web 服务与「局域网请求」各自持有独立的 launcher：授权结果互不影响，也不需要用一个可变字段
+     * 记录「本次申请的目的」——那种写法在配置变更/进程重建后会丢失，导致结果被误判为 Web 服务申请。
+     */
+    private val webServiceLocalNetworkPermissionLauncher = registerForActivityResult(
         ActivityResultContracts.RequestPermission()
     ) { granted ->
         if (granted) {
             WebService.startForeground(this)
         } else {
             toastOnUi(R.string.web_service_local_network_permission_denied)
+        }
+    }
+
+    private val localNetworkRequestPermissionLauncher = registerForActivityResult(
+        ActivityResultContracts.RequestPermission()
+    ) { granted ->
+        // 授权后由用户重试原操作；未授权时提示授予方式。
+        if (!granted) {
+            toastOnUi(R.string.local_network_permission_required)
         }
     }
     private var shouldApplyDefaultToRead = true
@@ -339,6 +360,7 @@ open class MainActivity : BaseComposeActivity(), AudioPlay.CallBack {
         installSplashScreen()
         shouldApplyDefaultToRead = savedInstanceState == null
         restoredReadBookRoute = savedInstanceState?.restoreReadBookRoute()
+            ?: navRouteTracker.lastReadBookRoute()
         super.onCreate(savedInstanceState)
 
         if (checkStartupRoute()) return
@@ -352,6 +374,15 @@ open class MainActivity : BaseComposeActivity(), AudioPlay.CallBack {
                 intent?.getBooleanExtra(MainIntent.EXTRA_WEB_SERVICE_LOCAL_NETWORK, false) == true
         if (requestWebService) {
             startWebServiceWithLocalNetworkPermission()
+        }
+
+        // 局域网请求（书源 / 图源 / WebDAV）被系统拦下时，前台立即补一次本地网络权限申请。
+        lifecycleScope.launch {
+            repeatOnLifecycle(Lifecycle.State.STARTED) {
+                FlowEventBus.with<Unit>(EventBus.LOCAL_NETWORK_PERMISSION_REQUIRED).collect {
+                    requestLocalNetworkPermissionIfBlocked()
+                }
+            }
         }
 
         lifecycleScope.launch {
@@ -383,11 +414,26 @@ open class MainActivity : BaseComposeActivity(), AudioPlay.CallBack {
      * 已授予直接启动；未授予先申请，授予后由 launcher 回调补启。
      */
     private fun startWebServiceWithLocalNetworkPermission() {
-        if (WebService.hasLocalNetworkPermission(this)) {
+        if (LocalNetworkAccess.isGranted(this)) {
             WebService.startForeground(this)
         } else {
-            localNetworkPermissionLauncher.launch(Manifest.permission.ACCESS_LOCAL_NETWORK)
+            webServiceLocalNetworkPermissionLauncher.launch(Manifest.permission.ACCESS_LOCAL_NETWORK)
         }
+    }
+
+    override fun onResume() {
+        super.onResume()
+        requestLocalNetworkPermissionIfBlocked()
+    }
+
+    /**
+     * 书源 / 图源 / WebDAV 等局域网请求被系统拦掉后，网络层会留下标记（见
+     * [LocalNetworkBlockedNotifier]）；回到前台时补一次权限申请，用户重试原操作即可。
+     */
+    private fun requestLocalNetworkPermissionIfBlocked() {
+        if (!LocalNetworkBlockedNotifier.consumePermissionRequest()) return
+        if (LocalNetworkAccess.isGranted(this)) return
+        localNetworkRequestPermissionLauncher.launch(Manifest.permission.ACCESS_LOCAL_NETWORK)
     }
 
     override fun onNewIntent(intent: Intent) {
@@ -416,6 +462,7 @@ open class MainActivity : BaseComposeActivity(), AudioPlay.CallBack {
         val orientation = resources.configuration.orientation
         val smallestWidthDp = resources.configuration.smallestScreenWidthDp
         val configuration = LocalAppUiConfiguration.current
+        val predictiveBackEnabled by rememberUpdatedState(configuration.appShell.predictiveBackEnabled)
         val tabletInterface = configuration.appShell.tabletInterface
         val defaultToReadFlow = remember(otherSettingsGateway) {
             otherSettingsGateway.settings
@@ -614,12 +661,27 @@ open class MainActivity : BaseComposeActivity(), AudioPlay.CallBack {
                     ) {
                         NavDisplay(
                             backStack = backStack,
+                            // 交给 nav3 装上 SharedEntryInSceneNavEntryDecorator：这是跨 scene 保持
+                            // 共享元素登记的官方机制。少了它，书架 scene 一被销毁封面的登记就没了——
+                            // 打开书后「马上返回」还有封面转场、'待一会儿再返回'会退化成
+                            // 普通淡入淡出。
+                            sharedTransitionScope = this@SharedTransitionLayout,
                             entryDecorators = listOf(
                                 rememberSaveableStateHolderNavEntryDecorator(),
                                 rememberViewModelStoreNavEntryDecorator(),
                             ),
                             sceneStrategies = listOf(
-                                remember { ModalOverlaySceneStrategy() },
+                                remember {
+                                    ModalOverlaySceneStrategy(
+                                        isTopEntry = {
+                                            // Nav3's default content key also includes the route type.
+                                            backStack.lastOrNull()?.let { top ->
+                                                NavEntry(top) {}.contentKey == it
+                                            } == true
+                                        },
+                                        predictiveBackEnabled = { predictiveBackEnabled },
+                                    )
+                                },
                                 SinglePaneSceneStrategy(),
                             ),
                             transitionSpec = {
@@ -783,6 +845,13 @@ open class MainActivity : BaseComposeActivity(), AudioPlay.CallBack {
                                     navRouteTracker,
                                 )
                             }
+                        },
+                        onOpenReadAloudSubPage = { page ->
+                            MainNavigator.navigateToRoute(
+                                backStack,
+                                page.toMainRoute(),
+                                navRouteTracker,
+                            )
                         },
                     )
                     if (playerSource == PlaybackCapsuleSource.AudioBook &&

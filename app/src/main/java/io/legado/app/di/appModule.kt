@@ -161,6 +161,7 @@ import io.legado.app.domain.gateway.NasLibraryGateway
 import io.legado.app.domain.gateway.NasSettingsGateway
 import io.legado.app.domain.gateway.OtherConfigSystemGateway
 import io.legado.app.domain.gateway.OtherSettingsGateway
+import io.legado.app.domain.gateway.PlaybackCapsuleGateway
 import io.legado.app.domain.gateway.PrivateAccessGateway
 import io.legado.app.domain.gateway.PrivateContentGateway
 import io.legado.app.domain.gateway.ReadAloudSettingsGateway
@@ -228,15 +229,18 @@ import io.legado.app.domain.usecase.UploadReadingProgressUseCase
 import io.legado.app.domain.usecase.VerifyBookmarkTargetUseCase
 import io.legado.app.domain.usecase.WebDavBackupUseCase
 import io.legado.app.domain.usecase.readRecord.GetReadRecordOverviewUseCase
+import io.legado.app.feature.explore.ExploreMainViewModel
 import io.legado.app.feature.onboarding.OnboardingViewModel
 import io.legado.app.help.coil.CoverFetcher
 import io.legado.app.help.coil.CoverInterceptor
 import io.legado.app.help.config.ThemePackageManager
+import io.legado.app.help.http.OkHttpExceptionInterceptor
 import io.legado.app.help.http.okHttpClient
 import io.legado.app.help.http.okHttpClientManga
 import io.legado.app.model.LegacyReaderSession
 import io.legado.app.model.ReadAloudSessionStore
 import io.legado.app.model.ReaderSession
+import io.legado.app.service.playback.PlaybackCapsuleGatewayAdapter
 import io.legado.app.ui.about.AboutViewModel
 import io.legado.app.ui.ai.chat.AiChatViewModel
 import io.legado.app.ui.association.ImportDictRuleViewModel
@@ -244,8 +248,6 @@ import io.legado.app.ui.association.ImportHttpTtsViewModel
 import io.legado.app.ui.association.ImportReplaceRuleViewModel
 import io.legado.app.ui.association.ImportRssSourceViewModel
 import io.legado.app.ui.association.ImportTxtTocRuleViewModel
-import io.legado.app.domain.gateway.PlaybackCapsuleGateway
-import io.legado.app.service.playback.PlaybackCapsuleGatewayAdapter
 import io.legado.app.ui.book.audio.AudioPlayCoordinator
 import io.legado.app.ui.book.audio.AudioPlayViewModel
 import io.legado.app.ui.book.bookmark.AllBookmarkViewModel
@@ -309,6 +311,13 @@ import io.legado.app.ui.config.themeManage.ThemeManageViewModel
 import io.legado.app.ui.config.translation.TranslationConfigViewModel
 import io.legado.app.ui.dict.DictViewModel
 import io.legado.app.ui.dict.rule.DictRuleViewModel
+import io.legado.app.help.readaloud.cast.AiCastAssignUseCase
+import io.legado.app.help.readaloud.cast.AiSceneAssignUseCase
+import io.legado.app.ui.book.readaloud.cast.VoiceEffectViewModel
+import io.legado.app.ui.book.readaloud.cast.BgmPoolViewModel
+import io.legado.app.ui.book.readaloud.cast.RegexCastRuleViewModel
+import io.legado.app.ui.book.readaloud.cast.MultiRoleRuleViewModel
+import io.legado.app.ui.book.readaloud.cast.MultiRoleRecognitionViewModel
 import io.legado.app.ui.highlightTagRule.HighlightTagRuleViewModel
 import io.legado.app.ui.login.SourceLoginViewModel
 import io.legado.app.ui.main.MainNavRouteTracker
@@ -339,12 +348,20 @@ import io.legado.app.ui.widget.components.privacy.PrivateReadGateViewModel
 import io.legado.app.utils.isNightMode
 import io.legado.app.utils.sysConfiguration
 import kotlinx.coroutines.Dispatchers
+import okhttp3.OkHttpClient
 import org.koin.core.module.dsl.factoryOf
 import org.koin.core.module.dsl.singleOf
 import org.koin.core.module.dsl.viewModel
 import org.koin.core.module.dsl.viewModelOf
 import org.koin.dsl.module
 import kotlin.time.Clock
+
+/** Dedicated NAS transport: report blocked LAN access without sharing source cookies or headers. */
+internal fun createNasHttpClient(): OkHttpClient = OkHttpClient.Builder()
+    .addInterceptor(OkHttpExceptionInterceptor)
+    .followRedirects(false)
+    .followSslRedirects(false)
+    .build()
 
 val appModule = module {
 
@@ -407,7 +424,9 @@ val appModule = module {
     single<CoverSettingsGateway> { CoverSettingsRepository() }
     single<BackupSettingsGateway> { BackupSettingsRepository() }
     single<NasSettingsGateway> { NasSettingsRepository() }
-    single<NasLibraryRepository> { NasLibraryRepository(get()) }
+    single<NasLibraryRepository> {
+        NasLibraryRepository(settingsGateway = get(), httpClient = createNasHttpClient())
+    }
     single<NasLibraryGateway> { get<NasLibraryRepository>() }
     single<LabSettingsGateway> { LabSettingsRepository() }
     single<MangaSettingsGateway> { MangaSettingsRepository() }
@@ -421,7 +440,7 @@ val appModule = module {
     singleOf(::ReadAloudSessionStore)
     single<PlaybackCapsuleGateway> { PlaybackCapsuleGatewayAdapter(get(), get()) }
     singleOf(::MainNavRouteTracker)
-    // R2.3：会话每个所有者一份。ReadBook.callBack 的身份是「阅读页已挂载」信号
+    // 会话每个所有者一份。ReadBook.callBack 的身份是「阅读页已挂载」信号
     // （prefetchForOpen / upData 判 callBack != null），register 还会给上一个持有者
     // 发 notifyBookChanged——单例会把两个 ReadBookViewModel 的注册身份混成一个。
     factory<ReaderSession> { LegacyReaderSession() }
@@ -591,6 +610,13 @@ val appModule = module {
     viewModelOf(::ImportRssSourceViewModel)
     viewModelOf(::ImportTxtTocRuleViewModel)
     viewModelOf(::HighlightTagRuleViewModel)
+    viewModelOf(::MultiRoleRuleViewModel)
+    viewModelOf(::BgmPoolViewModel)
+    viewModelOf(::RegexCastRuleViewModel)
+    viewModelOf(::VoiceEffectViewModel)
+    viewModelOf(::MultiRoleRecognitionViewModel)
+    singleOf(::AiCastAssignUseCase)
+    singleOf(::AiSceneAssignUseCase)
     viewModelOf(::TagGroupRuleViewModel)
     viewModelOf(::DictViewModel)
     viewModelOf(::RssSourceViewModel)
@@ -740,6 +766,7 @@ val appModule = module {
             bookUrl = bookUrl,
             bookKnowledgeGateway = get(),
             voiceGateway = get(),
+            styleGateway = get(),
         )
     }
     viewModelOf(::CloudTtsViewModel)
@@ -784,6 +811,8 @@ val appModule = module {
             readSettingsRepository = get(),
             readBookStyleConfigRepository = get(),
             readAloudSettingsRepository = get(),
+            aiCastAssignUseCase = get(),
+            aiSceneAssignUseCase = get(),
             localPreferencesRepository = get(),
             highlightRuleRepository = get(),
             uploadRepository = get(),
@@ -821,6 +850,7 @@ val appModule = module {
     viewModelOf(::ChangeBookSourceComposeViewModel)
     viewModelOf(::ChangeChapterSourceViewModel)
     viewModelOf(::ExploreViewModel)
+    viewModelOf(::ExploreMainViewModel)
     viewModelOf(::RssViewModel)
     viewModelOf(::SearchViewModel)
     viewModelOf(::BookCacheManageViewModel)

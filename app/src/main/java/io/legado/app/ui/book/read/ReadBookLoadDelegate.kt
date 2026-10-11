@@ -105,6 +105,11 @@ class ReadBookLoadDelegate(
         book
     }
 
+    /**
+     * 开书流程。这里不写 `books` 行：`saveRead()` 会更新书架查询的投影列兼排序键
+     * `durChapterTime`，开页时再落一次会让整个书架重组。进度另有两处落库——翻页走
+     * `ReadBook.saveRead(pageChanged)`，离开页面走 `ReadBookViewModel.handleOnPause`。
+     */
     fun initData(
         request: ReadBookInitRequest,
         initialBook: Book? = null,
@@ -140,8 +145,6 @@ class ReadBookLoadDelegate(
             val msg = "初始化数据失败\n${it.localizedMessage}"
             ReadBook.upMsg(msg)
             AppLog.put(msg, it)
-        }.onFinally {
-            ReadBook.saveRead()
         }
     }
 
@@ -249,6 +252,11 @@ class ReadBookLoadDelegate(
             }.onFailure {
                 when (it) {
                     is SecurityException, is FileNotFoundException -> {
+                        // 只弹目录选择时阅读页会一直停在占位页、看不出原因；把失败原因也写成
+                        // 消息，用户重选目录并重载成功后由 initBook 的 upMsg(null) 清掉。
+                        ReadBook.upMsg(
+                            context.getString(R.string.error_load_msg, it.localizedMessage)
+                        )
                         host.requestBooksDirPicker(reloadChapterList = true)
                     }
                     else -> {
