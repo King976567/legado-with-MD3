@@ -9,6 +9,7 @@ import androidx.work.NetworkType
 import androidx.work.OneTimeWorkRequestBuilder
 import androidx.work.WorkInfo
 import androidx.work.WorkManager
+import com.google.gson.annotations.SerializedName
 import io.legado.app.data.AppDatabase
 import io.legado.app.data.entities.Book
 import io.legado.app.data.entities.BookChapter
@@ -288,16 +289,17 @@ class NasComicUploadRepository(
 
     private fun snapshotFile(sourceKey: String) = File(taskDirectory(sourceKey), SNAPSHOT_FILE)
 
+    /** Persistent WorkManager snapshot; fixed JSON keys keep pending uploads readable after upgrades. */
     internal data class ComicSnapshot(
-        val bookUrl: String,
-        val book: Book,
+        @SerializedName("bookUrl") val bookUrl: String,
+        @SerializedName("book") val book: Book,
         /** The persisted book identity whose folder contains the existing image cache. */
-        val cacheBook: Book? = null,
-        val chapters: List<BookChapter>,
-        val clientSourceKey: String,
-        val configurationFingerprint: String,
-        val maxUploadBytes: Long,
-        val replaceBookId: String? = null,
+        @SerializedName("cacheBook") val cacheBook: Book? = null,
+        @SerializedName("chapters") val chapters: List<BookChapter>,
+        @SerializedName("clientSourceKey") val clientSourceKey: String,
+        @SerializedName("configurationFingerprint") val configurationFingerprint: String,
+        @SerializedName("maxUploadBytes") val maxUploadBytes: Long,
+        @SerializedName("replaceBookId") val replaceBookId: String? = null,
     )
 
     companion object {
