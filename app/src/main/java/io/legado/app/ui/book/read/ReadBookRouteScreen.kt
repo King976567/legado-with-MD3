@@ -32,18 +32,20 @@ import androidx.compose.material3.SnackbarDuration
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
@@ -70,8 +72,6 @@ import io.legado.app.R
 import io.legado.app.constant.AppLog
 import io.legado.app.constant.BookType
 import io.legado.app.constant.ReadMenuBlurMode
-import io.legado.app.core.ui.morph.BookMorphHost
-import io.legado.app.core.ui.morph.LocalBookMorph
 import io.legado.app.feature.reader.ReaderBackgroundSurface
 import io.legado.app.feature.reader.ReaderCanvasSurface
 import io.legado.app.feature.reader.core.gesture.ReaderTapActionGrid
@@ -83,21 +83,21 @@ import io.legado.app.help.IntentHelp
 import io.legado.app.model.ReadBook
 import io.legado.app.model.SourceCallBack
 import io.legado.app.model.translation.TranslationChapterStatus
-import io.legado.app.ui.book.info.BookInfoActivity
 import io.legado.app.ui.book.read.page.entities.PageDirection
+import io.legado.app.ui.book.read.sheet.CastSheetVisuals
+import io.legado.app.ui.book.read.sheet.LocalCastSheetVisuals
 import io.legado.app.ui.book.read.sheet.ReaderBookSheetRoute
 import io.legado.app.ui.book.read.sheet.ReaderBookSourceActions
 import io.legado.app.ui.book.read.sheet.TextSelectMenuConfigSheet
 import io.legado.app.ui.book.searchContent.SearchContentResult
-import io.legado.app.ui.book.toc.TocActivityResult
 import io.legado.app.ui.login.SourceLoginType
+import io.legado.app.ui.main.AndroidPlatformCapabilities
 import io.legado.app.ui.main.MainActivity
+import io.legado.app.ui.main.readerSharedBounds
 import io.legado.app.ui.replace.ReplaceEditRoute
-import io.legado.app.ui.replace.ReplaceRuleActivity
 import io.legado.app.ui.theme.LegadoTheme
 import io.legado.app.ui.theme.LocalAppUiConfiguration
 import io.legado.app.ui.widget.components.text.AppText
-import io.legado.app.utils.StartActivityContract
 import io.legado.app.utils.takePersistablePermissionSafely
 import io.legado.app.utils.toastOnUi
 import kotlinx.coroutines.CancellationException
@@ -155,7 +155,11 @@ fun ReadBookRouteScreen(
     isTopRoute: Boolean = true,
     onEffectsReady: () -> Unit = {},
     onOpenSearch: (word: String?, bookUrl: String, autoFocus: Boolean) -> Unit = { _, _, _ -> },
+    onOpenBookInfo: (name: String, author: String, bookUrl: String) -> Unit,
+    onOpenToc: (bookUrl: String, initialPage: Int) -> Unit,
+    onOpenReplaceRule: (bookUrl: String?, editor: ReplaceEditRoute?) -> Unit,
     onOpenVoiceCasting: (bookUrl: String) -> Unit = {},
+    onOpenReadAloudSubPage: (ReadAloudSubPage) -> Unit = {},
     onOpenTtsEnginesAndVoices: () -> Unit = {},
     onOpenTtsCache: () -> Unit = {},
     onNavigateBack: () -> Boolean = { true },
@@ -205,17 +209,8 @@ fun ReadBookRouteScreen(
                             state.menuConfig.readMenuBottomBarBlurMode == ReadMenuBlurMode.LiquidGlass
                     )
     val canHandleBack = isTopRoute
-    val canMorphBack = canHandleBack &&
-            state.inBookshelf &&
-            ReadBook.inBookshelf &&
-            state.activeSheet == null &&
-            !state.isShowingSearchResult &&
-            !state.isAutoPage &&
-            !state.menuState.canNavigateBack &&
-            state.activeDialog == null
 
     var isDismissed by remember { mutableStateOf(false) }
-    var collapseTrigger by remember { mutableStateOf<(() -> Unit)?>(null) }
 
     val performExit: () -> Boolean = {
         if (isDismissed) {
@@ -233,7 +228,7 @@ fun ReadBookRouteScreen(
         }
     }
 
-    BackHandler(enabled = canHandleBack && !canMorphBack) {
+    BackHandler(enabled = canHandleBack) {
         when {
             state.activeSheet != null -> viewModel.onIntent(ReadBookIntent.DismissSheet)
             state.isShowingSearchResult -> viewModel.onIntent(ReadBookIntent.ExitSearch)
@@ -268,20 +263,6 @@ fun ReadBookRouteScreen(
             viewModel.onIntent(ReadBookIntent.SourceEditResult)
         }
     }
-    val tocLauncher = rememberLauncherForActivityResult(TocActivityResult()) { result ->
-        result?.let { (index, chapterPos, _) ->
-            viewModel.onIntent(ReadBookIntent.OpenChapterResult(index, chapterPos))
-        }
-    }
-
-    val replaceLauncher = rememberLauncherForActivityResult(
-        ActivityResultContracts.StartActivityForResult()
-    ) { result ->
-        if (result.resultCode == android.app.Activity.RESULT_OK) {
-            viewModel.onIntent(ReadBookIntent.ReplaceRuleResult)
-        }
-    }
-
     val fontFolderPicker = rememberLauncherForActivityResult(
         ActivityResultContracts.OpenDocumentTree()
     ) { uri ->
@@ -377,11 +358,7 @@ fun ReadBookRouteScreen(
         uri?.let { viewModel.onIntent(ReadBookIntent.ExportHighlightRulesToFile(it)) }
     }
 
-    val bookInfoLauncher = rememberLauncherForActivityResult(
-        StartActivityContract(BookInfoActivity::class.java)
-    ) { result ->
-        viewModel.onIntent(ReadBookIntent.BookInfoResult(result.resultCode == android.app.Activity.RESULT_OK))
-    }
+    val currentOpenBookInfo by rememberUpdatedState(onOpenBookInfo)
 
     AutoSuggestDayNightObserver(
         viewModel = viewModel,
@@ -412,14 +389,10 @@ fun ReadBookRouteScreen(
                                 )
                             }
                             is ReadBookEffect.OpenChapterList -> {
-                                tocLauncher.launch(effect.bookUrl)
+                                onOpenToc(effect.bookUrl, 0)
                             }
                             is ReadBookEffect.OpenBookInfo -> {
-                                bookInfoLauncher.launch {
-                                    putExtra("name", effect.name)
-                                    putExtra("author", effect.author)
-                                    putExtra("bookUrl", effect.bookUrl)
-                                }
+                                currentOpenBookInfo(effect.name, effect.author, effect.bookUrl)
                             }
                             is ReadBookEffect.ShowLogin -> {
                                 context.startActivity(
@@ -455,15 +428,13 @@ fun ReadBookRouteScreen(
                             is ReadBookEffect.OpenBookVoiceCasting -> {
                                 onOpenVoiceCasting(effect.bookUrl)
                             }
+                            is ReadBookEffect.OpenReadAloudSubPage -> {
+                                onOpenReadAloudSubPage(effect.page)
+                            }
                             ReadBookEffect.OpenTtsEnginesAndVoices -> onOpenTtsEnginesAndVoices()
                             ReadBookEffect.OpenTtsCache -> onOpenTtsCache()
                             is ReadBookEffect.MenuSettingReplace -> {
-                                replaceLauncher.launch(
-                                    ReplaceRuleActivity.startIntent(
-                                        context = context,
-                                        bookUrl = ReadBook.book?.bookUrl
-                                    )
-                                )
+                                onOpenReplaceRule(ReadBook.book?.bookUrl, null)
                             }
                             is ReadBookEffect.TextActionReplace -> {
                                 val scopes = arrayListOf<String>()
@@ -475,11 +446,11 @@ fun ReadBookRouteScreen(
                                     scope = scopes.joinToString(";"),
                                     isScopeTitle = false, isScopeContent = true,
                                 )
-                                replaceLauncher.launch(ReplaceRuleActivity.startIntent(context, editRoute))
+                                onOpenReplaceRule(ReadBook.book?.bookUrl, editRoute)
                             }
                             is ReadBookEffect.OpenReplaceEditor -> {
                                 val editRoute = ReplaceEditRoute(id = effect.id, pattern = effect.pattern)
-                                replaceLauncher.launch(ReplaceRuleActivity.startIntent(context, editRoute))
+                                onOpenReplaceRule(ReadBook.book?.bookUrl, editRoute)
                             }
                             is ReadBookEffect.MenuTocRegex -> {
                                 val intent = Intent(
@@ -539,10 +510,7 @@ fun ReadBookRouteScreen(
                             }
 
                             is ReadBookEffect.Finish -> {
-                                if (!isDismissed) {
-                                    val collapse = collapseTrigger
-                                    if (collapse != null) collapse() else performExit()
-                                }
+                                if (!isDismissed) performExit()
                             }
 
                             // All other effects — delegate to bridge (View/Window/Activity operations)
@@ -645,19 +613,27 @@ fun ReadBookRouteScreen(
         }
     }
 
-    val fallbackReaderSurfaceColor = if (isDarkTheme) Color.Black else Color.White
-    val readerSurfaceColor = Color(
-        readerBackground.meanColorArgb.takeIf { it != 0 } ?: when {
-            // Before the route has a book, styleConfig only contains construction defaults.
-            // Keep the first opaque reader frame neutral instead of exposing an app-theme tint.
-            state.book == null -> fallbackReaderSurfaceColor.toArgb()
-            else -> runCatching {
-                android.graphics.Color.parseColor(
-                    if (isDarkTheme) state.styleConfig.bgStrNight else state.styleConfig.bgStr
-                )
-            }.getOrDefault(fallbackReaderSurfaceColor.toArgb())
-        }
-    )
+    val backgroundType = when {
+        isEInkMode -> state.styleConfig.bgTypeEInk
+        isDarkTheme -> state.styleConfig.bgTypeNight
+        else -> state.styleConfig.bgType
+    }
+    val backgroundValue = when {
+        isEInkMode -> state.styleConfig.bgStrEInk
+        isDarkTheme -> state.styleConfig.bgStrNight
+        else -> state.styleConfig.bgStr
+    }
+    val usesImageBackground = backgroundType != 0
+    // Only image backgrounds need a neutral placeholder independent of asynchronous color extraction.
+    val readerPlaceholderColor = if (usesImageBackground) {
+        LegadoTheme.colorScheme.surface
+    } else {
+        runCatching { Color(android.graphics.Color.parseColor(backgroundValue)) }
+            .getOrDefault(if (isDarkTheme && !isEInkMode) Color.Black else Color.White)
+    }
+    val readerSurfaceColor = if (usesImageBackground) {
+        readerBackground.meanColorArgb.takeIf { it != 0 }?.let(::Color) ?: readerPlaceholderColor
+    } else readerPlaceholderColor
     val readerEntranceSettled = animatedVisibilityScope?.transition?.let { transition ->
         !transition.isRunning &&
             transition.currentState == EnterExitState.Visible &&
@@ -692,30 +668,28 @@ fun ReadBookRouteScreen(
             ReaderPerfTrace.marker("surface.page-ready")
         }
     }
-    BookMorphHost(
-        anchorKey = sharedCoverKey,
-        backgroundColor = readerSurfaceColor,
-        backEnabled = canMorphBack,
-        predictiveBackEnabled = true,
-        onDismiss = performExit,
-        onBackRequested = requestClose,
-    ) { onCollapse ->
-        val morph = LocalBookMorph.current
-        LaunchedEffect(state.activeDialog, morph) {
-            // Membership can change while a gesture is in progress. If the close request
-            // needs confirmation, restore the reader behind that dialog instead of exiting.
-            if (state.activeDialog != null) morph?.animateTo(1f)
-        }
-        LaunchedEffect(onCollapse) {
-            collapseTrigger = onCollapse
-            controller.onClose = requestClose
-        }
-        Box(
-            Modifier
-                .fillMaxSize()
-                .semantics { testTagsAsResourceId = true }
-                .background(readerSurfaceColor)
-        ) {
+    val platformCapabilities =
+        remember(controller) { AndroidPlatformCapabilities(controller.activity) }
+    val displayConfiguration = LocalConfiguration.current
+    val displayCornerRadiusPx =
+        remember(displayConfiguration) { platformCapabilities.displayCornerRadiusPx }
+    // 控制器自己发起的关闭（菜单里的「退出阅读」等）复用同一条退栈路径。
+    SideEffect { controller.onClose = requestClose }
+    // 阅读页是普通 nav3 目的地：转场是 `readerEntryMetadata` 的 600ms 交叉淡入淡出，
+    // 封面飞行交给共享元素 —— 正文被当成「只裁剪、不缩放」的一块面，从封面那一格长到满屏。
+    Box(
+        Modifier
+            .fillMaxSize()
+            .semantics { testTagsAsResourceId = true }
+            .readerSharedBounds(
+                sharedTransitionScope = sharedTransitionScope,
+                animatedVisibilityScope = animatedVisibilityScope,
+                sharedCoverKey = sharedCoverKey,
+                displayCornerRadiusPx = displayCornerRadiusPx,
+                density = density,
+            )
+            .background(readerPlaceholderColor)
+    ) {
         Box(
             Modifier
                 .fillMaxSize()
@@ -887,9 +861,14 @@ fun ReadBookRouteScreen(
                 onBrightnessPreview = host::previewBrightness,
                 backdrop = menuBackdrop,
                 hazeState = if (useMenuHazeSource) menuHazeState else null,
+                seekState = viewModel.seekState,
             )
             ReadBookSearchBar(state = state, onIntent = viewModel::onIntent)
-            ReadBookFloatingActionBar(state = state, onIntent = viewModel::onIntent)
+            ReadBookFloatingActionBar(
+                state = state,
+                onIntent = viewModel::onIntent,
+                seekState = viewModel.seekState,
+            )
             AnimatedVisibility(
                 visible = state.translationStatus == TranslationChapterStatus.Thinking,
                 enter = fadeIn(tween(180)) + scaleIn(tween(220), initialScale = 0.88f),
@@ -898,19 +877,28 @@ fun ReadBookRouteScreen(
                 TranslationThinkingCapsule()
             }
             if (featureOverlaysInitialized) {
-                ReadBookOverlayRoute(
-                    viewModel = viewModel,
-                    state = state,
-                    preferences = readPreferences,
-                    onOpenTextSelectMenuConfig = {
-                        viewModel.onIntent(ReadBookIntent.DismissSheet)
-                        showSelectMenuConfigSheet = true
-                    },
-                    onPickBookmarkBadgeImage = { bookmarkBadgeImagePicker.launch("image/*") },
-                    onResetBookmarkBadge = {
-                        viewModel.onIntent(ReadBookIntent.ClearBookmarkBadgeImage)
-                    },
-                )
+                // 正文内新做的悬浮窗（分配角色 / 分配表 / AI 分配 / 背景音乐 / 听书下载）用底栏
+                // 同一份模糊与玻璃数据源；消费方是 CastSheetCard 里的 LocalCastSheetVisuals。
+                CompositionLocalProvider(
+                    LocalCastSheetVisuals provides CastSheetVisuals(
+                        backdrop = menuBackdrop,
+                        hazeState = menuHazeState.takeIf { useMenuHazeSource },
+                    ),
+                ) {
+                    ReadBookOverlayRoute(
+                        viewModel = viewModel,
+                        state = state,
+                        preferences = readPreferences,
+                        onOpenTextSelectMenuConfig = {
+                            viewModel.onIntent(ReadBookIntent.DismissSheet)
+                            showSelectMenuConfigSheet = true
+                        },
+                        onPickBookmarkBadgeImage = { bookmarkBadgeImagePicker.launch("image/*") },
+                        onResetBookmarkBadge = {
+                            viewModel.onIntent(ReadBookIntent.ClearBookmarkBadgeImage)
+                        },
+                    )
+                }
             }
             val bookNavigationSheet = state.activeSheet as? ReadBookSheet.BookNavigation
             ReaderPerfTrace.marker("compose.sheet.begin")
@@ -940,12 +928,12 @@ fun ReadBookRouteScreen(
                 onOpenFullBookInfo = {
                     state.book?.let { book ->
                         viewModel.onIntent(ReadBookIntent.DismissSheet)
-                        bookInfoLauncher.launch {
-                            putExtra("name", book.name)
-                            putExtra("author", book.author)
-                            putExtra("bookUrl", book.bookUrl)
-                        }
+                        onOpenBookInfo(book.name, book.author, book.bookUrl)
                     }
+                },
+                onOpenFullToc = { page ->
+                    viewModel.onIntent(ReadBookIntent.DismissSheet)
+                    state.book?.bookUrl?.let { onOpenToc(it, page) }
                 },
                 bookSource = state.bookSource,
                 onOpenChapterUrl = { viewModel.onIntent(ReadBookIntent.OpenChapterUrl) },
@@ -995,7 +983,6 @@ fun ReadBookRouteScreen(
             )
         }
         ReaderPerfTrace.marker("compose.chrome.end")
-    }
     }
     ReaderPerfTrace.marker("compose.screen.end")
 }
