@@ -117,8 +117,15 @@ class MainNavRouteRegistryTest {
         )
     }
 
-    private fun navGraphSource(): String =
-        File(sourceRoot(), "io/legado/app/ui/main/MainNavGraph.kt").readText()
+    private fun navGraphSource(): String {
+        val mainDirectory = File(sourceRoot(), "io/legado/app/ui/main")
+        val graph = File(mainDirectory, "MainNavGraph.kt").readText()
+        // Count extracted registrations only while the graph actually invokes them. Removing
+        // the call must still fail the missing-route invariant, even if the helper remains.
+        return if (Regex("""\bmangaReaderEntry\s*\(""").containsMatchIn(graph)) {
+            graph + "\n" + File(mainDirectory, "MainMangaReaderEntry.kt").readText()
+        } else graph
+    }
 
     /** 单测的工作目录随 Gradle 调用方式变化（模块目录或仓库根），向上找 src/main/java。 */
     private fun sourceRoot(): File {

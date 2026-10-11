@@ -29,6 +29,8 @@ import kotlinx.collections.immutable.persistentListOf
 import kotlinx.collections.immutable.toImmutableList
 import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asSharedFlow
@@ -342,6 +344,12 @@ class MangaReaderViewModel(
         // already owns the session, including a pending chapter result or open command.
         if (initializationRequest == intent) return
         initializationRequest = intent
+        refreshContentJob?.cancel()
+        refreshContentJob = null
+        pendingExplicitChapterIndex = null
+        pagerScrollInProgress = false
+        deferredReadySession = null
+        visibleItemRange = null
         showLoading()
         viewModelScope.launch {
             readerSession.execute(
@@ -596,6 +604,12 @@ class MangaReaderViewModel(
             val sourceCustomButtonAvailable = actionRepository
                 .refreshSource(book.sourceOrigin)
                 ?.customButton == true
+            currentCoroutineContext().ensureActive()
+            val currentSession = readerSession.state.value
+            if (currentSession.sessionId != session.sessionId ||
+                currentSession.revision != session.revision ||
+                currentSession.book?.bookUrl != book.bookUrl
+            ) return@launch
             val previousItems = makePreviousItems(session.previousChapter)
             val nextItems = makeNextItems(session.nextChapter)
             val items = (previousItems + chapterItems(current.chapter) + nextItems).toImmutableList()
