@@ -1089,12 +1089,7 @@ fun MainActivity.mainEntryProvider(
         ConsumeBookPageResult(route, backStack.lastOrNull() == route, navRouteTracker) { result ->
             when (result) {
                 is BookPageResult.ChapterSelected ->
-                    mangaViewModel.onIntent(
-                        MangaReaderIntent.OpenChapter(
-                            result.index,
-                            result.position
-                        )
-                    )
+                    mangaViewModel.onTocResult(route.bookUrl, result.index, result.position)
 
                 BookPageResult.BookDeleted -> MainNavigator.navigateBack(
                     this@mainEntryProvider, backStack, navRouteTracker, fromRoute = route,

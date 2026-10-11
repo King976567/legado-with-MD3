@@ -2,6 +2,7 @@ package io.legado.app.data.repository.manga
 
 import android.app.Application
 import android.graphics.Bitmap
+import androidx.room.withTransaction
 import coil3.ImageLoader
 import coil3.request.ImageRequest
 import coil3.request.allowHardware
@@ -19,6 +20,7 @@ import io.legado.app.domain.gateway.ReadSettingsGateway
 import io.legado.app.exception.NoStackTraceException
 import io.legado.app.help.book.BookHelp
 import io.legado.app.help.book.isLocal
+import io.legado.app.help.book.isNotShelf
 import io.legado.app.help.book.removeType
 import io.legado.app.help.coil.CoverExtras
 import io.legado.app.help.source.getSourceType
@@ -101,7 +103,11 @@ class MangaReaderActionRepository(
     }
 
     suspend fun removeTemporaryBook(bookUrl: String) {
-        database.bookDao.getBook(bookUrl)?.delete()
+        // The reader may still hold its original not-shelf snapshot after a detail-page
+        // visit. A book added there, or while the exit dialog is open, must survive.
+        database.withTransaction {
+            database.bookDao.getBook(bookUrl)?.takeIf { it.isNotShelf }?.delete()
+        }
     }
 
     suspend fun addCurrentBookToShelf(bookUrl: String) {

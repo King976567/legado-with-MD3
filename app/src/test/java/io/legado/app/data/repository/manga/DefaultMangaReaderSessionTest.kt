@@ -138,6 +138,37 @@ class DefaultMangaReaderSessionTest {
     }
 
     @Test
+    fun `adding a temporary comic in details updates the retained session without reopening`() =
+        runTest {
+            val gateway = FakeGateway()
+            val dispatcher = StandardTestDispatcher(testScheduler)
+            val session = DefaultMangaReaderSession(gateway, dispatcher, dispatcher)
+
+            session.execute(MangaSessionCommand.Open("book-a", false, false))
+            advanceUntilIdle()
+            gateway.complete("book-a", 0)
+            advanceUntilIdle()
+            session.execute(MangaSessionCommand.VisiblePageChanged(0, 7))
+            advanceUntilIdle()
+            val revision = session.state.value.revision
+            val loadedRequests = gateway.loadedRequests.toList()
+
+            // A child detail page adds the very same temporary record to the shelf.
+            gateway.presentation.value = MangaBookPresentation(null, null, inBookshelf = true)
+            advanceUntilIdle()
+
+            assertTrue(session.state.value.book?.inBookshelf == true)
+            assertEquals(revision, session.state.value.revision)
+            assertEquals(7, session.state.value.pageIndex)
+            assertEquals(loadedRequests, gateway.loadedRequests)
+
+            gateway.complete("book-a", 1)
+            advanceUntilIdle()
+            assertTrue(session.state.value.book?.inBookshelf == true)
+            session.close()
+        }
+
+    @Test
     fun `promoting to a visible next chapter keeps current chapter data without reload`() = runTest {
         val gateway = FakeGateway()
         val dispatcher = StandardTestDispatcher(testScheduler)

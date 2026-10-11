@@ -110,6 +110,7 @@ class DefaultMangaReaderSession(
                     book = book.copy(
                         scrollMode = command.presentation.scrollMode,
                         sidePaddingDp = command.presentation.sidePaddingDp,
+                        inBookshelf = command.presentation.inBookshelf ?: book.inBookshelf,
                     )
                 )
             }

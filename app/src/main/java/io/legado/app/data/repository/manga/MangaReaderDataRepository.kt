@@ -21,6 +21,7 @@ import io.legado.app.exception.NoStackTraceException
 import io.legado.app.help.book.BookHelp
 import io.legado.app.help.book.isLocal
 import io.legado.app.help.book.isLocalModified
+import io.legado.app.help.book.isNotShelf
 import io.legado.app.help.book.readSimulating
 import io.legado.app.help.book.simulatedTotalChapterNum
 import io.legado.app.help.source.getSourceType
@@ -54,6 +55,7 @@ class MangaReaderDataRepository(
                 MangaBookPresentation(
                     scrollMode = book?.readConfig?.mangaScrollMode,
                     sidePaddingDp = book?.readConfig?.webtoonSidePaddingDp,
+                    inBookshelf = book?.let { !it.isNotShelf },
                 )
             }
             .distinctUntilChanged()

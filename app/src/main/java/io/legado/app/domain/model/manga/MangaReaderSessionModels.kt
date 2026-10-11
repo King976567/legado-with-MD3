@@ -29,6 +29,8 @@ data class MangaBookState(
 data class MangaBookPresentation(
     val scrollMode: Int?,
     val sidePaddingDp: Int?,
+    /** Null means that the source has not supplied a current shelf membership. */
+    val inBookshelf: Boolean? = null,
 )
 
 data class OpenedMangaBook(
