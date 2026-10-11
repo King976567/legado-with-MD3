@@ -57,7 +57,7 @@ class MangaReaderNavigationResultTest {
     @Before
     fun setUp() {
         Dispatchers.setMain(dispatcher)
-        val application = RuntimeEnvironment.getApplication<Application>()
+        val application = RuntimeEnvironment.getApplication()
         application.injectAsAppCtx()
         fixture = InMemoryAppDatabaseFixture(application)
         imageLoader = ImageLoader.Builder(application).build()
@@ -153,6 +153,60 @@ class MangaReaderNavigationResultTest {
         assertEquals(listOf(MangaSessionCommand.OpenChapter(2, 0)), session.chapterCommands())
     }
 
+    @Test
+    fun `toc from the changed source uses its actual book instead of the initial reader route`() =
+        runTest(dispatcher) {
+            viewModel.onIntent(MangaReaderIntent.Initialize("old-source-comic", true, false))
+            runCurrent()
+            session.openBook("old-source-comic")
+            runCurrent()
+            // ChangeSourceBook reopens the same retained session; its Nav3 route remains unchanged.
+            session.openBook("new-source-comic")
+            runCurrent()
+
+            val result = async { viewModel.onTocResult("new-source-comic", 3, 6) }
+            runCurrent()
+
+            assertTrue(result.isCompleted)
+            assertEquals(listOf(MangaSessionCommand.OpenChapter(3, 6)), session.chapterCommands())
+        }
+
+    @Test
+    fun `restored toc accepts the current open request when source parsing rewrites its url`() =
+        runTest(dispatcher) {
+            val result = async { viewModel.onTocResult("original-comic", 2, 5) }
+            runCurrent()
+            // The alias is already known while opening; chapter selection must still wait.
+            session.state.value = session.state.value.copy(requestedBookUrl = "original-comic")
+            runCurrent()
+            assertFalse(result.isCompleted)
+            assertTrue(session.chapterCommands().isEmpty())
+
+            session.openBook("canonical-comic", requestedBookUrl = "original-comic")
+            runCurrent()
+
+            assertTrue(result.isCompleted)
+            assertEquals(listOf(MangaSessionCommand.OpenChapter(2, 5)), session.chapterCommands())
+        }
+
+    @Test
+    fun `source switch replaces the request alias and cannot consume an old source toc`() =
+        runTest(dispatcher) {
+            session.openBook("new-canonical-comic", requestedBookUrl = "new-source-comic")
+            runCurrent()
+            val stale = async { viewModel.onTocResult("old-source-comic", 2, 0) }
+            runCurrent()
+            assertFalse(stale.isCompleted)
+            assertTrue(session.chapterCommands().isEmpty())
+            stale.cancel()
+            runCurrent()
+
+            val current = async { viewModel.onTocResult("new-source-comic", 1, 4) }
+            runCurrent()
+            assertTrue(current.isCompleted)
+            assertEquals(listOf(MangaSessionCommand.OpenChapter(1, 4)), session.chapterCommands())
+        }
+
     private class FakeSession : MangaReaderSession {
         override val state = MutableStateFlow(MangaSessionState(MangaSessionId("test")))
         override val events = MutableSharedFlow<MangaSessionEvent>()
@@ -162,7 +216,7 @@ class MangaReaderNavigationResultTest {
             commands += command
         }
 
-        fun openBook(bookUrl: String) {
+        fun openBook(bookUrl: String, requestedBookUrl: String = bookUrl) {
             state.value = state.value.copy(
                 book = MangaBookState(
                     bookUrl = bookUrl,
@@ -180,6 +234,7 @@ class MangaReaderNavigationResultTest {
                     chapterTitles = List(5) { "Chapter ${it + 1}" },
                 ),
                 chapterCount = 5,
+                requestedBookUrl = requestedBookUrl,
             )
         }
 

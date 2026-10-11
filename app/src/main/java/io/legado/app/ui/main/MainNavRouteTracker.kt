@@ -10,7 +10,12 @@ import kotlinx.coroutines.flow.asStateFlow
 
 sealed interface BookPageResult {
     @Stable
-    data class ChapterSelected(val index: Int, val position: Int) : BookPageResult
+    data class ChapterSelected(
+        val index: Int,
+        val position: Int,
+        /** The TOC's actual book can differ from the retained reader route after changing source. */
+        val bookUrl: String? = null,
+    ) : BookPageResult
     data object TocCancelled : BookPageResult
     data object InfoEdited : BookPageResult
     data object RulesClosed : BookPageResult

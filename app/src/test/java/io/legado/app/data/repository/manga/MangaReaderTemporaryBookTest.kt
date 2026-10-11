@@ -35,7 +35,7 @@ class MangaReaderTemporaryBookTest {
 
     @Before
     fun setUp() {
-        val application = RuntimeEnvironment.getApplication<Application>()
+        val application = RuntimeEnvironment.getApplication()
         application.injectAsAppCtx()
         fixture = InMemoryAppDatabaseFixture(application)
         imageLoader = ImageLoader.Builder(application).build()

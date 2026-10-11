@@ -333,10 +333,10 @@ fun MainActivity.mainEntryProvider(
             initialPage = route.initialPage,
             onBackClick = { closeBookPage(backStack, route) },
             onChapterClick = { index ->
-                closeBookPage(backStack, route, BookPageResult.ChapterSelected(index, 0))
+                closeBookPage(backStack, route, BookPageResult.ChapterSelected(index, 0, route.bookUrl))
             },
             onBookmarkClick = { index, position ->
-                closeBookPage(backStack, route, BookPageResult.ChapterSelected(index, position))
+                closeBookPage(backStack, route, BookPageResult.ChapterSelected(index, position, route.bookUrl))
             },
             onOpenReplaceRule = { editor ->
                 onNavigateToRoute(editor?.let { MainRouteReplaceEdit(it) } ?: MainRouteReplaceRules(
@@ -1089,7 +1089,7 @@ fun MainActivity.mainEntryProvider(
         ConsumeBookPageResult(route, backStack.lastOrNull() == route, navRouteTracker) { result ->
             when (result) {
                 is BookPageResult.ChapterSelected ->
-                    mangaViewModel.onTocResult(route.bookUrl, result.index, result.position)
+                    mangaViewModel.onTocResult(result.bookUrl ?: route.bookUrl, result.index, result.position)
 
                 BookPageResult.BookDeleted -> MainNavigator.navigateBack(
                     this@mainEntryProvider, backStack, navRouteTracker, fromRoute = route,

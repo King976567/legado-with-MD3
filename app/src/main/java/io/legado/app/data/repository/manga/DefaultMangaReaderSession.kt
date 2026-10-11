@@ -153,6 +153,7 @@ class DefaultMangaReaderSession(
             sessionId = old.sessionId,
             revision = old.revision + 1,
             resumed = old.resumed,
+            requestedBookUrl = command.bookUrl,
         )
         runCatching {
             withContext(ioDispatcher) {

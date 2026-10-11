@@ -68,6 +68,39 @@ class DefaultMangaReaderSessionTest {
     }
 
     @Test
+    fun `source url alias belongs only to the current open request`() = runTest {
+        val gateway = FakeGateway()
+        val dispatcher = StandardTestDispatcher(testScheduler)
+        val session = DefaultMangaReaderSession(gateway, dispatcher, dispatcher)
+        gateway.rewrittenBookUrl = "canonical-a"
+
+        session.execute(MangaSessionCommand.Open("source-a", true, false))
+        advanceUntilIdle()
+        assertEquals("source-a", session.state.value.requestedBookUrl)
+        assertEquals("canonical-a", session.state.value.book?.bookUrl)
+        gateway.complete("canonical-a", 0)
+        advanceUntilIdle()
+        session.execute(MangaSessionCommand.OpenChapter(1, 0))
+        advanceUntilIdle()
+        assertEquals("source-a", session.state.value.requestedBookUrl)
+
+        val opening = CompletableDeferred<Unit>()
+        gateway.openGate = opening
+        gateway.rewrittenBookUrl = "canonical-b"
+        session.execute(MangaSessionCommand.Open("source-b", true, false))
+        advanceUntilIdle()
+        assertEquals("source-b", session.state.value.requestedBookUrl)
+        assertEquals(null, session.state.value.book)
+        assertEquals(0, session.state.value.chapterCount)
+
+        opening.complete(Unit)
+        advanceUntilIdle()
+        assertEquals("source-b", session.state.value.requestedBookUrl)
+        assertEquals("canonical-b", session.state.value.book?.bookUrl)
+        session.close()
+    }
+
+    @Test
     fun `failed chapter can be retried without a leaked loading marker`() = runTest {
         val gateway = FakeGateway()
         val dispatcher = StandardTestDispatcher(testScheduler)
@@ -250,6 +283,8 @@ class DefaultMangaReaderSessionTest {
 
     private class FakeGateway : MangaReaderDataGateway {
         val presentation = MutableStateFlow(MangaBookPresentation(null, null))
+        var rewrittenBookUrl: String? = null
+        var openGate: CompletableDeferred<Unit>? = null
         private val requests = mutableMapOf<Pair<String, Int>, CompletableDeferred<MangaChapterContent>>()
         val persisted = mutableListOf<Triple<String, Int, Int>>()
         val paused = mutableListOf<String>()
@@ -264,26 +299,30 @@ class DefaultMangaReaderSessionTest {
             bookUrl: String?,
             inBookshelf: Boolean,
             chapterChanged: Boolean,
-        ) = OpenedMangaBook(
-            book = MangaBookState(
-                bookUrl = requireNotNull(bookUrl),
-                name = bookUrl,
-                author = "author",
-                coverUrl = null,
-                customCoverUrl = null,
-                sourceOrigin = "source",
-                sourceName = "source",
-                sourceType = 0,
-                inBookshelf = inBookshelf,
-                scrollMode = null,
-                sidePaddingDp = null,
-                isLocal = false,
-                chapterTitles = List(5) { "Chapter ${it + 1}" },
-            ),
-            chapterIndex = 0,
-            pageIndex = 0,
-            chapterCount = 5,
-        )
+        ): OpenedMangaBook {
+            openGate?.await()
+            val requestedUrl = requireNotNull(bookUrl)
+            return OpenedMangaBook(
+                book = MangaBookState(
+                    bookUrl = rewrittenBookUrl ?: requestedUrl,
+                    name = requestedUrl,
+                    author = "author",
+                    coverUrl = null,
+                    customCoverUrl = null,
+                    sourceOrigin = "source",
+                    sourceName = "source",
+                    sourceType = 0,
+                    inBookshelf = inBookshelf,
+                    scrollMode = null,
+                    sidePaddingDp = null,
+                    isLocal = false,
+                    chapterTitles = List(5) { "Chapter ${it + 1}" },
+                ),
+                chapterIndex = 0,
+                pageIndex = 0,
+                chapterCount = 5,
+            )
+        }
 
         override suspend fun loadChapter(bookUrl: String, chapterIndex: Int): MangaChapterContent {
             loadedRequests += bookUrl to chapterIndex

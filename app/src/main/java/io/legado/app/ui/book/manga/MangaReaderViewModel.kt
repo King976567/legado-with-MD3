@@ -418,7 +418,8 @@ class MangaReaderViewModel(
     suspend fun onTocResult(bookUrl: String?, chapterIndex: Int, pageIndex: Int) {
         readerSession.state.first { session ->
             session.book != null && session.chapterCount > 0 &&
-                    (bookUrl == null || session.book.bookUrl == bookUrl)
+                    (bookUrl == null || session.book.bookUrl == bookUrl ||
+                            session.requestedBookUrl == bookUrl)
         }
         // The host acknowledges the result only after this call. Waiting is lifecycle-cancellable
         // and does not depend on the old chapter's images being loaded successfully.
