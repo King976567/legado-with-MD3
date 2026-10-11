@@ -9,6 +9,7 @@ import androidx.lifecycle.viewModelScope
 import coil3.ImageLoader
 import coil3.request.SuccessResult
 import coil3.toBitmap
+import com.google.gson.annotations.SerializedName
 import io.legado.app.R
 import io.legado.app.base.BaseViewModel
 import io.legado.app.constant.AppLog
@@ -1430,13 +1431,18 @@ class BookInfoViewModel(
 
     private fun refreshMeta(book: Book) {
         execute {
+            val kindBefore = book.kind
             book.upKind()
             val userGroupIds = bookGroupRepository.getIdsSum()
             val groupAnd = userGroupIds and book.group
             val hasCustomGroup = book.group > 0L && groupAnd != 0L
             val groupNames = bookGroupRepository.getGroupNames(book.group).joinToString(",")
             val normalizedGroupNames = groupNames.ifBlank { null }
-            bookRepository.update(book)
+            // 只有 upKind 真改写出过差异才落库：全行写会失效书架查询，让正在播形变转场的
+            // 书架整屏重组（同一口径见 ReadBookLoadDelegate.initData）。
+            if (book.kind != kindBefore) {
+                bookRepository.update(book)
+            }
             val finalKinds = book.getDisplayTagList()
             val enabledRules = highlightTagRuleRepository.getEnabled()
             val (highlighted, regular) = parseHighlightedTags(finalKinds, enabledRules)
@@ -2289,8 +2295,12 @@ private val BookInfoWebFile.isSupported: Boolean
 private val BookInfoWebFile.isSupportDecompress: Boolean
     get() = AppPattern.archiveFileRegex.matches(name)
 
+/**
+ * 书源 `ruleBookInfo.relatedBooks` 的 JSON 结构。键名由书源约定、代码外生成，
+ * 必须写死在 [SerializedName]：否则 R8 改名后三个字段全反序列化为 null，关联书籍整组消失。
+ */
 private data class RelatedBooksDef(
-    val key: String? = null,
-    val title: String? = null,
-    val url: String? = null,
+    @SerializedName("key") val key: String? = null,
+    @SerializedName("title") val title: String? = null,
+    @SerializedName("url") val url: String? = null,
 )

@@ -1,16 +1,18 @@
 package io.legado.app.domain.model
 
-/** A durable NAS transfer record shown in Cache Management history. */
+import com.google.gson.annotations.SerializedName
+
+/** A durable NAS transfer record; JSON keys must survive R8 and app upgrades. */
 data class NasTransferHistory(
-    val id: String,
-    val direction: String,
-    val title: String,
-    val kind: String,
-    val state: String,
-    val message: String? = null,
-    val remotePath: String? = null,
-    val retryKey: String? = null,
-    val replaceBookId: String? = null,
-    val createdAt: Long = 0L,
-    val finishedAt: Long? = null,
+    @SerializedName("id") val id: String,
+    @SerializedName("direction") val direction: String,
+    @SerializedName("title") val title: String,
+    @SerializedName("kind") val kind: String,
+    @SerializedName("state") val state: String,
+    @SerializedName("message") val message: String? = null,
+    @SerializedName("remotePath") val remotePath: String? = null,
+    @SerializedName("retryKey") val retryKey: String? = null,
+    @SerializedName("replaceBookId") val replaceBookId: String? = null,
+    @SerializedName("createdAt") val createdAt: Long = 0L,
+    @SerializedName("finishedAt") val finishedAt: Long? = null,
 )

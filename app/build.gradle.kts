@@ -32,7 +32,9 @@ val enableAbiSplits = providers.gradleProperty("enableAbiSplits")
     .getOrElse(true)
 
 android {
+    // Compose 1.13.0-beta01 的 AAR 元数据要求 compileSdk >= 37.1（android-37.0 会被 checkAarMetadata 拒绝）。
     compileSdk = 37
+    compileSdkMinor = 1
     namespace = "io.legado.app"
 
     signingConfigs {
@@ -293,6 +295,14 @@ dependencies {
     implementation(platform(libs.androidx.compose.bom))
     implementation(libs.activity.compose)
     implementation(libs.androidx.compose.ui)
+    // Compose 整条线对齐（版本见 gradle/libs.versions.toml 的 composeTrain）：
+    // platform(compose-bom) 不具强制力，material3 的传递依赖会把整线抬到缺少
+    // b/549552303 修复的 alpha 版本，因此这些构件需要显式声明版本。
+    implementation(libs.androidx.compose.runtime)
+    implementation(libs.androidx.compose.ui.text)
+    implementation(libs.androidx.compose.ui.util)
+    implementation(libs.androidx.compose.foundation.layout)
+    implementation(libs.androidx.compose.material.ripple)
     implementation(libs.androidx.compose.ui.tooling.preview)
     debugImplementation(libs.androidx.compose.ui.tooling)
     implementation(libs.androidx.compose.material3)
@@ -340,4 +350,13 @@ dependencies {
     implementation(libs.backdrop)
     implementation(libs.lyricViewx)
     implementation(libs.timber)
+}
+
+// 每个测试类独占一个 JVM，并且不并行 fork。Robolectric + Compose 动画这一批用例靠推进主线程
+// shadow looper 判定长按阈值与预测式返回的时序：前一个类留下的调度队列会让后一个类推不到阈值；
+// 多个 fork 并发抢 CPU 时，动画协程赶不上断言（`progress` 停在起始值、`running=false`），
+// 同一套代码会在不同批次的类上随机报错。隔离与串行是这类用例成立的前提。
+tasks.withType<Test>().configureEach {
+    forkEvery = 1
+    maxParallelForks = 1
 }

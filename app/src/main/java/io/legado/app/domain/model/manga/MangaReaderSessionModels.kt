@@ -29,6 +29,8 @@ data class MangaBookState(
 data class MangaBookPresentation(
     val scrollMode: Int?,
     val sidePaddingDp: Int?,
+    /** Null means that the source has not supplied a current shelf membership. */
+    val inBookshelf: Boolean? = null,
 )
 
 data class OpenedMangaBook(
@@ -72,6 +74,8 @@ data class MangaSessionState(
     val nextChapter: MangaChapterState = MangaChapterState.Empty,
     val resumed: Boolean = false,
     val openError: String? = null,
+    /** Only the current Open request's URL is an alias if source parsing rewrites bookUrl. */
+    val requestedBookUrl: String? = null,
 ) {
     fun accepts(token: MangaLoadToken): Boolean =
         token.sessionId == sessionId &&

@@ -33,6 +33,7 @@ import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
@@ -59,6 +60,7 @@ class MangaReaderViewModel(
     private var pendingExplicitChapterIndex: Int? = null
     private var pagerScrollInProgress = false
     private var deferredReadySession: MangaSessionState? = null
+    private var initializationRequest: MangaReaderIntent.Initialize? = null
 
     private val _uiState = MutableStateFlow(MangaReaderUiState())
     val uiState = _uiState.asStateFlow()
@@ -336,6 +338,10 @@ class MangaReaderViewModel(
     }
 
     private fun initialize(intent: MangaReaderIntent.Initialize) {
+        // Nav3 can recreate the route composition after a child page. This entry's VM
+        // already owns the session, including a pending chapter result or open command.
+        if (initializationRequest == intent) return
+        initializationRequest = intent
         showLoading()
         viewModelScope.launch {
             readerSession.execute(
@@ -407,6 +413,18 @@ class MangaReaderViewModel(
     }
 
     fun refreshContent() = refreshContent(readerSession.state.value)
+
+    /** Keep a restored Nav3 TOC result pending until its reader has finished opening the book. */
+    suspend fun onTocResult(bookUrl: String?, chapterIndex: Int, pageIndex: Int) {
+        readerSession.state.first { session ->
+            session.book != null && session.chapterCount > 0 &&
+                    (bookUrl == null || session.book.bookUrl == bookUrl ||
+                            session.requestedBookUrl == bookUrl)
+        }
+        // The host acknowledges the result only after this call. Waiting is lifecycle-cancellable
+        // and does not depend on the old chapter's images being loaded successfully.
+        onIntent(MangaReaderIntent.OpenChapter(chapterIndex, pageIndex))
+    }
 
     private fun refreshContent(session: MangaSessionState) {
         // openChapter() updates the target placeholder before its ordered session command runs.

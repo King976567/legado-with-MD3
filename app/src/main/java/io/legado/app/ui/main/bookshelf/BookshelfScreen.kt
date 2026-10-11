@@ -69,10 +69,8 @@ import androidx.compose.material.icons.filled.SelectAll
 import androidx.compose.material.icons.filled.UploadFile
 import androidx.compose.material.icons.filled.Wifi
 import androidx.compose.material.icons.outlined.ViewCarousel
-import androidx.compose.material3.Checkbox
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.ExperimentalMaterial3ExpressiveApi
-import androidx.compose.material3.Icon
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.SnackbarResult
@@ -131,8 +129,10 @@ import io.legado.app.ui.widget.components.button.series.SmallToggleButton
 import io.legado.app.ui.widget.components.button.series.ToggleStyle
 import io.legado.app.ui.widget.components.card.NormalCard
 import io.legado.app.ui.widget.components.card.TextCard
+import io.legado.app.ui.widget.components.checkBox.AppCheckbox
 import io.legado.app.ui.widget.components.divider.PillHeaderDivider
 import io.legado.app.ui.widget.components.filePicker.FilePickerSheet
+import io.legado.app.ui.widget.components.icon.AppIcon
 import io.legado.app.ui.widget.components.icon.AppIcons
 import io.legado.app.ui.widget.components.image.cover.bookshelfSharedCoverSourceId
 import io.legado.app.ui.widget.components.importComponents.SourceInputDialog
@@ -189,7 +189,10 @@ fun BookshelfRouteScreen(
     // 离开前那一版列表；目标一旦回到可见（正常返回、预测性返回都算），立刻恢复用最新
     // 排序 —— 重排发生在书架不可见的时候，回到书架时看到的已经是排好的结果。
     val transition = animatedVisibilityScope?.transition
-    val isLeavingShelf = transition?.targetState == EnterExitState.PostExit
+    // 判据是「目标不再是可见」而不是「已经退完」：打开书会立刻落库最后阅读时间，列表 Flow
+    // 在**动画进行中**就重发一次。用 PostExit 的话整块网格正好在动画那 420ms 里跟着重排、
+    // 每张封面重建 Coil 请求——用户看到的「从书架打开卡、从详情页打开丝滑」差的就是这一条。
+    val isLeavingShelf = transition != null && transition.targetState != EnterExitState.Visible
     var leavingShelfState by remember { mutableStateOf<BookshelfUiState?>(null) }
     LaunchedEffect(isLeavingShelf) {
         if (isLeavingShelf) return@LaunchedEffect
@@ -680,12 +683,12 @@ fun BookshelfScreen(
                                 RoundDropdownMenuItem(
                                     text = stringResource(R.string.add_remote_book),
                                     onClick = { onNavigateToRemoteImport(); dismiss() },
-                                    leadingIcon = { Icon(Icons.Default.Wifi, null) }
+                                    leadingIcon = { AppIcon(Icons.Default.Wifi, null) }
                                 )
                                 RoundDropdownMenuItem(
                                     text = stringResource(R.string.book_local),
                                     onClick = { onNavigateToLocalImport(); dismiss() },
-                                    leadingIcon = { Icon(Icons.Default.Save, null) }
+                                    leadingIcon = { AppIcon(Icons.Default.Save, null) }
                                 )
                                 RoundDropdownMenuItem(
                                     text = stringResource(R.string.update_toc),
@@ -693,7 +696,7 @@ fun BookshelfScreen(
                                         onIntent(BookshelfIntent.RefreshToc(uiState.items))
                                         dismiss()
                                     },
-                                    leadingIcon = { Icon(Icons.Default.Refresh, null) }
+                                    leadingIcon = { AppIcon(Icons.Default.Refresh, null) }
                                 )
                                 RoundDropdownMenuItem(
                                     text = stringResource(R.string.layout_setting),
@@ -701,7 +704,7 @@ fun BookshelfScreen(
                                         onIntent(BookshelfIntent.ShowOverlay(BookshelfOverlay.ConfigSheet))
                                         dismiss()
                                     },
-                                    leadingIcon = { Icon(Icons.Default.GridView, null) }
+                                    leadingIcon = { AppIcon(Icons.Default.GridView, null) }
                                 )
                                 RoundDropdownMenuItem(
                                     text = stringResource(R.string.group_manage),
@@ -709,7 +712,7 @@ fun BookshelfScreen(
                                         onIntent(BookshelfIntent.ShowOverlay(BookshelfOverlay.GroupManageSheet))
                                         dismiss()
                                     },
-                                    leadingIcon = { Icon(Icons.Outlined.ViewCarousel, null) }
+                                    leadingIcon = { AppIcon(Icons.Outlined.ViewCarousel, null) }
                                 )
                                 RoundDropdownMenuItem(
                                     text = stringResource(R.string.add_url),
@@ -717,7 +720,7 @@ fun BookshelfScreen(
                                         onIntent(BookshelfIntent.ShowOverlay(BookshelfOverlay.AddUrlDialog))
                                         dismiss()
                                     },
-                                    leadingIcon = { Icon(Icons.Default.Link, null) }
+                                    leadingIcon = { AppIcon(Icons.Default.Link, null) }
                                 )
                                 RoundDropdownMenuItem(
                                     text = stringResource(R.string.selection_mode),
@@ -725,7 +728,7 @@ fun BookshelfScreen(
                                         toggleEditMode()
                                         dismiss()
                                     },
-                                    leadingIcon = { Icon(Icons.Default.Edit, null) }
+                                    leadingIcon = { AppIcon(Icons.Default.Edit, null) }
                                 )
                                 RoundDropdownMenuItem(
                                     text = stringResource(R.string.bookshelf_management),
@@ -736,7 +739,7 @@ fun BookshelfScreen(
                                         onNavigateToCache(groupId)
                                         dismiss()
                                     },
-                                    leadingIcon = { Icon(Icons.Default.Bookmarks, null) }
+                                    leadingIcon = { AppIcon(Icons.Default.Bookmarks, null) }
                                 )
                                 RoundDropdownMenuItem(
                                     text = stringResource(R.string.export_bookshelf),
@@ -744,7 +747,7 @@ fun BookshelfScreen(
                                         onIntent(BookshelfIntent.ShowOverlay(BookshelfOverlay.ExportSheet))
                                         dismiss()
                                     },
-                                    leadingIcon = { Icon(Icons.Default.UploadFile, null) }
+                                    leadingIcon = { AppIcon(Icons.Default.UploadFile, null) }
                                 )
                                 RoundDropdownMenuItem(
                                     text = stringResource(R.string.import_bookshelf),
@@ -752,7 +755,7 @@ fun BookshelfScreen(
                                         onIntent(BookshelfIntent.ShowOverlay(BookshelfOverlay.ImportSheet))
                                         dismiss()
                                     },
-                                    leadingIcon = { Icon(Icons.Default.CloudDownload, null) }
+                                    leadingIcon = { AppIcon(Icons.Default.CloudDownload, null) }
                                 )
                                 RoundDropdownMenuItem(
                                     text = stringResource(R.string.log),
@@ -760,7 +763,7 @@ fun BookshelfScreen(
                                         onIntent(BookshelfIntent.ShowOverlay(BookshelfOverlay.LogSheet))
                                         dismiss()
                                     },
-                                    leadingIcon = { Icon(Icons.Default.History, null) }
+                                    leadingIcon = { AppIcon(Icons.Default.History, null) }
                                 )
                             }
                         }
@@ -830,7 +833,7 @@ fun BookshelfScreen(
                                                         selectedTabIndex == index
                                                     }
                                                     if (isSelected) {
-                                                        Icon(
+                                                        AppIcon(
                                                             Icons.Default.Check,
                                                             null,
                                                             modifier = Modifier.size(18.dp)
@@ -866,7 +869,7 @@ fun BookshelfScreen(
                                                         },
                                                         trailingIcon = {
                                                             if (uiState.selectedGroupId == group.groupId) {
-                                                                Icon(
+                                                                AppIcon(
                                                                     Icons.Default.Check,
                                                                     null,
                                                                     modifier = Modifier.size(18.dp)
@@ -885,7 +888,7 @@ fun BookshelfScreen(
                                                         },
                                                         trailingIcon = {
                                                             if (uiState.selectedGroupId == group.groupId) {
-                                                                Icon(
+                                                                AppIcon(
                                                                     Icons.Default.Check,
                                                                     null,
                                                                     modifier = Modifier.size(18.dp)
@@ -905,18 +908,15 @@ fun BookshelfScreen(
             )
         }
     ) { paddingValues ->
-        val currentGroup by remember {
-            derivedStateOf {
-                if (uiState.isSearch) {
-                    uiState.allGroups.firstOrNull { it.groupId == currentGroupId }
-                } else {
-                    uiState.groups.getOrNull(pagerState.settledPage)
-                }
-            }
+        // uiState 是普通参数而不是快照状态：用 remember { derivedStateOf { … } } 会把首次
+        // 组合时的 uiState 永久缓存下来，之后分组开关（enableRefresh）改了也读不到，
+        // 于是"允许下拉刷新"关掉后依然能下拉。这里直接读取，随重组刷新即可。
+        val currentGroup = if (uiState.isSearch) {
+            uiState.allGroups.firstOrNull { it.groupId == currentGroupId }
+        } else {
+            uiState.groups.getOrNull(pagerState.settledPage)
         }
-        val pullToRefreshEnabled by remember {
-            derivedStateOf { (currentGroup?.enableRefresh ?: true) && !isEditMode }
-        }
+        val pullToRefreshEnabled = (currentGroup?.enableRefresh ?: true) && !isEditMode
 
         Box(Modifier.fillMaxSize()) {
             AppPullToRefresh(
@@ -1272,7 +1272,7 @@ fun BookshelfScreen(
                                     },
                                     trailingIcon = {
                                         if (currentMenuGroupId == group.groupId) {
-                                            Icon(
+                                            AppIcon(
                                                 Icons.Default.Check,
                                                 null,
                                                 modifier = Modifier.size(18.dp)
@@ -1522,7 +1522,7 @@ private fun BookshelfOverlays(
             content = {
                 if (hasLocalBook) {
                     Row(verticalAlignment = Alignment.CenterVertically) {
-                        Checkbox(
+                        AppCheckbox(
                             checked = deleteOriginal,
                             onCheckedChange = { deleteOriginal = it }
                         )

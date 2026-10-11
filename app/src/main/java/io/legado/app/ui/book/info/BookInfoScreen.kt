@@ -65,7 +65,6 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.SnackbarResult
-import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
@@ -106,7 +105,6 @@ import io.legado.app.R
 import io.legado.app.constant.BookType
 import io.legado.app.core.ui.book.BookDetailHeaderLayout
 import io.legado.app.core.ui.book.BookDetailTopBar
-import io.legado.app.core.ui.morph.trackBookMorphCover
 import io.legado.app.data.entities.BaseSource
 import io.legado.app.data.entities.BookGroup
 import io.legado.app.data.entities.BookSource
@@ -331,8 +329,8 @@ private fun BookInfoScreenContent(
                     onClick = { onIntent(BookInfoIntent.ReadClick) },
                     containerColor = LegadoTheme.colorScheme.primaryContainer,
                     contentColor = LegadoTheme.colorScheme.onPrimaryContainer,
-                    icon = { Icon(Icons.Default.Book, null) },
-                    text = { Text(stringResource(R.string.reading)) },
+                    icon = { AppIcon(Icons.Default.Book, null) },
+                    text = { AppText(stringResource(R.string.reading)) },
                 )
             }
         },
@@ -635,13 +633,17 @@ private fun BookInfoColorTheme(
     )
     val targetColorScheme = theme?.colorScheme ?: baseTheme.colorScheme
     val targetSeedColor = theme?.seedColor ?: baseTheme.seedColor
+    // 「设备默认取色 → 封面取色」的渐变：整色板 400ms 插值。
+    //
+    // 代价是明确的：插值期间每帧都会产出新的 ColorScheme/LegadoColorScheme/LocalLegadoThemeColors
+    // 并重建 Miuix ThemeController，详情页会在转场期间反复重组 + 强制布局。这里仍然选它，
+    // 因为一次性切换会在过渡里闪出一帧平台底色（surface），观感上更差。
     val animatedColorScheme = targetColorScheme.animateColorSchemeAsState(animationSpec)
     val animatedSeedColor by animateColorAsState(
         targetValue = targetSeedColor,
         animationSpec = animationSpec,
         label = "book_info_theme_seed",
     )
-
     ProvideColorSchemeOverride(
         colorScheme = animatedColorScheme,
         seedColor = animatedSeedColor,
@@ -1141,8 +1143,7 @@ private fun BookInfoHeader(
                         bookUrl = book.bookUrl,
                         modifier = Modifier
                             .width(112.dp)
-                            .aspectRatio(5f / 7f)
-                            .trackBookMorphCover(4.dp),
+                            .aspectRatio(5f / 7f),
                         // 同一个 key + 同一个 scope：共享元素动画在脱敏态下依然连续
                         sharedCoverKey = sharedCoverKey,
                         sharedTransitionScope = sharedTransitionScope,
@@ -1161,8 +1162,7 @@ private fun BookInfoHeader(
                         onError = onNetworkCoverLoadError,
                         modifier = Modifier
                             .width(112.dp)
-                            .aspectRatio(5f / 7f)
-                            .trackBookMorphCover(4.dp),
+                            .aspectRatio(5f / 7f),
                         showLoadingPlaceholder = sharedCoverKey == null,
                         sharedTransitionScope = sharedTransitionScope,
                         animatedVisibilityScope = animatedVisibilityScope,

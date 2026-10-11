@@ -40,9 +40,6 @@ import androidx.compose.material.icons.filled.Search
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.ExperimentalMaterial3ExpressiveApi
 import androidx.compose.material3.ExtendedFloatingActionButton
-import androidx.compose.material3.Icon
-import androidx.compose.material3.IconButton
-import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.WideNavigationRail
 import androidx.compose.material3.WideNavigationRailItem
 import androidx.compose.material3.WideNavigationRailValue
@@ -83,6 +80,7 @@ import com.kyant.backdrop.backdrops.rememberLayerBackdrop
 import dev.chrisbanes.haze.HazeState
 import dev.chrisbanes.haze.hazeSource
 import io.legado.app.R
+import io.legado.app.feature.explore.ExploreMainRoute
 import io.legado.app.ui.book.readaloud.ReadAloudBarCapsuleEndPadding
 import io.legado.app.ui.book.readaloud.ReadAloudBarCapsuleSize
 import io.legado.app.ui.book.readaloud.ReadAloudBarCapsuleSlot
@@ -91,7 +89,6 @@ import io.legado.app.ui.book.readaloud.morph.ReadAloudMorphState
 import io.legado.app.ui.main.bookshelf.BookShelfItem
 import io.legado.app.ui.main.bookshelf.BookshelfRouteScreen
 import io.legado.app.ui.main.bookshelf.BookshelfViewModel
-import io.legado.app.ui.main.explore.ExploreRouteScreen
 import io.legado.app.ui.main.home.HomeRouteScreen
 import io.legado.app.ui.main.my.MyRouteScreen
 import io.legado.app.ui.main.my.PrefClickEvent
@@ -102,6 +99,7 @@ import io.legado.app.ui.widget.components.AppScaffold
 import io.legado.app.ui.widget.components.FloatingBottomBar
 import io.legado.app.ui.widget.components.FloatingBottomBarItem
 import io.legado.app.ui.widget.components.GlassDefaults
+import io.legado.app.ui.widget.components.button.series.MediumTonalButton
 import io.legado.app.ui.widget.components.icon.AppIcon
 import io.legado.app.ui.widget.components.icon.AppIcons
 import io.legado.app.ui.widget.components.menuItem.RoundDropdownMenu
@@ -154,6 +152,7 @@ fun MainScreen(
     onNavigateToExploreShow: (title: String?, sourceUrl: String, exploreUrl: String?) -> Unit,
     onNavigateToSourceLogin: (type: io.legado.app.ui.login.SourceLoginType, sourceUrl: String) -> Unit,
     onNavigateToBookSourceManage: () -> Unit,
+    onNavigateToReplaceRules: () -> Unit,
     onNavigateToBookSourceEdit: (String?) -> Unit,
     onNavigateToRssSourceManage: () -> Unit,
     onNavigateToRssSourceEdit: (String?) -> Unit,
@@ -357,7 +356,7 @@ fun MainScreen(
                     val expanded = navState.targetValue == WideNavigationRailValue.Expanded
 
                     Column {
-                        IconButton(
+                        MediumTonalButton(
                             modifier = Modifier.padding(start = 24.dp),
                             onClick = {
                                 coroutineScope.launch {
@@ -366,18 +365,16 @@ fun MainScreen(
                                     else navState.collapse()
                                     onIntent(MainUiIntent.SetNavigationRailExpanded(targetExpanded))
                                 }
-                            }
-                        ) {
-                            Icon(
-                                if (expanded)
-                                    Icons.AutoMirrored.Filled.MenuOpen
-                                else
-                                    Icons.Default.Menu,
-                                contentDescription = stringResource(
-                                    if (expanded) R.string.collapse else R.string.expand
-                                )
-                            )
-                        }
+                            },
+                            icon = if (expanded) {
+                                Icons.AutoMirrored.Filled.MenuOpen
+                            } else {
+                                Icons.Default.Menu
+                            },
+                            contentDescription = stringResource(
+                                if (expanded) R.string.collapse else R.string.expand
+                            ),
+                        )
 
                         Spacer(modifier = Modifier.height(8.dp))
 
@@ -582,8 +579,18 @@ fun MainScreen(
                                 animatedVisibilityScope = animatedVisibilityScope,
                             )
 
-                            MainDestination.Explore -> ExploreRouteScreen(
+                                MainDestination.Explore -> ExploreMainRoute(
                                 onOpenExploreShow = onNavigateToExploreShow,
+                                    onBookClick = { book, sharedCoverKey ->
+                                        onNavigateToBookInfo(
+                                            book.name,
+                                            book.author,
+                                            book.bookUrl,
+                                            book.origin,
+                                            book.coverUrl,
+                                            sharedCoverKey,
+                                        )
+                                    },
                                 onOpenLogin = { sourceUrl ->
                                     onNavigateToSourceLogin(
                                         io.legado.app.ui.login.SourceLoginType.BookSource,
@@ -618,6 +625,7 @@ fun MainScreen(
                                     when (event) {
                                         PrefClickEvent.OpenBookCacheManage -> onNavigateToBookCacheManage()
                                         PrefClickEvent.OpenBookSourceManage -> onNavigateToBookSourceManage()
+                                        PrefClickEvent.OpenReplaceRules -> onNavigateToReplaceRules()
                                         PrefClickEvent.OpenReadRecord -> onNavigateToReadRecord()
                                         else -> onIntent(MainUiIntent.HandlePreferenceClick(event))
                                     }
@@ -732,7 +740,7 @@ fun MainScreen(
                                     ) {
                                         AppText(
                                             text = stringResource(destination.labelId),
-                                            style = MaterialTheme.typography.labelSmall,
+                                            style = LegadoTheme.typography.labelSmall,
                                             maxLines = 1,
                                             overflow = TextOverflow.Ellipsis
                                         )
@@ -855,9 +863,9 @@ private fun BookshelfRailGroupMenu(
                 },
                 trailingIcon = {
                     if (state.selectedGroupIndex == groupIndex) {
-                        Icon(
+                        AppIcon(
                             Icons.Default.Check,
-                            null,
+                            contentDescription = null,
                             modifier = Modifier.size(18.dp)
                         )
                     }

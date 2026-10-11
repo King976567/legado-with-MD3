@@ -110,6 +110,7 @@ class DefaultMangaReaderSession(
                     book = book.copy(
                         scrollMode = command.presentation.scrollMode,
                         sidePaddingDp = command.presentation.sidePaddingDp,
+                        inBookshelf = command.presentation.inBookshelf ?: book.inBookshelf,
                     )
                 )
             }
@@ -152,6 +153,7 @@ class DefaultMangaReaderSession(
             sessionId = old.sessionId,
             revision = old.revision + 1,
             resumed = old.resumed,
+            requestedBookUrl = command.bookUrl,
         )
         runCatching {
             withContext(ioDispatcher) {

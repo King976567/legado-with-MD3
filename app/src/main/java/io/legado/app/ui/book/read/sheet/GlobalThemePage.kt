@@ -30,7 +30,6 @@ import androidx.compose.material.icons.filled.Speed
 import androidx.compose.material.icons.filled.TextFields
 import androidx.compose.material.icons.filled.Visibility
 import androidx.compose.material3.ExperimentalMaterial3Api
-import androidx.compose.material3.Icon
 import androidx.compose.material3.PlainTooltip
 import androidx.compose.material3.TooltipAnchorPosition
 import androidx.compose.material3.TooltipBox
@@ -52,6 +51,7 @@ import androidx.compose.ui.unit.dp
 import androidx.core.graphics.toColorInt
 import coil3.compose.AsyncImage
 import io.legado.app.R
+import io.legado.app.constant.PageAnim
 import io.legado.app.data.repository.ReadPreferences
 import io.legado.app.domain.model.settings.ReadStyleItem
 import io.legado.app.help.config.ReadStyleResolver
@@ -66,6 +66,7 @@ import io.legado.app.ui.theme.fadingEdge
 import io.legado.app.ui.widget.components.button.series.SmallTonalButton
 import io.legado.app.ui.widget.components.card.NormalCard
 import io.legado.app.ui.widget.components.card.TextCard
+import io.legado.app.ui.widget.components.icon.AppIcon
 import io.legado.app.ui.widget.components.menuItem.RoundDropdownMenu
 import io.legado.app.ui.widget.components.menuItem.RoundDropdownMenuItem
 import io.legado.app.ui.widget.components.settingItem.TinySettingItem
@@ -130,7 +131,7 @@ fun GlobalThemePage(
                     contentAlignment = Alignment.Center,
                     modifier = Modifier.fillMaxSize(),
                 ) {
-                    Icon(
+                    AppIcon(
                         imageVector = Icons.Default.TextFields,
                         contentDescription = stringResource(R.string.compose_type),
                         tint = LegadoTheme.colorScheme.onSurfaceVariant,
@@ -239,7 +240,7 @@ fun GlobalThemePage(
                             modifier = Modifier.fillMaxSize(),
                             contentAlignment = Alignment.Center
                         ) {
-                            Icon(
+                            AppIcon(
                                 Icons.Default.GridView,
                                 contentDescription = stringResource(R.string.share_layout),
                                 modifier = Modifier.size(20.dp),
@@ -301,7 +302,7 @@ fun GlobalThemePage(
                                 modifier = Modifier.fillMaxSize(),
                                 contentAlignment = Alignment.Center
                             ) {
-                                Icon(
+                                AppIcon(
                                     Icons.Default.Add,
                                     contentDescription = null,
                                     modifier = Modifier.size(20.dp),
@@ -315,19 +316,19 @@ fun GlobalThemePage(
 
         Spacer(Modifier.height(8.dp))
 
+        // 每一项带自己的 PageAnim 取值：菜单里加一项或换个顺序都不会再让「下标 == 常量值」这个
+        // 隐含约定错位（菜单里加一项或换个顺序都不会再让「下标 == 常量值」这个隐含约定错位）。
         val pageAnimOptions = listOf(
-            R.string.page_anim_cover,
-            R.string.page_anim_slide,
-            R.string.page_anim_simulation,
-            R.string.page_anim_scroll,
-            R.string.page_anim_fade,
-            R.string.page_anim_none,
+            R.string.page_anim_cover to PageAnim.coverPageAnim,
+            R.string.page_anim_slide to PageAnim.slidePageAnim,
+            R.string.page_anim_simulation to PageAnim.simulationPageAnim,
+            R.string.page_anim_scroll to PageAnim.scrollPageAnim,
+            R.string.page_anim_fade to PageAnim.fadePageAnim,
+            R.string.page_anim_none to PageAnim.noAnim,
         )
         var showPageAnimMenu by remember { mutableStateOf(false) }
-        val pageAnimEntries = pageAnimOptions.map { stringResource(it) }.toTypedArray()
-        // 菜单项顺序就是 PageAnim 的常量值，直接用 pageAnim 当下标；
-        // 越界（脏配置）时留空，与原先 indexOf 得到 -1 的行为一致。
-        val currentPageAnimDisplay = pageAnimEntries.getOrNull(pageAnim) ?: ""
+        val pageAnimEntries = pageAnimOptions.map { stringResource(it.first) to it.second }
+        val currentPageAnimDisplay = pageAnimEntries.firstOrNull { it.second == pageAnim }?.first ?: ""
 
         val pageAnimSpeedOptions = listOf(
             R.string.page_anim_speed_fastest,
@@ -362,12 +363,12 @@ fun GlobalThemePage(
                     expanded = showPageAnimMenu,
                     onDismissRequest = { showPageAnimMenu = false },
                 ) { dismiss ->
-                    pageAnimEntries.forEachIndexed { index, display ->
+                    pageAnimEntries.forEach { (display, value) ->
                         RoundDropdownMenuItem(
                             text = display,
                             onClick = {
                                 ReadBook.book?.setPageAnim(-1)
-                                onIntent(ReadBookIntent.UpdateConfig(ConfigUpdate.PageAnim(index)))
+                                onIntent(ReadBookIntent.UpdateConfig(ConfigUpdate.PageAnim(value)))
                                 dismiss()
                             },
                         )
@@ -385,7 +386,7 @@ fun GlobalThemePage(
                     cornerRadius = 12.dp,
                 ) {
                     Box(contentAlignment = Alignment.Center, modifier = Modifier.fillMaxSize()) {
-                        Icon(
+                        AppIcon(
                             imageVector = Icons.Default.Speed,
                             contentDescription = stringResource(R.string.page_anim_speed),
                             tint = LegadoTheme.colorScheme.onSurfaceVariant,
@@ -419,7 +420,7 @@ fun GlobalThemePage(
                 cornerRadius = 12.dp,
             ) {
                 Box(contentAlignment = Alignment.Center, modifier = Modifier.fillMaxSize()) {
-                    Icon(
+                    AppIcon(
                         imageVector = Icons.Default.SpaceBar,
                         contentDescription = stringResource(R.string.padding),
                         tint = LegadoTheme.colorScheme.onSurfaceVariant,
@@ -509,7 +510,7 @@ fun StyleCard(
                         ),
                     contentAlignment = Alignment.Center,
                 ) {
-                    Icon(
+                    AppIcon(
                         imageVector = Icons.Default.Check,
                         contentDescription = null,
                         modifier = Modifier.size(10.dp),
