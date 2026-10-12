@@ -2467,6 +2467,9 @@
     <string name="title_bar_layout">Title Bar Layout</string>
     <string name="show_title_bar_icons">Show floating icons</string>
     <string name="title_bar_compact">Compact top bar buttons</string>
+    <string name="title_bar_action_buttons">Configure Top Buttons</string>
+    <string name="only_online_books">Online books only</string>
+    <string name="only_local_books">Local books only</string>
     <string name="title_bar_icon_position">Floating icon position</string>
     <string name="position_top_start">Top left</string>
     <string name="position_top_end">Top right</string>
@@ -3402,6 +3405,9 @@
     <string name="cloud_tts_no_available_engine">Install a system TTS, add a cloud TTS engine, or import an HTTP TTS first</string>
     <string name="cloud_tts_voice_engine_unavailable">The engine used by this voice is currently unavailable</string>
     <string name="cloud_tts_cannot_change_engine">The engine cannot be changed while editing. Create a new voice preset instead.</string>
+    <string name="cloud_tts_restore_excluded_voices">Restore excluded voices (%1$d)</string>
+    <string name="cloud_tts_no_excluded_voices">No excluded voices</string>
+    <string name="cloud_tts_restored_voices">Restored %1$d voices</string>
     <string name="cloud_tts_engine_default_voice">Engine default voice</string>
     <string name="cloud_tts_voice_count">Loaded %1$d voices</string>
     <string name="cloud_tts_cannot_change_native_voice">The native voice cannot be changed while editing. Create a new voice preset instead.</string>
