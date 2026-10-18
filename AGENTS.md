@@ -18,6 +18,8 @@
 
 ## Skill 路由
 
+- MD3阅读上游更新检查、两级同步 PR、同步失败排查与 NAS/漫画回归：使用
+  `md3-upstream-sync`，遵守逐阶段人工确认合并，不将检查请求当同步授权。
 - XML/View/Activity/Fragment/RecyclerView 到 Compose 的页面迁移、新 Compose 页面：使用
   `legado-compose-migration`。
 - Compose Screen、Contract、ViewModel、导航、状态与兼容边界审查：使用 `legado-compose-review`。

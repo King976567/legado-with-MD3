@@ -1,0 +1,4 @@
+interface:
+  display_name: "MD3阅读上游同步"
+  short_description: "核实上游、分阶段整合并验证 NAS 与漫画功能，保留人工合并门槛"
+  default_prompt: "使用 $md3-upstream-sync 检查并同步 MD3阅读上游更新，保留 NAS 和漫画功能，完成验证后报告各阶段状态。"
