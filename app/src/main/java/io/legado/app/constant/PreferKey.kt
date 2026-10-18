@@ -129,6 +129,7 @@ object PreferKey {
     const val bitmapCacheSize = "bitmapCacheSize"
     const val imageRetainNum = "imageRetainNum"
     const val preDownloadNum = "preDownloadNum"
+    const val preDownloadNumPrev = "preDownloadNumPrev"
     const val mangaPreDownloadNum = "mangaPreDownloadNum"
     const val mangaChapterPrefetchCount = "mangaChapterPrefetchCount"
     const val mangaAutoOfflineCache = "mangaAutoOfflineCache"
@@ -357,6 +358,7 @@ object PreferKey {
 
 
     const val tabletInterface = "tabletInterface"
+    const val multiPaneMode = "multiPaneMode"
     const val pureBlack = "pure_black"
     const val labelVisibilityMode = "labelVisibilityMode"
     const val menuAlpha = "menuAlpha"
@@ -430,6 +432,9 @@ object PreferKey {
     const val showBookIntro = "showBookIntro"
     const val bookshelfShowIntro = "bookshelfShowIntro"
     const val bookshelfShowTag = "bookshelfShowTag"
+    const val bookshelfShowCustomTags = "bookshelfShowCustomTags"
+    const val bookshelfShowSourceTags = "bookshelfShowSourceTags"
+    const val bookshelfShowWordCount = "bookshelfShowWordCount"
     const val bookshelfShowLatestChapter = "bookshelfShowLatestChapter"
     const val bookshelfIntroMaxLines = "bookshelfIntroMaxLines"
     const val sliderVibrator = "sliderVibrator"

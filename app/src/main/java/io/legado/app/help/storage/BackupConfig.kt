@@ -357,6 +357,9 @@ object BackupConfig {
         PreferKey.bookshelfRefreshingLimit,
         PreferKey.bookshelfShowIntro,
         PreferKey.bookshelfShowTag,
+        PreferKey.bookshelfShowCustomTags,
+        PreferKey.bookshelfShowSourceTags,
+        PreferKey.bookshelfShowWordCount,
         PreferKey.bookshelfShowLatestChapter,
         PreferKey.bookshelfIntroMaxLines
     )

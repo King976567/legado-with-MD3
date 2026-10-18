@@ -51,7 +51,7 @@ class AppDatabaseUpgradeTest {
         }
 
         withCurrentDatabase(name) { db ->
-            assertEquals(130, db.version)
+            assertEquals(CURRENT_DATABASE_VERSION, db.version)
             assertPreserved(db, originalRows)
             assertHighlightOffsets(db, 0.0, 0.0)
             assertEquals(
@@ -73,7 +73,7 @@ class AppDatabaseUpgradeTest {
 
         // Reopening also validates the post-migration Room identity hash on a normal launch.
         withCurrentDatabase(name) { db ->
-            assertEquals(130, db.version)
+            assertEquals(CURRENT_DATABASE_VERSION, db.version)
             assertPreserved(db, originalRows)
         }
     }
@@ -94,7 +94,7 @@ class AppDatabaseUpgradeTest {
         }
 
         withCurrentDatabase(name) { db ->
-            assertEquals(130, db.version)
+            assertEquals(CURRENT_DATABASE_VERSION, db.version)
             assertEquals(originalRule, snapshot(db, "highlightRules", originalRule.columns))
             assertHighlightOffsets(db, 4.0, 4.0)
             db.query("PRAGMA table_info(highlightRules)").use { cursor ->
@@ -106,6 +106,90 @@ class AppDatabaseUpgradeTest {
         }
         withCurrentDatabase(name) { db ->
             assertHighlightOffsets(db, 4.0, 4.0)
+        }
+    }
+
+    @Test
+    fun version130PreservesComicAndHttpTtsDataAndInitializesNewColumns() {
+        lateinit var originalRows: Map<String, TableSnapshot>
+        lateinit var migratedRows: Map<String, TableSnapshot>
+        val preservedTables = PRESERVED_TABLES + listOf("httpTTS", "read_aloud_voices")
+        val name = createHistoricalDatabase(130) { db ->
+            insertBook(db, LOCAL_CBZ, BookType.local or BookType.image, BookType.localTag)
+            insertBook(db, ONLINE_COMIC, BookType.image, "https://source.example.invalid")
+            insertChapter(db, LOCAL_CBZ, "0002_第二章/0001.jpg", "第二章")
+            insertChapter(db, ONLINE_COMIC, "$ONLINE_COMIC/chapter/2", "第二章")
+            db.execSQL(
+                "INSERT INTO caches (`key`, `value`, deadline) VALUES (?, ?, ?)",
+                arrayOf<Any>("comic-cache-key", "cached chapter content", 4_102_444_800_000L),
+            )
+            insertHighlightRule(db)
+            insertFixture(db, "httpTTS", ContentValues().apply {
+                put("id", 42L)
+                put("name", "自定义朗读源")
+                put("url", "https://tts.example.invalid/speak?text={{speakText}}")
+                put("contentType", "audio/mpeg")
+                put("concurrentRate", "3")
+                put("loginUrl", "https://tts.example.invalid/login")
+                put("loginUi", "[]")
+                put("header", "{\"X-Test\":\"fixture\"}")
+                put("jsLib", "var fixture = 1;")
+                put("enabledCookieJar", 1)
+                put("loginCheckJs", "result.success")
+                put("speed", 55)
+                put("lastUpdateTime", 1_792_000_000_123L)
+            })
+            listOf("custom-voice", "disabled-voice").forEachIndexed { index, id ->
+                insertFixture(db, "read_aloud_voices", ContentValues().apply {
+                    put("id", id)
+                    put("engineType", "http")
+                    put("engineId", "42")
+                    put("speakerId", "speaker-$index")
+                    put("displayName", "自定义音色 $index")
+                    put("traitsJson", "[\"narrator\"]")
+                    put("emotionCatalogJson", "[\"happy\",\"sad\"]")
+                    put("managedBy", if (index == 0) "user" else "configured_tts")
+                    put("enabled", if (index == 0) 1 else 0)
+                    put("available", if (index == 0) 1 else 0)
+                    put("revision", 7L + index)
+                    put("createdAt", 1_792_000_000_010L + index)
+                    put("updatedAt", 1_792_000_000_020L + index)
+                })
+            }
+            originalRows = preservedTables.associateWith { snapshot(db, it) }
+            assertEquals(130, db.version)
+        }
+
+        withCurrentDatabase(name) { db ->
+            assertEquals(CURRENT_DATABASE_VERSION, db.version)
+            assertPreserved(db, originalRows)
+            assertNewReadAloudAndBookDefaults(db)
+            migratedRows = preservedTables.associateWith { snapshot(db, it) }
+        }
+        // A second normal open validates Room's identity hash and all new/defaulted columns.
+        withCurrentDatabase(name) { db ->
+            assertEquals(CURRENT_DATABASE_VERSION, db.version)
+            assertPreserved(db, migratedRows)
+            assertNewReadAloudAndBookDefaults(db)
+        }
+    }
+
+    private fun assertNewReadAloudAndBookDefaults(db: SupportSQLiteDatabase) {
+        db.query("SELECT synthesisThreadCount FROM httpTTS WHERE id = 42").use { cursor ->
+            assertTrue(cursor.moveToFirst())
+            assertEquals(1, cursor.getInt(0))
+        }
+        db.query("SELECT excluded FROM read_aloud_voices ORDER BY id").use { cursor ->
+            assertEquals(2, cursor.count)
+            while (cursor.moveToNext()) {
+                assertEquals(0, cursor.getInt(0))
+            }
+        }
+        db.query("SELECT disableReadRecord FROM books ORDER BY bookUrl").use { cursor ->
+            assertEquals(2, cursor.count)
+            while (cursor.moveToNext()) {
+                assertEquals(0, cursor.getInt(0))
+            }
         }
     }
 
@@ -317,6 +401,7 @@ class AppDatabaseUpgradeTest {
     private data class TableSnapshot(val columns: List<String>, val rows: List<List<Any?>>)
 
     companion object {
+        private const val CURRENT_DATABASE_VERSION = 132
         private const val LOCAL_CBZ = "content://local-comics/downloaded.cbz"
         private const val ONLINE_COMIC = "https://comic.example.invalid/book/42"
         private val PRESERVED_TABLES = listOf("books", "chapters", "caches", "highlightRules")

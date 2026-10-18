@@ -12,7 +12,9 @@ import androidx.work.WorkManager
 import androidx.work.WorkerParameters
 import io.legado.app.R
 import io.legado.app.constant.AppConst
+import io.legado.app.data.entities.Book
 import io.legado.app.data.entities.BookChapter
+import io.legado.app.data.entities.BookSource
 import io.legado.app.domain.gateway.NasUploadSource
 import io.legado.app.domain.model.NasComicUploadException
 import io.legado.app.domain.model.NasComicUploadFailure
@@ -29,6 +31,7 @@ import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.toList
 import org.koin.core.context.GlobalContext
+import java.io.Closeable
 import java.io.File
 import java.io.IOException
 
@@ -144,73 +147,79 @@ class NasComicUploadWorker(
         var completedPages = 0
         var cacheReused = 0
         var downloaded = 0
-        val archiveChapters = chapterPlans.mapIndexed { chapterIndex, plan ->
-            currentCoroutineContext().ensureActive()
-            val pages = plan.urls.mapIndexed { pageIndex, url ->
-                val wasCached = BookHelp.isImageExist(cacheBook, url)
-                val saved = if (wasCached) {
-                    cacheReused += 1
-                    true
-                } else {
-                    try {
-                        BookHelp.saveImage(source, cacheBook, url, plan.chapter)
-                    } catch (error: Throwable) {
-                        throw NasComicUploadException(NasComicUploadFailure.ImageFailed, error.message, true, error)
-                    }.also { if (it) downloaded += 1 }
-                }
-                if (!saved) throw NasComicUploadException(NasComicUploadFailure.ImageFailed)
-                val image = BookHelp.getImage(cacheBook, url).takeIf(File::isFile)
-                    ?: throw NasComicUploadException(NasComicUploadFailure.ImageFailed)
-                update(
-                    NasComicUploadStage.Downloading,
-                    chapterIndex + 1,
-                    chapterPlans.size,
-                    pageIndex + 1,
-                    plan.urls.size,
-                    cacheReused,
-                    downloaded,
-                    completedPages + pageIndex + 1,
-                    totalPages,
-                )
-                image
-            }
-            completedPages += plan.urls.size
-            NasComicArchiveChapter(plan.chapter.title, pages)
-        }
-        update(
-            NasComicUploadStage.Packaging,
-            chapterCount = snapshot.chapters.size,
-            overallCurrent = totalPages,
-            overallTotal = totalPages,
-        )
-        val fileName = sanitizeCbzPathSegment(snapshot.book.name, "comic") + ".cbz"
+        val imageLeases = NasComicImageLeases()
         val archive = try {
-            NasComicCbzBuilder.build(
-                output = File(repository.taskDirectory(sourceKey), fileName),
-                title = snapshot.book.name,
-                author = snapshot.book.author,
-                summary = snapshot.book.getDisplayIntro().orEmpty(),
-                chapters = archiveChapters,
-                maxBytes = listOf(snapshot.maxUploadBytes, connection.capabilities.maxUploadBytes)
-                    .filter { it > 0 }.minOrNull() ?: 0,
-            ) { chapter, chapterCount, page, pageCount ->
-                setProgressAsync(
-                    progressData(
-                        NasComicUploadStage.Packaging,
-                        chapter,
-                        chapterCount,
-                        page,
-                        pageCount,
-                        overallCurrent = totalPages,
-                        overallTotal = totalPages,
-                    ),
+            val archiveChapters = chapterPlans.mapIndexed { chapterIndex, plan ->
+                currentCoroutineContext().ensureActive()
+                val pages = plan.urls.mapIndexed { pageIndex, url ->
+                    val pageImage = try {
+                        acquireNasComicPageImage(source, cacheBook, plan.chapter, url, imageLeases)
+                    } catch (cancelled: CancellationException) {
+                        throw cancelled
+                    } catch (error: NasComicUploadException) {
+                        throw error
+                    } catch (error: Throwable) {
+                        throw NasComicUploadException(
+                            NasComicUploadFailure.ImageFailed,
+                            error.message,
+                            true,
+                            error,
+                        )
+                    }
+                    if (pageImage.downloaded) downloaded += 1 else cacheReused += 1
+                    update(
+                        NasComicUploadStage.Downloading,
+                        chapterIndex + 1,
+                        chapterPlans.size,
+                        pageIndex + 1,
+                        plan.urls.size,
+                        cacheReused,
+                        downloaded,
+                        completedPages + pageIndex + 1,
+                        totalPages,
+                    )
+                    pageImage.file
+                }
+                completedPages += plan.urls.size
+                NasComicArchiveChapter(plan.chapter.title, pages)
+            }
+            update(
+                NasComicUploadStage.Packaging,
+                chapterCount = snapshot.chapters.size,
+                overallCurrent = totalPages,
+                overallTotal = totalPages,
+            )
+            val fileName = sanitizeCbzPathSegment(snapshot.book.name, "comic") + ".cbz"
+            try {
+                NasComicCbzBuilder.build(
+                    output = File(repository.taskDirectory(sourceKey), fileName),
+                    title = snapshot.book.name,
+                    author = snapshot.book.author,
+                    summary = snapshot.book.getDisplayIntro().orEmpty(),
+                    chapters = archiveChapters,
+                    maxBytes = listOf(snapshot.maxUploadBytes, connection.capabilities.maxUploadBytes)
+                        .filter { it > 0 }.minOrNull() ?: 0,
+                ) { chapter, chapterCount, page, pageCount ->
+                    setProgressAsync(
+                        progressData(
+                            NasComicUploadStage.Packaging,
+                            chapter,
+                            chapterCount,
+                            page,
+                            pageCount,
+                            overallCurrent = totalPages,
+                            overallTotal = totalPages,
+                        ),
+                    )
+                }
+            } catch (error: NasComicArchiveException) {
+                throw NasComicUploadException(
+                    if (error.reason == NasComicArchiveError.StorageFull) NasComicUploadFailure.StorageFull
+                    else NasComicUploadFailure.TooLarge,
                 )
             }
-        } catch (error: NasComicArchiveException) {
-            throw NasComicUploadException(
-                if (error.reason == NasComicArchiveError.StorageFull) NasComicUploadFailure.StorageFull
-                else NasComicUploadFailure.TooLarge,
-            )
+        } finally {
+            imageLeases.close()
         }
         update(
             NasComicUploadStage.Uploading,
@@ -440,4 +449,49 @@ class NasComicUploadWorker(
         val chapter: BookChapter,
         val urls: List<String>,
     )
+}
+
+internal data class NasComicPageImage(
+    val file: File,
+    val downloaded: Boolean,
+)
+
+/** Holds chapter images against cache cleanup until the CBZ builder finishes reading them. */
+internal class NasComicImageLeases : Closeable {
+    private val leases = mutableListOf<Closeable>()
+    private var closed = false
+
+    fun pin(file: File) {
+        check(!closed) { "Image leases already closed" }
+        leases += BookHelp.pinImageFile(file)
+    }
+
+    override fun close() {
+        if (closed) return
+        closed = true
+        leases.asReversed().forEach { lease -> runCatching { lease.close() } }
+        leases.clear()
+    }
+}
+
+/** Uses BookHelp's chapter-scoped cache path and validator, including its legacy book-cache fallback. */
+internal suspend fun acquireNasComicPageImage(
+    source: BookSource,
+    book: Book,
+    chapter: BookChapter,
+    url: String,
+    leases: NasComicImageLeases,
+): NasComicPageImage {
+    val image = BookHelp.getImage(book, chapter, url)
+    leases.pin(image)
+    var downloaded = false
+    val saved = BookHelp.saveImage(
+        source,
+        book,
+        url,
+        chapter,
+        onDownload = { downloaded = true },
+    )
+    if (!saved || !image.isFile) throw NasComicUploadException(NasComicUploadFailure.ImageFailed)
+    return NasComicPageImage(image, downloaded)
 }

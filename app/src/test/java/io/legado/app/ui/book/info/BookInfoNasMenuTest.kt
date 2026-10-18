@@ -25,7 +25,7 @@ class BookInfoNasMenuTest {
         origin = "local", originName = "book.txt", coverPath = null, group = 0, isLocal = true,
         type = 0, canUpdate = false, splitLongChapter = false, durChapterTitle = null,
         latestChapterTitle = null, totalChapterNum = 0, durChapterIndex = 0, durChapterPos = 0,
-        remark = null, intro = null,
+        remark = null, intro = null, disableReadRecord = false,
     )
     private val actions = mutableListOf<BookInfoMenuAction>()
     @Before fun init() { RuntimeEnvironment.getApplication().injectAsAppCtx() }

@@ -1000,6 +1000,13 @@ internal fun BookInfoOverflowMenu(
             text = stringResource(R.string.read_record),
             onClick = { onMenuAction(BookInfoMenuAction.ReadRecord) }
         )
+        if (state.inBookshelf && book != null) {
+            RoundDropdownMenuItem(
+                text = stringResource(R.string.book_disable_read_record),
+                onClick = { onMenuAction(BookInfoMenuAction.ToggleReadRecordDisabled) },
+                isSelected = book.disableReadRecord,
+            )
+        }
         if (book?.isLocal == true) {
             RoundDropdownMenuItem(
                 text = stringResource(R.string.re_sync_webdav),

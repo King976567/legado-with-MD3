@@ -392,6 +392,7 @@ class MangaReaderNavigationResultTest {
                         chapterIndex = chapterIndex,
                         chapterTitle = "Chapter ${chapterIndex + 1}",
                         chapterUrl = null,
+                        chapterSubject = "chapter-$chapterIndex",
                         pages = List(2) { page ->
                             MangaPageContent("$bookUrl/$chapterIndex/$page.jpg", page, 2)
                         },
