@@ -10,6 +10,7 @@ import coil3.fetch.SourceFetchResult
 import coil3.request.Options
 import io.legado.app.data.appDb
 import io.legado.app.help.glide.progress.ProgressUrlTag
+import io.legado.app.help.http.Cronet
 import io.legado.app.utils.ImageUtils
 import io.legado.app.utils.isWifiConnect
 import kotlinx.coroutines.CancellationException
@@ -17,6 +18,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import okhttp3.CacheControl
 import okhttp3.Call
+import okhttp3.Interceptor
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import okio.Buffer
@@ -103,11 +105,7 @@ class CoverFetcher(
         // for that request: otherwise an indexer could redirect `/covers/*` to
         // another same-host path and OkHttp would forward the token there.
         val requestCallFactory = if (requestHeaders.keys.any { it.equals("Authorization", true) }) {
-            (callFactory as? OkHttpClient)?.newBuilder()
-                ?.followRedirects(false)
-                ?.followSslRedirects(false)
-                ?.build()
-                ?: callFactory
+            authenticatedCoverCallFactory(callFactory, Cronet.interceptor)
         } else {
             callFactory
         }
@@ -277,4 +275,21 @@ class CoverFetcher(
             return CoverFetcher(data.toString(), options, client, loadOnlyWifi)
         }
     }
+}
+
+internal fun authenticatedCoverCallFactory(
+    callFactory: Call.Factory,
+    cronetInterceptor: Interceptor?,
+): OkHttpClient {
+    val client = callFactory as? OkHttpClient
+        ?: throw IOException("Authenticated cover requests require OkHttpClient")
+    return client.newBuilder()
+        .apply {
+            followRedirects(false)
+            followSslRedirects(false)
+            cronetInterceptor?.let { cronet ->
+                interceptors().removeAll { it === cronet }
+            }
+        }
+        .build()
 }
