@@ -108,6 +108,9 @@ object LegacyReaderStyleRangeMapper {
                 tracker.feed(text[index])
                 val closed = tracker.lastClosedSpan ?: continue
                 val start = closed.start - origin
+                // 开引号落在上一段（跨段引号）时减回来是负数：本段只剩台词尾巴，
+                // 归属也查不到标记，跳过这一段，不能让 substring 把整章排版打挂。
+                if (start < 0) continue
                 val endExclusive = closed.endExclusive - origin
                 val quoted = text.substring(start, endExclusive)
                 val owner = CastMarkers.findMarkers(quoted).firstOrNull() ?: continue
@@ -329,6 +332,10 @@ object LegacyReaderStyleRangeMapper {
     private fun HighlightRule.toReaderStyle() = ReaderCharacterStyle(
         colorArgb = textColor,
         backgroundArgb = bgColor,
+        // 边框是一个整体：颜色没给，粗细与圆角就不单独存在，样式里不会出现无主的三件套。
+        borderColorArgb = borderColor,
+        borderWidthPx = borderColor?.let { borderWidth.dpToPx() } ?: 0f,
+        borderRadiusPx = borderColor?.let { borderRadius.dpToPx() } ?: 0f,
         underline = underlineMode.takeIf { it != 0 }?.let {
             ReaderUnderline(
                 mode = it,

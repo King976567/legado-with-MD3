@@ -178,6 +178,7 @@ internal fun DownloadCacheSettings.toPrefMap(): Map<String, Any?> = mapOf(
 internal fun Preferences.toCoverSettings(): CoverSettings = CoverSettings(
     loadOnlyOnWifi = compatDsBoolean(PreferKey.loadCoverOnlyWifi) ?: false,
     useDefaultCover = compatDsBoolean(PreferKey.useDefaultCover) ?: false,
+    restrictCoverRatio = compatDsBoolean(PreferKey.coverRestrictRatio) ?: true,
     showShadow = compatDsBoolean(PreferKey.coverShowShadow) ?: false,
     showStroke = compatDsBoolean(PreferKey.coverShowStroke) ?: true,
     useDefaultColor = compatDsBoolean(PreferKey.coverDefaultColor) ?: true,
@@ -198,6 +199,7 @@ internal fun Preferences.toCoverSettings(): CoverSettings = CoverSettings(
 internal fun CoverSettings.toPrefMap(): Map<String, Any?> = mapOf(
     PreferKey.loadCoverOnlyWifi to loadOnlyOnWifi,
     PreferKey.useDefaultCover to useDefaultCover,
+    PreferKey.coverRestrictRatio to restrictCoverRatio,
     PreferKey.coverShowShadow to showShadow,
     PreferKey.coverShowStroke to showStroke,
     PreferKey.coverDefaultColor to useDefaultColor,
@@ -289,6 +291,7 @@ internal fun Preferences.toAppShellSettings(): AppShellSettings = AppShellSettin
     showStatusBar = compatDsBoolean(PreferKey.showStatusBar) ?: true,
     swipeAnimation = compatDsBoolean(PreferKey.swipeAnimation) ?: true,
     predictiveBackEnabled = compatDsBoolean(PreferKey.isPredictiveBackEnabled) ?: true,
+    readerSharedElementEnabled = compatDsBoolean(PreferKey.readerSharedElementEnabled) ?: true,
     showBottomView = compatDsBoolean(PreferKey.showBottomView) ?: true,
     useFloatingBottomBar = compatDsBoolean(PreferKey.useFloatingBottomBar) ?: false,
     useFloatingBottomBarLiquidGlass =
@@ -323,6 +326,7 @@ internal fun AppShellSettings.toPrefMap(): Map<String, Any?> = mapOf(
     PreferKey.showStatusBar to showStatusBar,
     PreferKey.swipeAnimation to swipeAnimation,
     PreferKey.isPredictiveBackEnabled to predictiveBackEnabled,
+    PreferKey.readerSharedElementEnabled to readerSharedElementEnabled,
     PreferKey.showBottomView to showBottomView,
     PreferKey.useFloatingBottomBar to useFloatingBottomBar,
     PreferKey.useFloatingBottomBarLiquidGlass to useFloatingBottomBarLiquidGlass,
@@ -396,6 +400,8 @@ internal fun Preferences.toThemeSettings(): ThemeSettings = ThemeSettings(
         compatDsString(PreferKey.bookInfoNetworkCoverBackground) ?: "on",
     bookInfoDefaultCoverBackground =
         compatDsString(PreferKey.bookInfoDefaultCoverBackground) ?: "on",
+    bookInfoAuthorSearchFallback =
+        compatDsBoolean(PreferKey.bookInfoAuthorSearchFallback) ?: false,
     bookInfoInputColor = compatDsInt(PreferKey.bookInfoInputColor) ?: 0,
     backgroundImageLight = compatDsString(PreferKey.bgImage),
     backgroundImageDark = compatDsString(PreferKey.bgImageN),
@@ -475,6 +481,7 @@ internal fun ThemeSettings.toGatewayPrefMap(): Map<String, Any?> = mapOf(
     PreferKey.bookInfoFollowCoverColor to bookInfoFollowCoverColor,
     PreferKey.bookInfoNetworkCoverBackground to bookInfoNetworkCoverBackground,
     PreferKey.bookInfoDefaultCoverBackground to bookInfoDefaultCoverBackground,
+    PreferKey.bookInfoAuthorSearchFallback to bookInfoAuthorSearchFallback,
     PreferKey.bgImage to backgroundImageLight,
     PreferKey.bgImageN to backgroundImageDark,
     PreferKey.bgImageBlurring to backgroundImageBlurring,
@@ -530,6 +537,7 @@ internal fun Preferences.toOtherSettings(): OtherSettings {
         importKeepGroup = compatDsBoolean(PreferKey.importKeepGroup) ?: false,
         importKeepEnable = compatDsBoolean(PreferKey.importKeepEnable) ?: false,
         fontSort = compatDsInt(PreferKey.fontSort) ?: 0,
+        blockSourceBrowser = compatDsBoolean(PreferKey.blockSourceBrowser) ?: false,
     )
 }
 
@@ -559,6 +567,7 @@ internal fun OtherSettings.toPrefMap(): Map<String, Any?> = mapOf(
     PreferKey.importKeepGroup to importKeepGroup,
     PreferKey.importKeepEnable to importKeepEnable,
     PreferKey.fontSort to fontSort,
+    PreferKey.blockSourceBrowser to blockSourceBrowser,
 )
 
 class OtherSettingsRepository : OtherSettingsGateway {

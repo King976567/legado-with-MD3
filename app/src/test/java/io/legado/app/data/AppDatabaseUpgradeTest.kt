@@ -174,6 +174,81 @@ class AppDatabaseUpgradeTest {
         }
     }
 
+    @Test
+    fun version132PreservesPopulatedDataAndInitializesHighlightBorders() {
+        lateinit var originalRows: Map<String, TableSnapshot>
+        lateinit var migratedRows: Map<String, TableSnapshot>
+        val preservedTables = PRESERVED_TABLES + listOf("httpTTS", "read_aloud_voices")
+        val name = createHistoricalDatabase(132) { db ->
+            insertBook(db, LOCAL_CBZ, BookType.local or BookType.image, BookType.localTag)
+            insertBook(db, ONLINE_COMIC, BookType.image, "https://source.example.invalid")
+            insertChapter(db, LOCAL_CBZ, "0002_第二章/0001.jpg", "第二章")
+            insertChapter(db, ONLINE_COMIC, "$ONLINE_COMIC/chapter/2", "第二章")
+            db.execSQL(
+                "INSERT INTO caches (`key`, `value`, deadline) VALUES (?, ?, ?)",
+                arrayOf<Any>("comic-cache-key", "cached chapter content", 4_102_444_800_000L),
+            )
+            insertHighlightRule(db)
+            db.execSQL(
+                """UPDATE highlightRules SET underlineSvgPath = 'M0,0 L10,2',
+                    fontPath = 'content://custom-fonts/highlight.ttf',
+                    letterSpacingBefore = 1.25, letterSpacingAfter = 2.5,
+                    lineSpacingTop = 3.0, lineSpacingBottom = 4.0,
+                    bgLengthOffsetLeft = -2.0, bgLengthOffsetRight = 6.0
+                    WHERE id = 'custom-highlight'""".trimIndent(),
+            )
+            db.execSQL("UPDATE books SET disableReadRecord = 1 WHERE bookUrl = ?", arrayOf(LOCAL_CBZ))
+            insertFixture(db, "httpTTS", ContentValues().apply {
+                put("id", 42L)
+                put("name", "自定义朗读源")
+                put("url", "https://tts.example.invalid/speak?text={{speakText}}")
+                put("synthesisThreadCount", 4)
+                put("lastUpdateTime", 1_792_000_000_123L)
+            })
+            insertFixture(db, "read_aloud_voices", ContentValues().apply {
+                put("id", "excluded-custom-voice")
+                put("engineType", "http")
+                put("engineId", "42")
+                put("speakerId", "speaker-custom")
+                put("displayName", "自定义排除音色")
+                put("traitsJson", "[\"narrator\"]")
+                put("emotionCatalogJson", "[\"happy\",\"sad\"]")
+                put("enabled", 0)
+                put("available", 0)
+                put("excluded", 1)
+                put("revision", 7L)
+                put("createdAt", 1_792_000_000_010L)
+                put("updatedAt", 1_792_000_000_020L)
+            })
+            originalRows = preservedTables.associateWith { snapshot(db, it) }
+            assertEquals(132, db.version)
+        }
+
+        withCurrentDatabase(name) { db ->
+            assertEquals(CURRENT_DATABASE_VERSION, db.version)
+            assertPreserved(db, originalRows)
+            assertHighlightBorderDefaults(db)
+            migratedRows = preservedTables.associateWith { snapshot(db, it) }
+        }
+        // A normal second open checks Room identity and the newly defaulted border columns too.
+        withCurrentDatabase(name) { db ->
+            assertEquals(CURRENT_DATABASE_VERSION, db.version)
+            assertPreserved(db, migratedRows)
+            assertHighlightBorderDefaults(db)
+        }
+    }
+
+    private fun assertHighlightBorderDefaults(db: SupportSQLiteDatabase) {
+        db.query(
+            "SELECT borderColor, borderWidth, borderRadius FROM highlightRules WHERE id = 'custom-highlight'",
+        ).use { cursor ->
+            assertTrue(cursor.moveToFirst())
+            assertTrue("Existing highlight rules must remain without a border", cursor.isNull(0))
+            assertEquals(1.0, cursor.getDouble(1), 0.0)
+            assertEquals(4.0, cursor.getDouble(2), 0.0)
+        }
+    }
+
     private fun assertNewReadAloudAndBookDefaults(db: SupportSQLiteDatabase) {
         db.query("SELECT synthesisThreadCount FROM httpTTS WHERE id = 42").use { cursor ->
             assertTrue(cursor.moveToFirst())
@@ -401,7 +476,7 @@ class AppDatabaseUpgradeTest {
     private data class TableSnapshot(val columns: List<String>, val rows: List<List<Any?>>)
 
     companion object {
-        private const val CURRENT_DATABASE_VERSION = 132
+        private const val CURRENT_DATABASE_VERSION = 133
         private const val LOCAL_CBZ = "content://local-comics/downloaded.cbz"
         private const val ONLINE_COMIC = "https://comic.example.invalid/book/42"
         private val PRESERVED_TABLES = listOf("books", "chapters", "caches", "highlightRules")

@@ -35,6 +35,8 @@
     <string name="manual_contrast_value_label">Manual value [-1, 1]</string>
     <string name="manual_contrast_invalid">Enter a valid number between -1 and 1</string>
     <string name="predictive_back">Predictive Back Gestures</string>
+    <string name="reader_shared_element">Reader shared element transition</string>
+    <string name="reader_shared_element_summary">Expand the cover when opening the reader. Use a fade transition when disabled.</string>
     <string name="predictive_back_summary">Enable system predictive back gestures</string>
     <string name="restart_to_apply">Restart to apply</string>
     <string name="custom_theme">Custom Theme</string>
@@ -958,6 +960,9 @@
     <string name="nine_slice_mode_vertical">Vertical</string>
     <string name="preview_effect">Preview</string>
     <string name="sample_text">Sample Text</string>
+    <string name="highlight_border">Border</string>
+    <string name="highlight_border_width">Border Width</string>
+    <string name="highlight_border_radius">Corner Radius</string>
     <string name="highlight_match_typography">Match Typography</string>
     <string name="highlight_match_typography_hint">Everything below applies to the text your regex matches, and to nothing else.</string>
     <string name="highlight_spacing_before">Spacing Before Match</string>
@@ -1278,6 +1283,7 @@
     <string name="invalid_regex">Invalid regex</string>
     <string name="complete_required_information">Fill in all required information</string>
     <string name="export_success">export success</string>
+    <string name="import_success">Imported</string>
     <string name="path">path</string>
     <string name="direct_link_upload_rule">Direct Link Upload Rules</string>
     <string name="direct_link_upload_rule_summary">Generate Direct URLs for Exported Book Source Lists</string>
@@ -1515,6 +1521,9 @@
     <string name="jump_to_another_app">Jump to another app</string>
     <string name="clear_webview_data">Clear WebView Data</string>
     <string name="clear_webview_data_summary">Clear all data in WebView</string>
+    <string name="block_source_browser">Block Sources from Opening the Built-in Browser</string>
+    <string name="block_source_browser_summary">When enabled, sources cannot open the built-in browser through java.startBrowser, and calls that wait for the page result will fail</string>
+    <string name="block_source_browser_error">Blocked: sources are not allowed to open the built-in browser</string>
     <string name="source_tab_list">List</string>
     <string name="source_tab_web_view">Web view</string>
     <string name="source_tab_start">Startup</string>
@@ -1759,6 +1768,20 @@
     <string name="theme_manage_import_package_summary">Import a theme package with its assets and cover albums</string>
     <string name="theme_manage_import_config">Import legacy theme configuration</string>
     <string name="theme_manage_import_config_summary">Import a legacy JSON theme configuration</string>
+    <string name="theme_list_manage">Manage themes</string>
+    <string name="theme_list_manage_done">Done</string>
+    <string name="theme_list_selected_count">Selected: %1$d</string>
+    <string name="theme_list_search_count">Search %1$d backgrounds</string>
+    <string name="theme_list_layout_grid">Grid layout</string>
+    <string name="theme_list_layout_list">Flow layout</string>
+    <string name="theme_list_add_theme">New theme</string>
+    <string name="theme_list_import_as_new">Import as new</string>
+    <string name="theme_list_tab_bg">Background</string>
+    <string name="theme_list_title">Reading theme</string>
+    <string name="theme_list_locate_current">Locate current theme</string>
+    <string name="theme_list_back_to_top">Back to top</string>
+    <string name="theme_list_back_to_bottom">Back to bottom</string>
+    <string name="theme_list_delete_confirm">Delete the %1$d selected themes?</string>
     <string name="theme_manage_migrate_legacy">Migrate legacy themes</string>
     <string name="theme_manage_migrate_legacy_summary">Convert saved JSON themes to the new theme format</string>
     <string name="theme_manage_migrate_success">Migrated %1$d legacy themes</string>
@@ -1797,6 +1820,9 @@
     <string name="book_info_follow_cover_color_summary">Applied only while a background cover is visible</string>
     <string name="book_info_network_cover_background">Network cover background</string>
     <string name="book_info_default_cover_background">Default cover background</string>
+    <string name="book_info_author_search_fallback">Search by author when no related-books rule</string>
+    <string name="book_info_author_search_fallback_summary">When the book source has no relatedBooks rule, search the author name on the current source and show other works by the same author as related books</string>
+    <string name="book_other_works">Other works by the author</string>
     <string name="book_info_background_blur_off">Show cover without blur</string>
     <string name="book_info_background_blur_on">Show blurred cover</string>
     <string name="book_info_background_blur_off_for_default">Hide background cover</string>
@@ -2047,6 +2073,8 @@
     <string name="cover_show_shadow">Show Font Shadow</string>
     <string name="cover_show_stroke">Show Font Stroke</string>
     <string name="default_color">Use Default Font Color</string>
+    <string name="cover_restrict_ratio">Restrict Cover Ratio</string>
+    <string name="cover_restrict_ratio_summary">When on, covers are fixed to 5:7; turn off to let search, explore and book info covers follow the original image aspect ratio</string>
     <string name="enable_slider_vibrator">Vibrate While Sliding Progress Bar</string>
     <string name="use_new_toc_sheet">Use New TOC Sheet</string>
     <string name="no_toc_split_length_title">Chapter Split Length (No Rule Match)</string>
@@ -3185,6 +3213,7 @@
     <string name="ai_cast_answer">AI answer</string>
     <string name="ai_cast_request">What was sent to the AI</string>
     <string name="ai_cast_request_hint">System prompt plus the user JSON of the last request, exactly as the model received it. Open this when the result looks wrong: it shows which dialogue lines and which character names the model actually saw.</string>
+    <string name="ai_cast_copy_request">Copy</string>
     <string name="ai_cast_transcript_folded">%1$d earlier characters folded, only the latest part is shown</string>
     <string name="ai_cast_thinking_pending">No reasoning text from the model yet. If the chapter finishes with nothing here, this model does not return its thinking; casting continues either way.</string>
     <string name="cast_table_row_count">%1$d chapters · %2$d lines</string>
@@ -3393,6 +3422,7 @@
     <string name="cloud_tts_loading_voices">Loading voices…</string>
     <string name="cloud_tts_no_matching_voice">No matching voice</string>
     <string name="cloud_tts_selected">Selected</string>
+    <string name="cloud_tts_default_voice">Default voice of this engine</string>
     <string name="cloud_tts_current_voice">Current voice</string>
     <string name="cloud_tts_refresh_catalog">Refresh online voice catalog</string>
     <string name="cloud_tts_hide_manual_voice">Hide manual input</string>
@@ -3923,4 +3953,5 @@
     <string name="battery_optimization_dialog_title">Background Optimization Settings Guide</string>
     <string name="battery_optimization_status_ignored">Unrestricted (Tap to check OEM background policy)</string>
     <string name="battery_optimization_status_not_ignored">Restricted or not configured; service may be killed in background</string>
+    <string name="reader_paragraph_image_action_unsupported">This image uses a paragraph-rule action that this version does not support.</string>
 </resources>

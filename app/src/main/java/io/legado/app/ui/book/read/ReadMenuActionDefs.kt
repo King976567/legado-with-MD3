@@ -2,9 +2,12 @@ package io.legado.app.ui.book.read
 
 import android.content.Context
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.Chat
 import androidx.compose.material.icons.automirrored.filled.List
+import androidx.compose.material.icons.automirrored.filled.Login
 import androidx.compose.material.icons.automirrored.filled.Toc
 import androidx.compose.material.icons.filled.AutoAwesome
+import androidx.compose.material.icons.filled.Block
 import androidx.compose.material.icons.filled.Bookmark
 import androidx.compose.material.icons.filled.Brightness6
 import androidx.compose.material.icons.filled.CloudDownload
@@ -15,6 +18,7 @@ import androidx.compose.material.icons.filled.Face
 import androidx.compose.material.icons.filled.FindReplace
 import androidx.compose.material.icons.filled.Groups
 import androidx.compose.material.icons.filled.MoreVert
+import androidx.compose.material.icons.filled.Payment
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.RecordVoiceOver
 import androidx.compose.material.icons.filled.Refresh
@@ -56,6 +60,12 @@ internal val ReadBookTopBarOnlyActionIds = listOf(
     "source_custom_button",
     "toc_rule",
     "charset",
+    // 书源四项：原本只挂在顶栏「章名 + 书源」那一行，开了标题胶囊或
+    // 「精简顶部按钮」后这行/这批按钮会消失，所以单独进池，可配到顶栏/底栏/更多操作。
+    "source_login",
+    "source_pay",
+    "edit_source",
+    "disable_source",
 )
 
 /** 完整按钮池：顶栏专属那批在前，其余接共享图标池 [ReadBookButtonIds]（去重）。 */
@@ -95,6 +105,10 @@ internal data class ReadMenuActionDef(
 internal fun isReadMenuActionApplicable(id: String, state: ReadBookUiState): Boolean = when (id) {
     "source_custom_button" -> !state.isLocalBook && state.bookSource?.customButton == true
     "change_source", "refresh", "download" -> !state.isLocalBook
+    "source_login" -> !state.isLocalBook && !state.bookSource?.loginUrl.isNullOrBlank()
+    // 与顶栏书源菜单同一判定：只在「VIP 且未购买」的章节可付费
+    "source_pay" -> state.chapterPayable
+    "edit_source", "disable_source" -> !state.isLocalBook
     "toc_rule" -> state.isLocalBook && state.isLocalTxt
     "charset" -> state.isLocalBook
     else -> true
@@ -106,6 +120,7 @@ internal fun isReadMenuActionApplicable(id: String, state: ReadBookUiState): Boo
  */
 internal fun readMenuActionScopeLabelRes(id: String): Int? = when (id) {
     "source_custom_button", "change_source", "refresh", "download" -> R.string.only_online_books
+    "source_login", "source_pay", "edit_source", "disable_source" -> R.string.only_online_books
     "toc_rule", "charset" -> R.string.only_local_books
     else -> null
 }
@@ -146,6 +161,26 @@ internal fun topBarActionButtonInfos(context: Context): List<ReadMenuButtonInfo>
         "charset",
         Icons.Default.Translate,
         context.getString(R.string.set_charset),
+    ),
+    ReadMenuButtonInfo(
+        "source_login",
+        Icons.AutoMirrored.Filled.Login,
+        context.getString(R.string.login),
+    ),
+    ReadMenuButtonInfo(
+        "source_pay",
+        Icons.Default.Payment,
+        context.getString(R.string.chapter_pay),
+    ),
+    ReadMenuButtonInfo(
+        "edit_source",
+        Icons.Default.Edit,
+        context.getString(R.string.edit_source),
+    ),
+    ReadMenuButtonInfo(
+        "disable_source",
+        Icons.Default.Block,
+        context.getString(R.string.disable_source),
     ),
 )
 
@@ -208,6 +243,11 @@ internal fun readMenuButtonInfos(context: Context): List<ReadMenuButtonInfo> = l
         "refresh_current",
         Icons.Default.Refresh,
         context.getString(R.string.menu_refresh_dur),
+    ),
+    ReadMenuButtonInfo(
+        "ai_chat",
+        Icons.AutoMirrored.Filled.Chat,
+        context.getString(R.string.ai_chat),
     ),
     ReadMenuButtonInfo(
         "ai_summary",
@@ -303,6 +343,18 @@ internal fun buildTopBarActionDefs(
         },
         def("charset") {
             onIntent(ReadBookIntent.ShowSheet(ReadBookSheet.Charset))
+        },
+        def("source_login") {
+            onIntent(ReadBookIntent.ShowLogin)
+        },
+        def("source_pay") {
+            onIntent(ReadBookIntent.PayAction)
+        },
+        def("edit_source") {
+            onIntent(ReadBookIntent.OpenSourceEdit)
+        },
+        def("disable_source") {
+            onIntent(ReadBookIntent.DisableSource)
         },
     ).associateBy { it.id }
 }
@@ -406,6 +458,9 @@ internal fun buildReadMenuActionDefs(
         },
         def("refresh_current") {
             onIntent(ReadBookIntent.RefreshCurrentChapter)
+        },
+        def("ai_chat") {
+            onIntent(ReadBookIntent.OpenAiChat)
         },
         def("ai_summary") {
             onIntent(ReadBookIntent.OpenChapterSummary)

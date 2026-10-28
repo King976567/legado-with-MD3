@@ -10,7 +10,7 @@ import io.legado.app.domain.model.readaloud.ReadAloudVoice
 import io.legado.app.domain.model.readaloud.SpeechPlanItem
 import io.legado.app.domain.model.readaloud.SpeechRoleType
 import io.legado.app.feature.reader.core.cast.CastMarkers
-import io.legado.app.feature.reader.core.readaloud.isUnspeakableReadAloudUnit
+import io.legado.app.feature.reader.core.readaloud.isBlankReadAloudUnit
 import io.legado.app.ui.config.readConfig.ReadConfig
 import org.koin.core.context.GlobalContext
 
@@ -112,7 +112,9 @@ object CastSpeechOverlay {
             val delta = part.start - item.segment.chapterPosition
             val spoken = part.text
             val regexVoice = part.voiceId?.let { id ->
-                voices[id] ?: narrator.also {
+                // 规则指定的音色没了：只有多角色朗读开着才退回旁白，
+                // 关着的时候连旁白都不该顶上来，这段就该按引擎默认读
+                voices[id] ?: narrator.takeIf { multiRole }.also {
                     AppLog.put("正则角色「${part.label}」的音色 $id 不在启用的音色表里，这段按原声读")
                 }
             }
@@ -233,20 +235,21 @@ object CastSpeechOverlay {
                 } else {
                     "；正则角色顶音色 $regexVoiced 段、吞字放音效 $regexMuted 段"
                 } +
-                    "；丢掉 $blankDropped 个不发声单元（空白/纯符号，无声占位）" +
+                    "；丢掉 $blankDropped 个不发声单元（整段只剩空白，无声占位）" +
                 "；$sample"
         )
         return kept
     }
 
     /**
-     * 丢掉「念不出东西」的朗读单元，返回（留下的单元，丢掉的个数）。
+     * 丢掉「一个字符都没有」的朗读单元，返回（留下的单元，丢掉的个数）。
      *
      * 这种单元送进引擎只会得到一段无声音频——`res/raw/silent_sound.mp3` 长 1224 毫秒
      * （17 帧），听感就是段与段之间、以及正则命中前凭空顿一下。正文里的空行、
      * 命中正好落在段首缩进之后，都会造出这种单元。
-     * 判据是 [isUnspeakableReadAloudUnit]（只挂着角色标记的段同样念不出东西），与朗读服务
-     * 跳过不发声段的口径同源：留在队列里会让「上一段/下一段」选中一个不会出声的单元。
+     * `——`、`……` 这类整段纯符号**不丢**：那是正文，原样交给引擎决定念法。
+     * 判据是 [isBlankReadAloudUnit]（只挂着角色标记的段同样没字符可念），与朗读单元集合同源；
+     * 留在队列里会让「上一段/下一段」选中一个不会出声的单元。
      * 单元身上挂的音效不丢：并给下一个单元（章末则并回最后一个）。
      */
     internal fun dropSilentUnits(
@@ -256,7 +259,7 @@ object CastSpeechOverlay {
         var blankSound = ""
         var dropped = 0
         items.forEach { item ->
-            if (item.segment.text.isUnspeakableReadAloudUnit()) {
+            if (item.segment.text.isBlankReadAloudUnit()) {
                 blankSound = RegexCastSplitter.mergeSound(blankSound, item.soundEffect)
                 dropped++
                 return@forEach
@@ -364,23 +367,33 @@ object CastSpeechOverlay {
             val own = markers[paragraphIndex]
             for ((offset, ch) in text.withIndex()) {
                 val isAnchor = tracker.feed(ch)
+                // 收口判据与 CastMarkers.CastQuoteTracker.feed 同规则：栈顶等这个闭号就收，
+                // 只作闭符号的字符在更下面那层等着也要一路弹过去。内层引号等不到自己的闭号
+                // （台词里混进的英文撇号）时不弹，这份镜像栈会永久卡住，之后的台词只能靠章末
+                // 兜底收口，范围就错了。
                 val top = stack.lastOrNull()
-                if (top != null && ch == top.close) {
-                    stack.removeAt(stack.size - 1)
-                    val located = top.marker
+                val closingAt = when {
+                    top != null && ch == top.close -> stack.size - 1
+                    ch in CastMarkers.CloseOnlyQuotes -> stack.indexOfLast { it.close == ch }
+                    else -> -1
+                }
+                if (closingAt >= 0) {
+                    while (stack.size - 1 > closingAt) stack.removeAt(stack.size - 1)
+                    val closing = stack.removeAt(stack.size - 1)
+                    val located = closing.marker
                     if (located != null) {
                         val (markerParagraph, markerIndex) = located
                         claimed[markerParagraph][markerIndex] = true
                         val marker = markers[markerParagraph][markerIndex]
                         spans += Span(
-                            start = top.at,
+                            start = closing.at,
                             // 闭引号算进台词里：整段划分会正好在闭引号处切开范围，
                             // 不含它就等于把句尾那个引号丢给下一个说话人
                             end = base + offset + 1,
                             name = marker.name,
                             pool = marker.voicePoolLabel,
-                            ordinal = top.ordinal,
-                            effect = effectsOfQuote[top.ordinal].orEmpty(),
+                            ordinal = closing.ordinal,
+                            effect = effectsOfQuote[closing.ordinal].orEmpty(),
                         )
                     }
                     continue
