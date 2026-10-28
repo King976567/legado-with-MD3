@@ -298,6 +298,14 @@ fun ThemeConfigScreen(
                             )
                         }
                     )
+                    SwitchSettingItem(
+                        title = stringResource(R.string.reader_shared_element),
+                        description = stringResource(R.string.reader_shared_element_summary),
+                        checked = appShell.readerSharedElementEnabled,
+                        onCheckedChange = {
+                            onIntent(ThemeConfigIntent.SetReaderSharedElementEnabled(it))
+                        }
+                    )
                     SliderSettingItem(
                         title = stringResource(R.string.font_scale),
                         valueLabel = {
@@ -412,6 +420,14 @@ fun ThemeConfigScreen(
                         entryValues = stringArrayResource(R.array.book_info_background_blur_values),
                         onValueChange = { value ->
                             updateTheme { it.copy(bookInfoDefaultCoverBackground = value) }
+                        }
+                    )
+                    SwitchSettingItem(
+                        title = stringResource(R.string.book_info_author_search_fallback),
+                        description = stringResource(R.string.book_info_author_search_fallback_summary),
+                        checked = theme.bookInfoAuthorSearchFallback,
+                        onCheckedChange = { value ->
+                            updateTheme { it.copy(bookInfoAuthorSearchFallback = value) }
                         }
                     )
                 }
