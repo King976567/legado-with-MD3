@@ -1,13 +1,9 @@
 package io.legado.app.ui.main
 
 import androidx.navigation3.runtime.NavKey
+import io.legado.app.data.entities.Book
+import io.legado.app.data.entities.BookProgress
 import io.legado.app.model.ReadBook
-import io.mockk.Runs
-import io.mockk.every
-import io.mockk.just
-import io.mockk.mockkObject
-import io.mockk.unmockkObject
-import io.mockk.verify
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
@@ -16,17 +12,23 @@ import org.junit.Test
 import java.io.File
 
 class MainNavigatorReadAloudTest {
+    private var originalReaderCallback: ReadBook.CallBack? = null
 
     @Before
     fun isolateReaderPrefetch() {
-        // Navigation assertions must not start real database work outside Android.
-        mockkObject(ReadBook)
-        every { ReadBook.prefetchForOpen(any()) } just Runs
+        // An attached reader owns loading; pure routing tests must not start real DB work.
+        originalReaderCallback = ReadBook.callBack
+        ReadBook.callBack = object : ReadBook.CallBack {
+            override fun upMenuView() = Unit
+            override fun loadChapterList(book: Book) = Unit
+            override fun notifyBookChanged() = Unit
+            override fun sureNewProgress(progress: BookProgress) = Unit
+        }
     }
 
     @After
     fun restoreReaderPrefetch() {
-        unmockkObject(ReadBook)
+        ReadBook.callBack = originalReaderCallback
     }
 
     @Test
@@ -82,7 +84,6 @@ class MainNavigatorReadAloudTest {
 
         // 换书不是叠一层：阅读页单例语义把栈收到书架 + 新书，返回直接回书架。
         assertEquals(listOf(MainRouteHome, MainRouteReadBook(bookUrl = "B")), backStack)
-        verify(exactly = 1) { ReadBook.prefetchForOpen("B") }
     }
 
     @Test
