@@ -18,6 +18,10 @@ data class ReaderTextStyle(
     val fontWeight: Int = 400,
     val italic: Boolean = false,
     val backgroundArgb: Int? = null,
+    /** 边框颜色：null = 不描边；粗细与圆角只在颜色非空时参与绘制。 */
+    val borderColorArgb: Int? = null,
+    val borderWidthPx: Float = 0f,
+    val borderRadiusPx: Float = 0f,
     val underline: ReaderUnderline? = null,
     val shadow: ReaderTextShadow? = null,
     val backgroundImage: ReaderTextBackgroundImage? = null,
@@ -273,6 +277,8 @@ sealed interface ReaderElement {
          * 位图不一致时 `fitCenter` 会在格内留白、把图片画小。
          */
         val inline: Boolean = false,
+        /** 行内图按整行高度命中，绘制仍使用 [bounds]；独立图默认命中自身。 */
+        val touchBounds: ReaderRect = bounds,
     ) : ReaderElement
 
     data class Review(
@@ -379,7 +385,9 @@ data class ReaderPage(
     val contentRightPx: Float = widthPx.toFloat(),
 ) {
     fun elementAt(x: Float, y: Float): ReaderElement? =
-        elements.firstOrNull { it.bounds.contains(x, y) }
+        elements.firstOrNull {
+            (if (it is ReaderElement.Image) it.touchBounds else it.bounds).contains(x, y)
+        }
 
     fun hasSameGeometryAs(other: ReaderPage): Boolean =
         id == other.id &&

@@ -65,6 +65,15 @@ jobs:
         run: |
           sed -i '/maven.aliyun.com/d' settings.gradle
           chmod +x gradlew
+      # Keep cold compilation out of the test execution budget. Every test class
+      # still runs in its own JVM, serially, with the existing 20-minute limit.
+      - name: Compile JVM test sources
+        timeout-minutes: 20
+        run: |
+          ./gradlew :app:compileAppDebugUnitTestKotlin \
+            --project-prop ksp.incremental=false \
+            --max-workers=2 --no-parallel --info \
+            --continue --no-daemon --no-configuration-cache
       - name: JVM tests
         id: tests
         timeout-minutes: 20

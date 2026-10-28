@@ -2027,11 +2027,7 @@ private fun androidx.compose.ui.graphics.drawscope.DrawScope.drawScrollPageConte
     } else data.textBackgroundBands
     // 对照旧 `TextLine.drawStyledBackgrounds`：先背景色、再背景图，与翻页模式同一顺序。
     visibleTextBackgroundBands.forEach { band ->
-        drawRect(
-            Color(band.colorArgb),
-            Offset(band.bounds.left, band.bounds.top),
-            Size(band.bounds.width, band.bounds.height),
-        )
+        drawBackgroundBand(band)
     }
     data.textBackgrounds.forEach { run ->
         ReaderTextBackgroundLoader.cached(run.image.source)?.let { bitmap ->
@@ -2256,10 +2252,13 @@ private fun SimulationPageStack(
             val path0 = paths.front
             val pathNext = paths.reveal
             val pathBack = paths.back
-            // 翻起页正面（挖掉折起的角）
-            clipPath(path0, ClipOp.Difference) {
-                drawPageSnapshot(baseBitmap, baseLayer, widthPx, heightPx)
-            }
+            // 旧 View 的 `ReadView.dispatchDraw` 先由子 View 画完一整页当前页，
+            // `pageDelegate.onDraw` 再在其上覆盖各个裁剪区域。折页路径由曲线和它的内接
+            // 折线（reveal/back 多边形）围成，两者之间有一圈数像素宽的月牙既不属于
+            // reveal 也不属于 back——旧 View 里它露出的是底下的当前页，所以看不出来。
+            // Compose 画布没有这层底，那块月牙会直接露出画布底色；有背景图时就是
+            // 折页中间一条对不上的异色带（"这页纸没粘住、漏了"）。
+            drawPageSnapshot(baseBitmap, baseLayer, widthPx, heightPx)
             // 折页下方露出的下一页
             clipPath(path0) {
                 clipPath(pathNext) {
@@ -2269,13 +2268,15 @@ private fun SimulationPageStack(
             }
             // 翻起页背面（镜像的当前页）+ 折缝阴影
             clipPath(path0) { clipPath(pathBack) {
+                // 纸背底色：对照旧 View `drawColor(背景图平均色)`，遮住下面的当前页，
+                // 让翻起的纸片是一张不透明的纸而不是透出正面内容。
                 drawRect(background)
                 // Canvas.drawBitmap() in the View implementation naturally kept sampling
                 // within the screenshot's bounds. A transformed GraphicsLayer otherwise
                 // samples beyond its recorded page surface as opaque black on some devices,
                 // producing a dark wedge between the two sides of a curl. Clip in source
-                // coordinates first so uncovered back-page pixels retain the mean background
-                // color drawn above, while the complete background image remains mirrored.
+                // coordinates first so uncovered back-page pixels keep the page background
+                // drawn above, while the complete page content remains mirrored.
                 withTransform({
                     transform(paths.mirror)
                     clipRect(0f, 0f, size.width, size.height)
@@ -2399,6 +2400,20 @@ private fun ReaderPage.isSnapshotSettled(
     }
     val badge = decoration.bookmarkBadge ?: return true
     return ReaderBookmarkBadgeRenderer.cachedResult(badge) != null
+}
+
+/**
+ * 把整页背景图铺满当前绘制区域。页面本体与仿真折页的纸背共用这一份绘制，
+ * 保证两处的铺满方式与透明度完全一致。
+ */
+private fun androidx.compose.ui.graphics.drawscope.DrawScope.drawPageBackgroundImage(
+    image: Drawable?,
+    alpha: Float,
+) {
+    image ?: return
+    image.bounds = android.graphics.Rect(0, 0, size.width.roundToInt(), size.height.roundToInt())
+    image.alpha = (alpha.coerceIn(0f, 1f) * 255).roundToInt()
+    image.draw(drawContext.canvas.nativeCanvas)
 }
 
 /** 有位图就用位图（一次 blit），否则退回快照层（display list 重放）。 */
@@ -2749,10 +2764,8 @@ private fun ReaderPageCanvas(
         // Read inside the page's RenderNode, so a resume invalidates the cached body itself.
         redrawSignal.value
         val native = drawContext.canvas.nativeCanvas
-        isolatedBackgroundImage?.takeIf { drawBackground }?.let { drawable ->
-            drawable.bounds = android.graphics.Rect(0, 0, size.width.roundToInt(), size.height.roundToInt())
-            drawable.alpha = (backgroundImageAlpha.coerceIn(0f, 1f) * 255).roundToInt()
-            drawable.draw(native)
+        isolatedBackgroundImage?.takeIf { drawBackground }?.let {
+            drawPageBackgroundImage(it, backgroundImageAlpha)
         }
         // 内容按旧 `ChapterProvider.visibleRect` 裁：背景色/背景图不裁（旧 View 里它们在
         // ContentTextView 之外）。但九宫格左右外扩与放大后的背景图天生超出内容框，裁剪框必须
@@ -2769,11 +2782,7 @@ private fun ReaderPageCanvas(
         // 对照旧 `TextLine.drawStyledBackgrounds`：先背景色、再背景图。色块是按行盒画的直边
         // 矩形，画在九宫格上面就会把气泡切出一截直边（旧版还直接不给带图的列铺色）。
         textBackgroundBands.forEach { band ->
-            drawRect(
-                Color(band.colorArgb),
-                Offset(band.bounds.left, band.bounds.top),
-                Size(band.bounds.width, band.bounds.height),
-            )
+            drawBackgroundBand(band)
         }
         // 快照读放在绘制期：异步补解完成后只重绘，不重组整页正文。
         textBackgroundRevision
@@ -3083,8 +3092,8 @@ internal fun shouldDrawReaderBookmarkBadge(
  * 高亮规则编辑页的预览共用这一份，预览才会和正文一模一样。
  *
  * 背景用的画笔不许开抗锯齿：九宫格九条边落在半像素上时，相邻两格各画一条半覆盖的边，
- * source-over 合成不出满覆盖，气泡上就留下一条透出页面背景的笔直「切割线」。关掉之后每
- * 个像素只被一格完整盖住。四周边缘的形状由图自身的 alpha 决定，与这条边的抗锯齿无关。
+ * source-over 合成不出满覆盖，气泡上就留下一条透出页面背景的笔直「切割线」。九宫格还要按
+ * 每格的目标范围裁剪，避免补缝用的外扩区域重复叠加半透明像素。四周形状由图自身的 alpha 决定。
  */
 internal fun drawTextBackground(
     canvas: android.graphics.Canvas,
@@ -3167,17 +3176,26 @@ private fun drawNineSliceBackground(
         ReaderRect(frame.left, frame.top, frame.right, frame.bottom),
         image,
     ).forEach { cell ->
-        canvas.drawBitmap(
-            bitmap,
-            android.graphics.Rect(cell.source.left, cell.source.top, cell.source.right, cell.source.bottom),
-            android.graphics.RectF(
-                cell.painted.left,
-                cell.painted.top,
-                cell.painted.right,
-                cell.painted.bottom,
-            ),
-            paint,
-        )
+        val saveCount = canvas.save()
+        try {
+            // 外扩只负责盖到切分边界，最终每个像素仍归一格所有；否则半透明图的接缝会叠深。
+            canvas.clipRect(
+                cell.destination.left, cell.destination.top, cell.destination.right, cell.destination.bottom,
+            )
+            canvas.drawBitmap(
+                bitmap,
+                android.graphics.Rect(cell.source.left, cell.source.top, cell.source.right, cell.source.bottom),
+                android.graphics.RectF(
+                    cell.painted.left,
+                    cell.painted.top,
+                    cell.painted.right,
+                    cell.painted.bottom,
+                ),
+                paint,
+            )
+        } finally {
+            canvas.restoreToCount(saveCount)
+        }
     }
 }
 

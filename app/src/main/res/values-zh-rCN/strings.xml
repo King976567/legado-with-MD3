@@ -34,6 +34,8 @@
     <string name="manual_contrast_value_label">手动值 [-1, 1]</string>
     <string name="manual_contrast_invalid">请输入 -1 到 1 之间的有效数字</string>
     <string name="predictive_back">预见性返回手势</string>
+    <string name="reader_shared_element">阅读界面共享元素动画</string>
+    <string name="reader_shared_element_summary">进入阅读界面时从封面展开，关闭后使用渐变过渡</string>
     <string name="predictive_back_summary">启用系统预见性返回手势</string>
     <string name="restart_to_apply">重启以应用</string>
     <string name="custom_theme">自定义主题</string>
@@ -927,6 +929,9 @@
     <string name="nine_slice_mode_vertical">垂直</string>
     <string name="preview_effect">预览效果</string>
     <string name="sample_text">示例文本</string>
+    <string name="highlight_border">边框</string>
+    <string name="highlight_border_width">边框粗细</string>
+    <string name="highlight_border_radius">边框圆角</string>
     <string name="highlight_match_typography">命中排版</string>
     <string name="highlight_match_typography_hint">下面这些调整只作用在正则命中的那一段文字上，命中之外的一个字都不动。</string>
     <string name="highlight_spacing_before">命中字距（前）</string>
@@ -1239,6 +1244,7 @@
     <string name="sort_by_respondTime">响应时间排序</string>
     <string name="respondTime">响应时间：%1$d ms</string>
     <string name="export_success">导出成功</string>
+    <string name="import_success">导入成功</string>
     <string name="path">路径</string>
     <string name="direct_link_upload_rule">直链上传规则</string>
     <string name="direct_link_upload_rule_summary">用于导出书源书单时生成直链 URL</string>
@@ -1458,6 +1464,9 @@
     <string name="jump_to_another_app">跳转其它应用</string>
     <string name="clear_webview_data">清除 WebView 数据</string>
     <string name="clear_webview_data_summary">清除内置浏览器所有数据</string>
+    <string name="block_source_browser">阻止书源打开内置浏览器</string>
+    <string name="block_source_browser_summary">开启后，书源无法通过 java.startBrowser 等接口弹出内置浏览器，等待网页结果的调用会直接报错</string>
+    <string name="block_source_browser_error">已阻止书源打开内置浏览器</string>
     <string name="source_tab_list">列表</string>
     <string name="source_tab_web_view">网页</string>
     <string name="layout_type">布局</string>
@@ -1700,6 +1709,20 @@
     <string name="theme_manage_import_package_summary">导入包含资源和封面图集的主题包</string>
     <string name="theme_manage_import_config">导入旧版主题配置</string>
     <string name="theme_manage_import_config_summary">从旧版 JSON 文件导入主题配置</string>
+    <string name="theme_list_manage">管理主题</string>
+    <string name="theme_list_manage_done">完成</string>
+    <string name="theme_list_selected_count">已选中 %1$d</string>
+    <string name="theme_list_search_count">搜索 %1$d 个背景</string>
+    <string name="theme_list_layout_grid">网格布局</string>
+    <string name="theme_list_layout_list">流式布局</string>
+    <string name="theme_list_add_theme">新建主题</string>
+    <string name="theme_list_import_as_new">新增导入</string>
+    <string name="theme_list_tab_bg">背景</string>
+    <string name="theme_list_title">阅读主题</string>
+    <string name="theme_list_locate_current">定位当前主题</string>
+    <string name="theme_list_back_to_top">回到顶部</string>
+    <string name="theme_list_back_to_bottom">回到底部</string>
+    <string name="theme_list_delete_confirm">确定要删除选中的 %1$d 个主题吗？</string>
     <string name="theme_manage_migrate_legacy">迁移旧版主题</string>
     <string name="theme_manage_migrate_legacy_summary">将已保存的 JSON 主题转换为新版主题格式</string>
     <string name="theme_manage_migrate_success">已迁移 %1$d 个旧版主题</string>
@@ -1738,6 +1761,9 @@
     <string name="book_info_follow_cover_color_summary">仅在显示背景封面时生效</string>
     <string name="book_info_network_cover_background">网络封面背景设置</string>
     <string name="book_info_default_cover_background">默认封面背景设置</string>
+    <string name="book_info_author_search_fallback">无关联规则时按作者搜索</string>
+    <string name="book_info_author_search_fallback_summary">书源未配置关联书籍（relatedBooks）规则时，用当前书源搜索作者名，把作者的其它作品显示为关联书籍</string>
+    <string name="book_other_works">作者其它作品</string>
     <string name="book_info_background_blur_off">关闭模糊封面</string>
     <string name="book_info_background_blur_on">开启模糊封面</string>
     <string name="book_info_background_blur_off_for_default">不显示背景封面</string>
@@ -1990,6 +2016,8 @@
     <string name="cover_show_shadow">显示字体阴影</string>
     <string name="cover_show_stroke">显示字体描边</string>
     <string name="default_color">使用默认字体颜色</string>
+    <string name="cover_restrict_ratio">限制封面比例</string>
+    <string name="cover_restrict_ratio_summary">开启时封面固定 5:7 显示；关闭后搜索、发现与书籍详情页封面按原图宽高比自适应</string>
     <string name="enable_slider_vibrator">滑动进度条时震动</string>
     <string name="use_new_toc_sheet">使用新版目录</string>
     <string name="no_toc_split_length_title">无规则匹配时章节分割字数</string>
@@ -3176,6 +3204,7 @@
     <string name="ai_cast_answer">AI 返回内容</string>
     <string name="ai_cast_request">发给 AI 的内容</string>
     <string name="ai_cast_request_hint">最近一次请求的系统提示词与用户 JSON，与模型收到的逐字一致。分配不准时展开这里，可以看到送给模型的正文与角色名。</string>
+    <string name="ai_cast_copy_request">复制</string>
     <string name="ai_cast_transcript_folded">前面 %1$d 字已折叠，只显示最新部分</string>
     <string name="ai_cast_thinking_pending">模型还没有回传思考内容。若整章结束仍为空，说明这个模型不回思考过程（或只回思考不给正文），分配照常进行。</string>
     <string name="cast_table_row_count">%1$d 章 · %2$d 句</string>
@@ -3384,6 +3413,7 @@
     <string name="cloud_tts_loading_voices">正在获取音色…</string>
     <string name="cloud_tts_no_matching_voice">没有匹配的音色</string>
     <string name="cloud_tts_selected">已选择</string>
+    <string name="cloud_tts_default_voice">使用该引擎的默认音色</string>
     <string name="cloud_tts_current_voice">当前音色</string>
     <string name="cloud_tts_refresh_catalog">刷新在线音色目录</string>
     <string name="cloud_tts_hide_manual_voice">隐藏手动输入</string>
@@ -3914,4 +3944,5 @@
     <string name="battery_optimization_dialog_title">后台保活与省电策略设置指引</string>
     <string name="battery_optimization_status_ignored">已开启无限制（点击可检查厂商后台策略）</string>
     <string name="battery_optimization_status_not_ignored">未开启无限制，后台可能被系统终止</string>
+    <string name="reader_paragraph_image_action_unsupported">此图片使用段落规则动作，当前版本尚不支持。</string>
 </resources>
