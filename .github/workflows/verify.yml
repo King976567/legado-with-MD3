@@ -42,6 +42,16 @@ jobs:
         run: |
           sed -i '/maven.aliyun.com/d' settings.gradle
 
+      # Separate cold compilation from the unchanged test execution budget.
+      - name: Compile JVM test sources
+        timeout-minutes: 20
+        run: |
+          chmod +x gradlew
+          ./gradlew :app:compileAppDebugUnitTestKotlin \
+            --project-prop ksp.incremental=false \
+            --max-workers=2 --no-parallel --info \
+            --continue --no-daemon --no-configuration-cache
+
       - name: JVM tests
         id: tests
         timeout-minutes: 20
