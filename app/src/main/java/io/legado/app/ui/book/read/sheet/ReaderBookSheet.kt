@@ -31,14 +31,11 @@ import androidx.compose.foundation.pager.rememberPagerState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.filled.Login
-import androidx.compose.material.icons.filled.Block
 import androidx.compose.material.icons.filled.BookmarkAdd
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Clear
 import androidx.compose.material.icons.filled.Download
 import androidx.compose.material.icons.filled.DownloadForOffline
-import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.ExpandMore
 import androidx.compose.material.icons.filled.FindReplace
 import androidx.compose.material.icons.filled.Groups
@@ -46,7 +43,6 @@ import androidx.compose.material.icons.filled.LocationOn
 import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.Numbers
-import androidx.compose.material.icons.filled.Payment
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.SelectAll
@@ -82,6 +78,7 @@ import io.legado.app.data.entities.BookSource
 import io.legado.app.data.entities.Bookmark
 import io.legado.app.help.book.isLocal
 import io.legado.app.help.book.isLocalTxt
+import io.legado.app.ui.book.read.ReadMenuSourceDropdown
 import io.legado.app.ui.book.toc.DownloadState
 import io.legado.app.ui.book.toc.TocBookmarkItemUi
 import io.legado.app.ui.book.toc.TocEffect
@@ -96,13 +93,11 @@ import io.legado.app.ui.widget.components.ChapterStatusIcons
 import io.legado.app.ui.widget.components.EmptyMessage
 import io.legado.app.ui.widget.components.FabMenuItem
 import io.legado.app.ui.widget.components.bookmark.BookmarkEditSheet
-import io.legado.app.ui.widget.components.button.series.SmallPlainButton
 import io.legado.app.ui.widget.components.card.NormalCard
 import io.legado.app.ui.widget.components.card.TextCard
 import io.legado.app.ui.widget.components.icon.AppIcon
 import io.legado.app.ui.widget.components.image.cover.CoilBookCover
 import io.legado.app.ui.widget.components.lazylist.FastScrollLazyColumn
-import io.legado.app.ui.widget.components.menuItem.MenuItemIcon
 import io.legado.app.ui.widget.components.menuItem.RoundDropdownMenu
 import io.legado.app.ui.widget.components.menuItem.RoundDropdownMenuItem
 import io.legado.app.ui.widget.components.modalBottomSheet.AppModalBottomSheet
@@ -144,6 +139,8 @@ fun ReaderBookSheetRoute(
     onOpenChapterUrl: () -> Unit = {},
     onToggleReadUrlInBrowser: () -> Unit = {},
     sourceActions: ReaderBookSourceActions? = null,
+    /** 当前章是否可付费；决定书源菜单里「章节付费」是否出现，与顶栏同一判定。 */
+    chapterPayable: Boolean = false,
     /**
      * 「本地目录规则」：只对本地 txt 书出现，由宿主导航到规则预览页；应用结果走书页结果通道
      * 回灌阅读页，规则保存后本面板会随 `bookRepository.flowBook` 自动刷新。
@@ -213,6 +210,7 @@ fun ReaderBookSheetRoute(
         onOpenChapterUrl = onOpenChapterUrl,
         onToggleReadUrlInBrowser = onToggleReadUrlInBrowser,
         sourceActions = sourceActions,
+        chapterPayable = chapterPayable,
     )
 }
 
@@ -236,6 +234,7 @@ private fun ReaderBookSheet(
     onOpenChapterUrl: () -> Unit = {},
     onToggleReadUrlInBrowser: () -> Unit = {},
     sourceActions: ReaderBookSourceActions? = null,
+    chapterPayable: Boolean = false,
 ) {
     val initialPage = initialTab.ordinal
     val pagerState = rememberPagerState(initialPage = initialPage) { ReaderBookSheetTab.entries.size }
@@ -270,6 +269,7 @@ private fun ReaderBookSheet(
                 onOpenChapterUrl = onOpenChapterUrl,
                 onToggleReadUrlInBrowser = onToggleReadUrlInBrowser,
                 sourceActions = sourceActions,
+                chapterPayable = chapterPayable,
             )
         }
         CardTabRow(
@@ -374,6 +374,7 @@ internal fun ReaderBookHeader(
     onOpenChapterUrl: (() -> Unit)? = null,
     onToggleReadUrlInBrowser: (() -> Unit)? = null,
     sourceActions: ReaderBookSourceActions? = null,
+    chapterPayable: Boolean = false,
 ) {
     val current = ((book?.durChapterIndex ?: -1) + 1).coerceAtLeast(0)
     val total = book?.totalChapterNum?.coerceAtLeast(0) ?: 0
@@ -451,11 +452,15 @@ internal fun ReaderBookHeader(
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis,
                     )
-                    ReaderBookSourceDropdown(
+                    ReadMenuSourceDropdown(
                         expanded = sourceMenuExpanded,
-                        onDismiss = { sourceMenuExpanded = false },
+                        onDismissRequest = { sourceMenuExpanded = false },
                         bookSource = bookSource,
-                        sourceActions = sourceActions,
+                        payVisible = chapterPayable,
+                        onLogin = sourceActions.onLogin,
+                        onPay = sourceActions.onPay,
+                        onEdit = sourceActions.onEdit,
+                        onDisable = sourceActions.onDisable,
                     )
                 }
             }
@@ -493,56 +498,6 @@ internal fun ReaderBookHeader(state: ReaderBookHeaderState) {
             totalChapterNum = state.chapterCount,
         ),
     )
-}
-
-@Composable
-private fun ReaderBookSourceDropdown(
-    expanded: Boolean,
-    onDismiss: () -> Unit,
-    bookSource: BookSource?,
-    sourceActions: ReaderBookSourceActions,
-) {
-    RoundDropdownMenu(
-        expanded = expanded,
-        onDismissRequest = onDismiss,
-    ) {
-        if (!bookSource?.loginUrl.isNullOrBlank()) {
-            RoundDropdownMenuItem(
-                leadingIcon = { MenuItemIcon(Icons.AutoMirrored.Filled.Login) },
-                text = stringResource(R.string.login),
-                onClick = {
-                    onDismiss()
-                    sourceActions.onLogin()
-                },
-            )
-        }
-        if (!bookSource?.getContentRule()?.payAction.isNullOrBlank()) {
-            RoundDropdownMenuItem(
-                leadingIcon = { MenuItemIcon(Icons.Default.Payment) },
-                text = stringResource(R.string.chapter_pay),
-                onClick = {
-                    onDismiss()
-                    sourceActions.onPay()
-                },
-            )
-        }
-        RoundDropdownMenuItem(
-            leadingIcon = { MenuItemIcon(Icons.Default.Edit) },
-            text = stringResource(R.string.edit_source),
-            onClick = {
-                onDismiss()
-                sourceActions.onEdit()
-            },
-        )
-        RoundDropdownMenuItem(
-            leadingIcon = { MenuItemIcon(Icons.Default.Block) },
-            text = stringResource(R.string.disable_source),
-            onClick = {
-                onDismiss()
-                sourceActions.onDisable()
-            },
-        )
-    }
 }
 
 @Composable
@@ -961,55 +916,53 @@ private fun ReaderSheetChapterItem(
             .fillMaxWidth()
             .padding(start = (item.tocLevel.coerceIn(0, 6) * 10).dp),
     ) {
-        Row(
-            modifier = Modifier.padding(start = 12.dp, end = 4.dp, top = 8.dp, bottom = 8.dp),
-            verticalAlignment = Alignment.CenterVertically,
+        Column(
+            modifier = Modifier.padding(start = 12.dp, end = 4.dp, top = 12.dp, bottom = 12.dp),
         ) {
-            Column(modifier = Modifier.weight(1f)) {
-                Row(
-                    modifier = Modifier.padding(bottom = 8.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                ) {
-                    if (item.isVip && !item.isPay) {
-                        AppIcon(
-                            imageVector = Icons.Default.Lock,
-                            contentDescription = stringResource(R.string.a11y_vip_locked),
-                            tint = LegadoTheme.colorScheme.error,
-                            modifier = Modifier
-                                .size(14.dp)
-                                .padding(end = 4.dp),
-                        )
-                    }
-                    AppText(
-                        text = item.title,
-                        style = LegadoTheme.typography.labelMediumEmphasized,
-                        color = contentColor,
-                        maxLines = 2,
-                        overflow = TextOverflow.Ellipsis,
+            // 尾部状态图标跟随标题行居中，而不是跟随「标题 + 附加信息」整列居中，
+            // 否则有 tag 时图标会落在两行之间，且没有 tag 时还会被标题行的底部留白顶偏。
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                if (item.isVip && !item.isPay) {
+                    AppIcon(
+                        imageVector = Icons.Default.Lock,
+                        contentDescription = stringResource(R.string.a11y_vip_locked),
+                        tint = LegadoTheme.colorScheme.error,
+                        modifier = Modifier
+                            .size(14.dp)
+                            .padding(end = 4.dp),
                     )
                 }
-                if (!item.tag.isNullOrBlank()) {
-                    AppText(
-                        text = item.tag,
-                        style = LegadoTheme.typography.labelSmall,
-                        color = contentColor.copy(alpha = 0.72f),
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
-                    )
-                }
+                AppText(
+                    text = item.title,
+                    modifier = Modifier.weight(1f),
+                    style = LegadoTheme.typography.labelMediumEmphasized,
+                    color = contentColor,
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis,
+                )
+                ChapterStatusIcons(
+                    item = item,
+                    iconSize = 14.dp,
+                    spacing = 3.dp,
+                    modifier = Modifier.padding(start = 4.dp),
+                )
+                ReaderSheetChapterStatus(
+                    item = item,
+                    showWordCount = showWordCount,
+                    enabled = !selectionMode,
+                    onDownloadClick = onDownloadClick,
+                )
             }
-            ChapterStatusIcons(
-                item = item,
-                iconSize = 14.dp,
-                spacing = 3.dp,
-                modifier = Modifier.padding(start = 4.dp),
-            )
-            ReaderSheetChapterStatus(
-                item = item,
-                showWordCount = showWordCount,
-                enabled = !selectionMode,
-                onDownloadClick = onDownloadClick,
-            )
+            if (!item.tag.isNullOrBlank()) {
+                AppText(
+                    text = item.tag,
+                    modifier = Modifier.padding(top = 2.dp),
+                    style = LegadoTheme.typography.labelSmall,
+                    color = contentColor.copy(alpha = 0.72f),
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+            }
         }
     }
 }
@@ -1054,18 +1007,46 @@ private fun ReaderSheetChapterStatus(
         item.downloadState == DownloadState.SUCCESS -> ReaderSheetStatusIcon(
             imageVector = Icons.Default.CheckCircle,
         )
-        item.downloadState == DownloadState.ERROR -> SmallPlainButton(
-            onClick = onDownloadClick,
+        item.downloadState == DownloadState.ERROR -> ReaderSheetStatusIconButton(
+            imageVector = Icons.Default.Refresh,
             enabled = enabled,
-            icon = Icons.Default.Refresh,
             contentDescription = stringResource(R.string.a11y_retry_chapter, item.title),
+            onClick = onDownloadClick,
         )
 
-        item.downloadState == DownloadState.NONE -> SmallPlainButton(
-            onClick = onDownloadClick,
+        item.downloadState == DownloadState.NONE -> ReaderSheetStatusIconButton(
+            imageVector = Icons.Outlined.DownloadForOffline,
             enabled = enabled,
-            icon = Icons.Outlined.DownloadForOffline,
             contentDescription = stringResource(R.string.download_chapter, item.title),
+            onClick = onDownloadClick,
+        )
+    }
+}
+
+/**
+ * 可点击的状态图标：与 [ReaderSheetStatusIcon] 占同一槽位（32dp 宽 × 16dp 高），
+ * 不再用 32dp 见方的按钮，避免下载/重试态把整行撑高、让上下留白看起来比别的大。
+ */
+@Composable
+private fun ReaderSheetStatusIconButton(
+    imageVector: ImageVector,
+    enabled: Boolean,
+    contentDescription: String,
+    onClick: () -> Unit,
+) {
+    Box(
+        modifier = Modifier
+            .size(width = 32.dp, height = 16.dp)
+            .clip(RoundedCornerShape(8.dp))
+            .clickable(enabled = enabled, onClick = onClick),
+        contentAlignment = Alignment.Center,
+    ) {
+        AppIcon(
+            imageVector = imageVector,
+            contentDescription = contentDescription,
+            tint = LegadoTheme.colorScheme.onSurfaceVariant
+                .copy(alpha = if (enabled) 1f else 0.38f),
+            modifier = Modifier.size(16.dp),
         )
     }
 }

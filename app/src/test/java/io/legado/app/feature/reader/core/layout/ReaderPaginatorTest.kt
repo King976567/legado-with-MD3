@@ -28,13 +28,13 @@ class ReaderPaginatorTest {
 
     /** 单行段落：内容区宽 40f、每字 20f，必定排成一行、占 20f 行高。 */
     private fun paragraph(text: String, position: Int = 0) = ReaderMeasuredParagraph(
-        text, text.map(Char::toString), List(text.length) { 20f }, style, position,
+        text, text.map(Char::toString), FloatArray(text.length) { 20f }, style, position,
     )
 
     @Test fun emphasisUnderlineStyleIsCarriedByEveryPublishedPage() {
         val emphasis = ReaderEmphasisUnderline(0xff123456.toInt(), 2f, 1f)
         val pages = ReaderPaginator.paginate(
-            listOf(ReaderMeasuredParagraph("字".repeat(6), List(6) { "字" }, List(6) { 20f }, style, 0)),
+            listOf(ReaderMeasuredParagraph("字".repeat(6), List(6) { "字" }, FloatArray(6) { 20f }, style, 0)),
             config.copy(emphasisUnderlineStyle = emphasis),
         )
 
@@ -97,6 +97,36 @@ class ReaderPaginatorTest {
         assertTrue(lines.flatten().all { it.bounds.right <= 40f })
     }
 
+    /**
+     * 英文按词换行时行首不能出现空格：宽度恰好落在词间空格上时，空格必须留在上一行
+     * 行尾，下一行仍从词首开始（否则每换行一次，第一个词前就多出一个空格）。
+     */
+    @Test fun englishWordWrapNeverStartsWithAWordSpace() {
+        val text = "It is a truth universally acknowledged, that a single man in possession"
+        val page = ReaderPaginator.paginateBlocks(
+            listOf(ReaderMeasuredBlock.InlineParagraph(
+                items = text.mapIndexed { index, char ->
+                    ReaderMeasuredInlineItem.Text(char.toString(), 10f, style, index)
+                },
+                indentCharacters = 0,
+                alignment = ReaderTextAlignment.START,
+                lineHeightPx = 20f,
+                baselineOffsetPx = 15f,
+                baseTextSizePx = 10f,
+            )),
+            config.copy(viewportWidthPx = 200, viewportHeightPx = 400, paddingBottomPx = 0f),
+        ).single()
+        val lines = page.elements.filterIsInstance<ReaderElement.Text>()
+            .groupBy { it.bounds.top }
+            .toSortedMap()
+            .values
+            .map { row -> row.minBy { it.bounds.left } }
+
+        assertTrue(lines.size >= 4)
+        lines.forEach { line -> assertFalse("行首多出空格：${line.value}", line.value.isBlank()) }
+        assertEquals(text, page.text)
+    }
+
     @Test fun htmlQuoteContinuesAcrossVisualLinesWhileBulletOnlyMarksTheFirstLine() {
         val items = List(7) { index ->
             ReaderMeasuredInlineItem.Text("字", 10f, style, index)
@@ -149,7 +179,7 @@ class ReaderPaginatorTest {
         )
         val page = ReaderPaginator.paginateBlocks(
             listOf(title("主", 1f), title("副", 0.5f), title("末", 0.5f),
-                ReaderMeasuredBlock.Paragraph(ReaderMeasuredParagraph("文", listOf("文"), listOf(10f), style, 0))),
+                ReaderMeasuredBlock.Paragraph(ReaderMeasuredParagraph("文", listOf("文"), floatArrayOf(10f), style, 0))),
             config.copy(
                 viewportHeightPx = 200,
                 titleParagraphSpacingPx = 4f,
@@ -192,8 +222,8 @@ class ReaderPaginatorTest {
     fun titleBottomSpacingCanMoveBodyToNextPageWithoutRepeatingTopSpacing() {
         val pages = ReaderPaginator.paginate(
             listOf(
-                ReaderMeasuredParagraph("题", listOf("题"), listOf(10f), style, 0, isTitle = true),
-                ReaderMeasuredParagraph("文", listOf("文"), listOf(10f), style, 0),
+                ReaderMeasuredParagraph("题", listOf("题"), floatArrayOf(10f), style, 0, isTitle = true),
+                ReaderMeasuredParagraph("文", listOf("文"), floatArrayOf(10f), style, 0),
             ),
             config.copy(titleTopSpacingPx = 5f, titleBottomSpacingPx = 10f),
         )
@@ -205,7 +235,7 @@ class ReaderPaginatorTest {
     @Test
     fun hiddenTitleDoesNotLeaveTitleSpacingBehind() {
         val page = ReaderPaginator.paginate(
-            listOf(ReaderMeasuredParagraph("文", listOf("文"), listOf(10f), style, 0)),
+            listOf(ReaderMeasuredParagraph("文", listOf("文"), floatArrayOf(10f), style, 0)),
             config.copy(titleTopSpacingPx = 50f, titleBottomSpacingPx = 50f),
         ).single()
         assertEquals(0f, page.elements.single().bounds.top, 0f)
@@ -215,7 +245,7 @@ class ReaderPaginatorTest {
     fun paginatesWithoutLosingChapterPositions() {
         val text = "甲乙丙丁戊己庚辛壬癸"
         val pages = ReaderPaginator.paginate(
-            listOf(ReaderMeasuredParagraph(text, text.map(Char::toString), List(text.length) { 10f }, style, 100)),
+            listOf(ReaderMeasuredParagraph(text, text.map(Char::toString), FloatArray(text.length) { 10f }, style, 100)),
             config,
         )
         val glyphs = pages.flatMap { it.elements }.filterIsInstance<ReaderElement.Text>()
@@ -231,8 +261,8 @@ class ReaderPaginatorTest {
         val second = "子丑寅卯"
         val pages = ReaderPaginator.paginate(
             listOf(
-                ReaderMeasuredParagraph(first, first.map(Char::toString), List(first.length) { 10f }, style, 0),
-                ReaderMeasuredParagraph(second, second.map(Char::toString), List(second.length) { 10f }, style, first.length + 1),
+                ReaderMeasuredParagraph(first, first.map(Char::toString), FloatArray(first.length) { 10f }, style, 0),
+                ReaderMeasuredParagraph(second, second.map(Char::toString), FloatArray(second.length) { 10f }, style, first.length + 1),
             ),
             config,
         )
@@ -246,7 +276,7 @@ class ReaderPaginatorTest {
     fun appliesIndentAndJustifiesNonFinalLine() {
         val text = "甲乙丙丁戊己"
         val page = ReaderPaginator.paginate(
-            listOf(ReaderMeasuredParagraph(text, text.map(Char::toString), List(text.length) { 10f }, style, 0, indentCharacters = 1, alignment = ReaderTextAlignment.JUSTIFY)),
+            listOf(ReaderMeasuredParagraph(text, text.map(Char::toString), FloatArray(text.length) { 10f }, style, 0, indentCharacters = 1, alignment = ReaderTextAlignment.JUSTIFY)),
             config.copy(viewportWidthPx = 45, viewportHeightPx = 100),
         ).single()
         val glyphs = page.elements.filterIsInstance<ReaderElement.Text>()
@@ -258,7 +288,7 @@ class ReaderPaginatorTest {
     fun keepsClosingPunctuationOffNextLineWhenPossible() {
         val text = "甲乙丙，丁"
         val page = ReaderPaginator.paginate(
-            listOf(ReaderMeasuredParagraph(text, text.map(Char::toString), List(text.length) { 10f }, style, 0)),
+            listOf(ReaderMeasuredParagraph(text, text.map(Char::toString), FloatArray(text.length) { 10f }, style, 0)),
             config.copy(viewportWidthPx = 30, viewportHeightPx = 100),
         ).single()
         val glyphs = page.elements.filterIsInstance<ReaderElement.Text>()
@@ -273,7 +303,7 @@ class ReaderPaginatorTest {
             listOf(
                 ReaderMeasuredBlock.Image("cover", 80f, 80f, chapterPosition = 0, pageBreakAfter = true),
                 ReaderMeasuredBlock.Paragraph(
-                    ReaderMeasuredParagraph("正文", listOf("正", "文"), listOf(10f, 10f), style, 1),
+                    ReaderMeasuredParagraph("正文", listOf("正", "文"), floatArrayOf(10f, 10f), style, 1),
                 ),
             ),
             config.copy(viewportWidthPx = 40, viewportHeightPx = 45),
@@ -290,7 +320,7 @@ class ReaderPaginatorTest {
         val pages = ReaderPaginator.paginateBlocks(
             listOf(
                 ReaderMeasuredBlock.Paragraph(
-                    ReaderMeasuredParagraph("甲乙丙丁", listOf("甲", "乙", "丙", "丁"), List(4) { 10f }, style, 0),
+                    ReaderMeasuredParagraph("甲乙丙丁", listOf("甲", "乙", "丙", "丁"), FloatArray(4) { 10f }, style, 0),
                 ),
                 ReaderMeasuredBlock.Rule(0xff000000.toInt(), widthPx = 2f, verticalPaddingPx = 10f),
             ),
@@ -712,7 +742,7 @@ class ReaderPaginatorTest {
         )
         val framedStyle = style.copy(backgroundImage = framed)
 
-        listOf(1f, 1.5f, 2.5f).forEach { multiplier ->
+        floatArrayOf(1f, 1.5f, 2.5f).forEach { multiplier ->
             val page = ReaderPaginator.paginateBlocks(
                 listOf(ReaderMeasuredBlock.InlineParagraph(
                     items = listOf(ReaderMeasuredInlineItem.Text("字", 10f, framedStyle, 0)),
@@ -897,6 +927,42 @@ class ReaderPaginatorTest {
     }
 
     /**
+     * 角色胶囊是行内项，正文整段可能被它顶到下一行。这时这一行只剩「一个字 + 胶囊」两个项、
+     * 唯一一道缝，两端对齐不许把整行剩余空隙砸在这道缝上——否则字贴行首、胶囊贴行尾。
+     * 字与字之间的缝照常拉伸，那一行的观感不变。
+     */
+    @Test
+    fun justifyNeverStretchesTheGapBesideACapsule() {
+        val page = ReaderPaginator.paginateBlocks(
+            listOf(ReaderMeasuredBlock.InlineParagraph(
+                items = listOf(
+                    ReaderMeasuredInlineItem.Text("甲", 10f, style, 0),
+                    ReaderMeasuredInlineItem.RoleCast(
+                        widthPx = 20f,
+                        heightPx = 20f,
+                        chapterPosition = 1,
+                        raw = "<<福>>",
+                        name = "福",
+                        voicePoolLabel = "",
+                        quoteOrdinal = 0,
+                    ),
+                    // 这一字宽到放不下，整项掉到下一行，第一行因此只剩两项
+                    ReaderMeasuredInlineItem.Text("乙", 80f, style, 2),
+                ),
+                indentCharacters = 0,
+                alignment = ReaderTextAlignment.JUSTIFY,
+                lineHeightPx = 20f,
+                baselineOffsetPx = 15f,
+                baseTextSizePx = 10f,
+            )),
+            config.copy(viewportWidthPx = 100, viewportHeightPx = 100, letterSpacingPx = 0f),
+        ).single()
+
+        val capsule = page.elements.filterIsInstance<ReaderElement.RoleCast>().single()
+        assertEquals(10f, capsule.bounds.left, 0.01f)
+    }
+
+    /**
      * 命中字距留出的那截空隙在命中段**外面**：内容没变，图就不许被拉长。
      * 两个共用同一张背景图的命中段之间隔着这截空隙时，run 必须在空隙处断成两个气泡，
      * 而不是把空隙吞进中间那一格。
@@ -1029,7 +1095,7 @@ class ReaderPaginatorTest {
             ReaderMeasuredParagraph(
                 index.toString(),
                 listOf(index.toString()),
-                listOf(20f),
+                floatArrayOf(20f),
                 style,
                 index
             )
@@ -1076,7 +1142,7 @@ class ReaderPaginatorTest {
     fun letterSpacedBackgroundRowStaysOneRunInsteadOfPerGlyph() {
         val bgStyle = style.copy(backgroundImage = ReaderTextBackgroundImage("bg.png", 1, 1f))
         val paragraph = ReaderMeasuredParagraph(
-            "甲乙丙", listOf("甲", "乙", "丙"), List(3) { 10f }, bgStyle, 0,
+            "甲乙丙", listOf("甲", "乙", "丙"), FloatArray(3) { 10f }, bgStyle, 0,
             letterSpacingPx = 2f,
         )
         val page = ReaderPaginator.paginate(listOf(paragraph), config).single()

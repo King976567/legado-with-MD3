@@ -1,17 +1,14 @@
 package io.legado.app.ui.main
-import io.legado.app.model.ReadBook
 
 import android.app.Activity
 import android.content.Intent
 import android.net.Uri
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
-import androidx.compose.animation.AnimatedContentTransitionScope
 import androidx.compose.animation.EnterTransition
 import androidx.compose.animation.ExitTransition
 import androidx.compose.animation.ExperimentalSharedTransitionApi
 import androidx.compose.animation.SharedTransitionScope
-import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
@@ -52,13 +49,14 @@ import io.legado.app.feature.reader.platform.ReaderPerfTrace
 import io.legado.app.model.AudioPlay
 import io.legado.app.model.Download
 import io.legado.app.model.ReadAloudSessionStore
+import io.legado.app.model.ReadBook
 import io.legado.app.model.SourceCallBack
 import io.legado.app.service.AudioPlayService
-import io.legado.app.service.BaseReadAloudService
 import io.legado.app.ui.about.AboutEffect
 import io.legado.app.ui.about.AboutScreen
 import io.legado.app.ui.about.AboutViewModel
 import io.legado.app.ui.ai.chat.AiChatRouteScreen
+import io.legado.app.ui.ai.chat.AiReadingContext
 import io.legado.app.ui.book.audio.AudioPlayEffect
 import io.legado.app.ui.book.audio.AudioPlayIntent
 import io.legado.app.ui.book.audio.AudioPlayScreenContent
@@ -194,53 +192,6 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import org.koin.androidx.compose.koinViewModel
 import org.koin.core.parameter.parametersOf
-
-/**
- * WebView 类页面（内置浏览器、订阅阅读）只做位移转场。
- *
- * WebView 是 AndroidView interop view：所在子树一旦被加上 graphicsLayer（fade 的 alpha、
- * scaleOut 的缩放），Compose 会把网页一并画进离屏 RenderNode
- * （`AndroidViewHolder.draw` → `AndroidComposeView.drawAndroidView`），Chromium 在这条绘制路径上
- * 不稳定，部分设备会表现为网页闪烁。`slideIntoContainer` / `slideOutOfContainer` 只改 layout
- * offset、不产生图层，所以这里保留默认的位移与时长，去掉 fade 与 scale。
- */
-private fun webViewEntryMetadata(predictiveBackEnabled: Boolean) = metadata {
-    put(NavDisplay.TransitionKey) {
-        slideIntoContainer(
-            towards = AnimatedContentTransitionScope.SlideDirection.Start,
-            animationSpec = tween(durationMillis = 480, easing = FastOutSlowInEasing),
-            initialOffset = { fullWidth -> fullWidth }
-        ) togetherWith slideOutOfContainer(
-            towards = AnimatedContentTransitionScope.SlideDirection.Start,
-            animationSpec = tween(durationMillis = 480, easing = FastOutSlowInEasing),
-            targetOffset = { fullWidth -> fullWidth / 4 }
-        )
-    }
-    put(NavDisplay.PopTransitionKey) {
-        slideIntoContainer(
-            towards = AnimatedContentTransitionScope.SlideDirection.Start,
-            animationSpec = tween(durationMillis = 480, easing = FastOutSlowInEasing),
-            initialOffset = { fullWidth -> -fullWidth / 4 }
-        ) togetherWith slideOutOfContainer(
-            towards = AnimatedContentTransitionScope.SlideDirection.Start,
-            animationSpec = tween(durationMillis = 480, easing = FastOutSlowInEasing),
-            targetOffset = { fullWidth -> fullWidth }
-        )
-    }
-    if (predictiveBackEnabled) {
-        put(NavDisplay.PredictivePopTransitionKey) { _ ->
-            slideIntoContainer(
-                towards = AnimatedContentTransitionScope.SlideDirection.Start,
-                animationSpec = tween(easing = FastOutSlowInEasing),
-                initialOffset = { fullWidth -> -fullWidth / 4 }
-            ) togetherWith slideOutOfContainer(
-                towards = AnimatedContentTransitionScope.SlideDirection.Start,
-                animationSpec = tween(easing = FastOutSlowInEasing),
-                targetOffset = { fullWidth -> fullWidth }
-            )
-        }
-    }
-}
 
 /** 全屏书页（阅读/漫画）走普通 nav3 场景：与文本阅读页同一段 600ms 交叉淡入淡出。 */
 private fun readerEntryMetadata(predictiveBackEnabled: Boolean) = metadata {
@@ -411,9 +362,7 @@ fun MainActivity.mainEntryProvider(
             onSaveSuccess = { closeBookPage(backStack, route) },
         )
     }
-    entry<MainRouteWebView>(
-        metadata = webViewEntryMetadata(configuration.appShell.predictiveBackEnabled)
-    ) { route ->
+    entry<MainRouteWebView> { route ->
         val viewModel = koinViewModel<WebViewModel>(
             key = "WebView:${route.url}:${route.sourceOrigin}:${route.sourceVerificationEnable}",
         )
@@ -493,7 +442,11 @@ fun MainActivity.mainEntryProvider(
                         )
                     }
                     this@mainEntryProvider.finish()
-                } else onNavigateBack()
+                } else closeBookPage(
+                    backStack,
+                    route,
+                    savedSourceUrl?.let { BookPageResult.SourceEdited(it) },
+                )
             },
             onLogin = {
                 onNavigateToRoute(MainRouteSourceLogin(SourceLoginType.BookSource, it))
@@ -564,7 +517,7 @@ fun MainActivity.mainEntryProvider(
                 onNavigateToRoute(MainRouteSettings)
             },
             onNavigateToChat = {
-                onNavigateToRoute(MainRouteAiChat)
+                onNavigateToRoute(MainRouteAiChat())
             },
             onNavigateToSearch = { key ->
                 onNavigateToRoute(
@@ -790,8 +743,20 @@ fun MainActivity.mainEntryProvider(
         )
     }
 
-    entry<MainRouteAiChat> {
+    entry<MainRouteAiChat> { route ->
+        val readingContext = remember(route) {
+            route.bookUrl?.takeIf { it.isNotBlank() }?.let { bookUrl ->
+                AiReadingContext(
+                    bookUrl = bookUrl,
+                    bookName = route.bookName.orEmpty(),
+                    bookAuthor = route.bookAuthor.orEmpty(),
+                    chapterIndex = route.chapterIndex,
+                    chapterTitle = route.chapterTitle.orEmpty()
+                )
+            }
+        }
         AiChatRouteScreen(
+            readingContext = readingContext,
             onBackClick = { onNavigateBack() },
             onOpenBookInfo = { book ->
                 onNavigateToRoute(
@@ -952,6 +917,9 @@ fun MainActivity.mainEntryProvider(
                         ReadBookIntent.TocRegexResult(result.rule)
                     )
 
+                    is BookPageResult.SourceEdited -> readBookViewModel.onIntent(
+                        ReadBookIntent.SourceEditResult(result.sourceUrl)
+                    )
                     BookPageResult.RulesClosed -> readBookViewModel.onIntent(ReadBookIntent.ReplaceRuleResult)
                     else -> Unit
                 }
@@ -1001,7 +969,9 @@ fun MainActivity.mainEntryProvider(
                 readerSessionViewModel = readerSessionViewModel,
                 host = controller,
                 controller = controller,
-                sharedTransitionScope = sharedTransitionScope,
+                sharedTransitionScope = sharedTransitionScope.takeIf {
+                    configuration.appShell.readerSharedElementEnabled
+                },
                 animatedVisibilityScope = LocalNavAnimatedContentScope.current,
                 sharedCoverKey = route.sharedCoverKey,
                 isTopRoute = (backStack.lastOrNull() as? MainRouteReadBook)?.let {
@@ -1039,6 +1009,17 @@ fun MainActivity.mainEntryProvider(
                 onOpenVoiceCasting = { bookUrl ->
                     onNavigateToRoute(MainRouteBookVoiceCasting(bookUrl))
                 },
+                onOpenAiChat = { bookUrl, bookName, bookAuthor, chapterIndex, chapterTitle ->
+                    onNavigateToRoute(
+                        MainRouteAiChat(
+                            bookUrl = bookUrl,
+                            bookName = bookName,
+                            bookAuthor = bookAuthor,
+                            chapterIndex = chapterIndex,
+                            chapterTitle = chapterTitle,
+                        )
+                    )
+                },
                 onOpenReadAloudSubPage = { page ->
                     onNavigateToRoute(page.toMainRoute())
                 },
@@ -1047,6 +1028,9 @@ fun MainActivity.mainEntryProvider(
                 },
                 onOpenTtsCache = {
                     onNavigateToRoute(MainRouteTtsCache)
+                },
+                onOpenSourceEdit = { sourceUrl ->
+                    onNavigateToRoute(MainRouteBookSourceEdit(sourceUrl))
                 },
                 onNavigateBack = {
                     MainNavigator.navigateBack(
@@ -1145,7 +1129,9 @@ fun MainActivity.mainEntryProvider(
             viewModel = mangaViewModel,
             onOpenToc = { bookUrl, page -> onNavigateToRoute(MainRouteToc(bookUrl, page)) },
             restoreSystemBarsVisible = configuration.appShell.showStatusBar,
-            sharedTransitionScope = sharedTransitionScope,
+            sharedTransitionScope = sharedTransitionScope.takeIf {
+                configuration.appShell.readerSharedElementEnabled
+            },
             animatedVisibilityScope = LocalNavAnimatedContentScope.current,
             sharedCoverKey = route.sharedCoverKey,
             isTopRoute = backStack.lastOrNull() == route,
@@ -1293,9 +1279,8 @@ fun MainActivity.mainEntryProvider(
         )
     }
 
-    entry<MainRouteRssRead>(
-        metadata = webViewEntryMetadata(configuration.appShell.predictiveBackEnabled)
-    ) { route ->
+    // 与内置浏览器一致：不覆盖宿主转场，交由 NavDisplay 的全局 transitionSpec 结算。
+    entry<MainRouteRssRead> { route ->
         RssReadRouteScreen(
             title = route.title,
             origin = route.origin,

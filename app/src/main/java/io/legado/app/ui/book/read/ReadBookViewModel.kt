@@ -75,6 +75,7 @@ import io.legado.app.model.activeReadAloudProgress
 import io.legado.app.model.analyzeRule.AnalyzeRule
 import io.legado.app.model.analyzeRule.AnalyzeRule.Companion.setChapter
 import io.legado.app.model.analyzeRule.AnalyzeRule.Companion.setCoroutineContext
+import io.legado.app.model.reader.isPayable
 import io.legado.app.model.translation.TranslationChapterStatus
 import io.legado.app.service.BaseReadAloudService
 import io.legado.app.ui.book.read.sheet.ReaderBookSheetTab
@@ -200,7 +201,7 @@ class ReadBookViewModel(
         val book = ReadBook.book ?: return
         closeReadMenu()
         if (readSettingsRepository.currentSettings.useNewTocSheet) {
-            _uiState.update { it.copy(activeSheet = ReadBookSheet.BookNavigation(tab)) }
+            _uiState.update { it.withSheet(ReadBookSheet.BookNavigation(tab)) }
         } else {
             _effects.tryEmit(fallbackEffect(book))
         }
@@ -238,11 +239,8 @@ class ReadBookViewModel(
         highlightRuleRepository = highlightRuleRepository,
         saveMarkingUseCase = saveMarkingUseCase,
         host = object : MarkingDelegate.Host {
-            override val activeSheet: ReadBookSheet?
-                get() = _uiState.value.activeSheet
-
             override fun setActiveSheet(sheet: ReadBookSheet?) {
-                _uiState.update { it.copy(activeSheet = sheet) }
+                _uiState.update { it.withSheet(sheet) }
             }
 
             override fun reloadCurrentChapter() {
@@ -287,7 +285,7 @@ class ReadBookViewModel(
         override val chapterName: String get() = _uiState.value.chapterName
 
         override fun setActiveSheet(sheet: ReadBookSheet?) {
-            _uiState.update { it.copy(activeSheet = sheet) }
+            _uiState.update { it.withSheet(sheet) }
         }
 
         override fun closeReadMenu() {
@@ -378,7 +376,7 @@ class ReadBookViewModel(
         host = object : ReadContentEditDelegate.Host {
             override val currentCanvasPage: ReaderPageContext? get() = composePageContext
             override fun setActiveSheet(sheet: ReadBookSheet?) {
-                _uiState.update { it.copy(activeSheet = sheet) }
+                _uiState.update { it.withSheet(sheet) }
             }
 
             override suspend fun findChapter(bookUrl: String, chapterIndex: Int): BookChapter? = bookRepository.getChapter(bookUrl, chapterIndex)
@@ -428,7 +426,7 @@ class ReadBookViewModel(
             override val currentCanvasPage: ReaderPageContext? get() = composePageContext
 
             override fun setActiveSheet(sheet: ReadBookSheet?) = _uiState.update {
-                it.copy(menuState = ReadBookMenuState(), activeSheet = sheet)
+                it.copy(menuState = ReadBookMenuState()).withSheet(sheet)
             }
 
             override fun emitEffect(effect: ReadBookEffect) { _effects.tryEmit(effect) }
@@ -803,30 +801,17 @@ class ReadBookViewModel(
                 it.copy(menuState = ReadBookMenuState())
             }
 
-            is ReadBookIntent.OpenReadMenuRoute -> _uiState.update {
-                val currentStack = it.menuState.routeStack
-                val nextStack = if (currentStack.lastOrNull() == intent.route) {
-                    currentStack
-                } else {
-                    (currentStack + intent.route).toImmutableList()
-                }
-                it.copy(
-                    menuState = it.menuState.copy(
-                        visible = true,
-                        routeStack = nextStack,
-                    ),
-                )
+            is ReadBookIntent.SwitchReadMenuRoute -> _uiState.update {
+                it.withMenuRoute(intent.route, replaceTop = true)
             }
 
-            is ReadBookIntent.ReadMenuBack -> _uiState.update {
-                if (it.menuState.canNavigateBack) {
-                    readBookStyleConfigRepository.save()
-                    val nextStack = it.menuState.routeStack.dropLast(1).toImmutableList()
-                    it.copy(menuState = it.menuState.copy(routeStack = nextStack))
-                } else {
-                    readBookStyleConfigRepository.save()
-                    it.copy(menuState = ReadBookMenuState())
-                }
+            is ReadBookIntent.OpenReadMenuRoute -> _uiState.update {
+                it.withMenuRoute(intent.route)
+            }
+
+            is ReadBookIntent.ReadMenuBack -> {
+                readBookStyleConfigRepository.save()
+                _uiState.update { it.withMenuBack() }
             }
 
             is ReadBookIntent.OpenSearch -> {
@@ -926,15 +911,14 @@ class ReadBookViewModel(
             is ReadBookIntent.MoveReplaceRule ->
                 replaceRuleDelegate.move(intent.draggedId, intent.anchorId, intent.afterAnchor)
             is ReadBookIntent.DisableEffectiveReplace -> replaceRuleDelegate.disable(intent.rule)
-            ReadBookIntent.DisableChineseConverter -> {
-                configUpdateDelegate.handle(ConfigUpdate.ChineseConverterType(0))
-            }
+            ReadBookIntent.DisableChineseConverter -> configUpdateDelegate.handle(ConfigUpdate.ChineseConverterType(0))
             ReadBookIntent.DisableReSegment -> {
                 ReadBook.book?.setReSegment(false)
                 ReadBook.loadContent(false)
                 _uiState.update { it.copy(reSegment = false) }
             }
             is ReadBookIntent.ToggleTranslation -> toggleTranslation()
+            ReadBookIntent.OpenAiChat -> aiDelegate.openAiChat(_effects::tryEmit)
             is ReadBookIntent.OpenChapterSummary -> aiDelegate.openChapterSummary()
             is ReadBookIntent.OpenAiCurrentChapterRewrite -> aiDelegate.openAiCurrentChapterRewrite()
             is ReadBookIntent.RetryChapterSummary -> aiDelegate.retryChapterSummary()
@@ -979,7 +963,17 @@ class ReadBookViewModel(
                 ReadBook.saveReadingAnchorBeforeChapterJump(intent.index, intent.chapterPos)
                 openChapter(intent.index, intent.chapterPos)
             }
-            is ReadBookIntent.SourceEditResult -> upBookSource()
+            is ReadBookIntent.SourceEditResult -> {
+                upBookSource()
+                _uiState.update { state ->
+                    state.copy(pendingEditedSource = intent.sourceUrl.takeIf {
+                        state.findSheet<ReadBookSheet.ChangeBookSource>() != null
+                    })
+                }
+            }
+            is ReadBookIntent.SourceEditHandled -> _uiState.update {
+                if (it.pendingEditedSource == intent.sourceUrl) it.copy(pendingEditedSource = null) else it
+            }
             is ReadBookIntent.ReplaceRuleResult -> replaceRuleDelegate.rulesChanged()
             is ReadBookIntent.BookInfoResult -> {
                 if (intent.bookDeleted) {
@@ -990,8 +984,7 @@ class ReadBookViewModel(
             }
             is ReadBookIntent.FontFolderSelected -> {
                 setFontFolder(intent.uri.toString())
-                _uiState.update { it.copy(activeSheet = null) }
-                _uiState.update { it.copy(activeSheet = ReadBookSheet.FontSelect) }
+                _uiState.update { it.withSheet(ReadBookSheet.FontSelect) }
             }
             is ReadBookIntent.SureNewProgress -> ReadBook.setProgress(intent.progress)
             is ReadBookIntent.SureSyncProgress -> ReadBook.setProgress(intent.progress)
@@ -1009,6 +1002,8 @@ class ReadBookViewModel(
                 }
                 _effects.tryEmit(ReadBookEffect.SetBrightness(intent.value))
             }
+
+            is ReadBookIntent.SetThemeGridColumns -> styleDelegate.setThemeGridColumns(intent.columns)
 
             is ReadBookIntent.ToggleBrightnessAuto -> {
                 _uiState.update { it.copy(menuConfig = it.menuConfig.copy(brightnessAuto = intent.auto)) }
@@ -1030,33 +1025,26 @@ class ReadBookViewModel(
             is ReadBookIntent.ShowSheet -> {
                 if (intent.sheet is ReadBookSheet.HighlightRuleConfig) {
                     highlightRuleDelegate.load()
-                    _uiState.update { it.copy(activeSheet = intent.sheet) }
+                    _uiState.update { it.withSheet(intent.sheet) }
                 } else if (
                     intent.sheet is ReadBookSheet.ContentProcesses ||
                     intent.sheet is ReadBookSheet.TextProcessing
                 ) {
-                    _uiState.update { it.copy(activeSheet = intent.sheet) }
+                    _uiState.update { it.withSheet(intent.sheet) }
                     contentProcessDelegate.load()
                 } else if (intent.sheet is ReadBookSheet.AiRewritePresetConfig) {
                     aiDelegate.openAiRewritePresetConfig()
                 } else {
-                    _uiState.update { it.copy(activeSheet = intent.sheet) }
+                    _uiState.update { it.withSheet(intent.sheet) }
                 }
             }
-            is ReadBookIntent.DismissSheet -> {
-                aiDelegate.onSheetDismissed(_uiState.value.activeSheet)
-                when (_uiState.value.activeSheet) {
-                    is ReadBookSheet.HighlightRuleConfig -> highlightRuleDelegate.onSheetDismissed()
-                    is ReadBookSheet.Marking -> markingDelegate.onSheetDismissed()
-                    is ReadBookSheet.ContentEdit -> contentEditDelegate.onSheetDismissed()
-                    is ReadBookSheet.ContentProcesses,
-                    is ReadBookSheet.TextProcessing -> contentProcessDelegate.onSheetDismissed()
-                    else -> Unit
-                }
-                _uiState.update { it.copy(activeSheet = null) }
+
+            is ReadBookIntent.DismissSheetIfTop -> {
+                if (_uiState.value.activeSheet == intent.sheet) onIntent(ReadBookIntent.DismissSheet)
             }
+            is ReadBookIntent.DismissSheet -> dismissActiveSheet()
             is ReadBookIntent.SetActiveSheet -> _uiState.update {
-                it.copy(activeSheet = intent.sheet)
+                it.withSheet(intent.sheet)
             }
             is ReadBookIntent.ShowDialog -> _uiState.update { it.copy(activeDialog = intent.dialog) }
             is ReadBookIntent.ResolveReadRecordAlias ->
@@ -1163,7 +1151,7 @@ class ReadBookViewModel(
 
             is ReadBookIntent.MenuChangeSource -> handleChangeSource()
             is ReadBookIntent.MenuBookChangeSource -> {
-                _uiState.update { it.copy(activeSheet = ReadBookSheet.ChangeBookSource) }
+                _uiState.update { it.withSheet(ReadBookSheet.ChangeBookSource) }
             }
             is ReadBookIntent.MenuChapterChangeSource -> handleChapterChangeSource()
             is ReadBookIntent.MenuSettingReplace -> {
@@ -1446,7 +1434,7 @@ class ReadBookViewModel(
 
             is ReadBookIntent.ColorSelected -> styleDelegate.colorSelected(intent.dialogId, intent.color)
             is ReadBookIntent.ShowPageAnimConfig -> {
-                _uiState.update { it.copy(activeSheet = ReadBookSheet.PageAnim) }
+                _uiState.update { it.withSheet(ReadBookSheet.PageAnim) }
             }
 
             is ReadBookIntent.OpenReplaceEditor -> _effects.tryEmit(
@@ -1467,6 +1455,9 @@ class ReadBookViewModel(
             is ReadBookIntent.OpenReadStyleImport -> {
                 _effects.tryEmit(ReadBookEffect.OpenReadStyleImport)
             }
+            is ReadBookIntent.OpenReadStyleImportAsNew -> {
+                _effects.tryEmit(ReadBookEffect.OpenReadStyleImportAsNew)
+            }
             is ReadBookIntent.OpenReadStyleExport -> {
                 _effects.tryEmit(
                     ReadBookEffect.OpenReadStyleExport(
@@ -1484,11 +1475,20 @@ class ReadBookViewModel(
             is ReadBookIntent.ClearBookmarkBadgeImage ->
                 bookmarkBadgeDelegate.clearBadgeImage()
             is ReadBookIntent.ReadStyleConfigImportSelected -> styleDelegate.importConfig(intent.uri)
+            is ReadBookIntent.ReadStyleConfigImportAsNewSelected -> styleDelegate.importStylesAsNew(intent.uri)
             is ReadBookIntent.ReadStyleConfigExportSelected -> styleDelegate.exportConfig(intent.uri)
+            is ReadBookIntent.ReadStyleConfigsExportSelected ->
+                styleDelegate.exportStylesAt(intent.uri, intent.indices)
+            is ReadBookIntent.ExportReadStyleConfigs -> styleDelegate.requestExportStyles(intent.indices)
+            is ReadBookIntent.ShareReadStyleConfigs -> styleDelegate.shareStyles(intent.indices)
             is ReadBookIntent.SaveReadStyleConfig -> styleDelegate.saveCurrentStyle()
             is ReadBookIntent.AddReadStyleConfig -> styleDelegate.addStyle()
-            is ReadBookIntent.DeleteCurrentReadStyleConfig -> styleDelegate.deleteCurrentStyle()
+            is ReadBookIntent.DeleteCurrentReadStyleConfig ->
+                if (styleDelegate.deleteCurrentStyle()) dismissActiveSheet()
             is ReadBookIntent.ApplyPresetTheme -> styleDelegate.applyPresetTheme(intent.presetIndex)
+            is ReadBookIntent.MoveReadStyleConfig -> styleDelegate.moveStyle(intent.from, intent.to)
+            is ReadBookIntent.DeleteReadStyleConfigs -> styleDelegate.deleteStylesAt(intent.indices)
+            is ReadBookIntent.MoveReadStylesToEdge -> styleDelegate.moveStylesToEdge(intent.indices, intent.toTop)
             is ReadBookIntent.OpenBgTextConfig -> styleDelegate.openBgTextConfig(intent.index)
 
             is ReadBookIntent.ToggleDayNight -> styleDelegate.toggleDayNight()
@@ -1569,7 +1569,7 @@ class ReadBookViewModel(
             }
 
             is ReadBookIntent.TextActionDict -> {
-                _uiState.update { it.copy(activeSheet = ReadBookSheet.Dict(intent.text)) }
+                _uiState.update { it.withSheet(ReadBookSheet.Dict(intent.text)) }
             }
 
             is ReadBookIntent.OpenAiTextClean -> {
@@ -1721,14 +1721,12 @@ class ReadBookViewModel(
     private fun handleChangeSource() {
         viewModelScope.launch {
             if (readSettingsRepository.currentSettings.defaultSourceChangeAll) {
-                _uiState.update { it.copy(activeSheet = ReadBookSheet.ChangeBookSource) }
+                _uiState.update { it.withSheet(ReadBookSheet.ChangeBookSource) }
             } else {
                 val chapter = currentChapter() ?: return@launch
                 _uiState.update {
-                    it.copy(
-                        activeSheet = ReadBookSheet.ChangeChapterSource(
-                            chapter.index, chapter.title
-                        )
+                    it.withSheet(
+                        ReadBookSheet.ChangeChapterSource(chapter.index, chapter.title)
                     )
                 }
             }
@@ -1739,10 +1737,8 @@ class ReadBookViewModel(
         viewModelScope.launch {
             val chapter = currentChapter() ?: return@launch
             _uiState.update {
-                it.copy(
-                    activeSheet = ReadBookSheet.ChangeChapterSource(
-                        chapter.index, chapter.title
-                    )
+                it.withSheet(
+                    ReadBookSheet.ChangeChapterSource(chapter.index, chapter.title)
                 )
             }
         }
@@ -1902,6 +1898,8 @@ class ReadBookViewModel(
                 previous = preferences
                 _readPreferences.value = preferences
                 refreshFromReadBook()
+                // 网格列数等阅读设置变化也须同步样式投影。
+                _uiState.update { it.copy(styleConfig = buildStyleConfig()) }
                 if (!preferences.hasMenuClickArea()) {
                     readSettingsRepository.setClickAction(PreferKey.clickActionMC, 0)
                 }
@@ -1962,6 +1960,7 @@ class ReadBookViewModel(
             pageAnimEInk = actualConfig.getPageAnimEInk(),
             pageAnimSpeed = actualConfig.getPageAnimSpeed(),
             shareLayout = config.shareLayout,
+            gridColumns = readSettingsRepository.currentSettings.themeGridColumns,
             menuBgColorDay = dur.menuBgColor(isNight = false),
             menuBgColorNight = dur.menuBgColor(isNight = true),
             menuAccentColorDay = dur.menuAccentColor(isNight = false),
@@ -2086,6 +2085,7 @@ class ReadBookViewModel(
             chapterName = chapterInput?.displayTitle ?: "",
             chapterUrl = chapterInput?.chapter?.url ?: "",
             chapterSize = ReadBook.chapterSize,
+            chapterPayable = chapterInput?.isPayable == true,
             durChapterIndex = ReadBook.durChapterIndex,
             durChapterPos = ReadBook.durChapterPos,
             isLocalBook = ReadBook.isLocalBook,
@@ -2460,14 +2460,7 @@ class ReadBookViewModel(
 
     private fun openReadMenuRoute(route: ReadBookMenuRoute) {
         _uiState.update {
-            it.copy(
-                menuState = ReadBookMenuState(
-                    visible = true,
-                    routeStack = kotlinx.collections.immutable.persistentListOf(
-                        ReadBookMenuRoute.Main,
-                        route,
-                    ),
-                ),
+            it.withMenuRoute(route, resetStack = true).copy(
                 readAloudTtsTimer = if (
                     route == ReadBookMenuRoute.ReadAloud && BaseReadAloudService.isRun
                 ) {
@@ -2666,6 +2659,20 @@ class ReadBookViewModel(
         } else {
             execute { loadDelegate.initBook(book) }
         }
+    }
+
+    /** 关闭浮层前通知各业务域，再恢复被编辑面板收起的菜单。 */
+    private fun dismissActiveSheet() {
+        aiDelegate.onSheetDismissed(_uiState.value.activeSheet)
+        when (_uiState.value.activeSheet) {
+            is ReadBookSheet.HighlightRuleConfig -> highlightRuleDelegate.onSheetDismissed()
+            is ReadBookSheet.Marking -> markingDelegate.onSheetDismissed()
+            is ReadBookSheet.ContentEdit -> contentEditDelegate.onSheetDismissed()
+            is ReadBookSheet.ContentProcesses,
+            is ReadBookSheet.TextProcessing -> contentProcessDelegate.onSheetDismissed()
+            else -> Unit
+        }
+        _uiState.update { it.withDismissedSheet() }
     }
 
     private fun exitSearch() {

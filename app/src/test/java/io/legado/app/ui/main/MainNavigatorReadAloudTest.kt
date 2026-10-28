@@ -1,12 +1,35 @@
 package io.legado.app.ui.main
 
 import androidx.navigation3.runtime.NavKey
+import io.legado.app.data.entities.Book
+import io.legado.app.data.entities.BookProgress
+import io.legado.app.model.ReadBook
+import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
+import org.junit.Before
 import org.junit.Test
 import java.io.File
 
 class MainNavigatorReadAloudTest {
+    private var originalReaderCallback: ReadBook.CallBack? = null
+
+    @Before
+    fun isolateReaderPrefetch() {
+        // An attached reader owns loading; pure routing tests must not start real DB work.
+        originalReaderCallback = ReadBook.callBack
+        ReadBook.callBack = object : ReadBook.CallBack {
+            override fun upMenuView() = Unit
+            override fun loadChapterList(book: Book) = Unit
+            override fun notifyBookChanged() = Unit
+            override fun sureNewProgress(progress: BookProgress) = Unit
+        }
+    }
+
+    @After
+    fun restoreReaderPrefetch() {
+        ReadBook.callBack = originalReaderCallback
+    }
 
     @Test
     fun `opens cloud TTS manager on top of reader`() {
