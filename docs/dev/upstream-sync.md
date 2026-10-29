@@ -7,7 +7,7 @@
 1. 每周一北京时间 11:17，或手动运行 **Sync upstream**：将 HapeLee 上游更新合并到 `automation/sync-upstream-main`，创建指向 `main` 的 PR。
 2. 同一次运行直接调用 **Verify sync PR**，执行 JVM 测试、lint、架构检查和 arm64 Debug APK 打包。检查结果通过 commit status 显示在 PR 中。
 3. 人工确认并合并第一份 PR 后，`main` 的 push 触发第二级：将 `main` 合并到基于 `nas-md3` 的 `automation/sync-nas-main`，创建指向 `nas-md3` 的 PR。
-4. 第二级也直接执行验证，下载 Artifacts 中的 arm64 APK 试用并确认后，再手动合并第二份 PR。
+4. 第二级也直接执行验证，通过后准备 NAS 正式 Release APK并完成必要模拟器验收，再按用户确认合并第二份 PR。Artifacts 中的 Debug 包仅用于测试，不作为日常交付包。
 
 手动触发可选择 `upstream`、`nas` 或 `all`。`all` 只使用当前已合入 main 的内容准备 NAS PR，不会提前带入未审批的上游 PR。定时运行也补查第二级，避免遗漏。
 
@@ -16,6 +16,8 @@
 机器人使用 `GITHUB_TOKEN` 创建 PR，不依赖该事件触发其他工作流；准备步骤完成后通过 `workflow_call` 直接执行验证。人工更新同步 PR 时，`pull_request` 入口也会重新验证。
 
 状态为 **Sync verification (upstream/nas)**；点击状态链接可查看报告和下载 APK，Artifacts 保留 14 天。此 APK 为 Debug 测试包，不会自动发布 Release。构建只打包 arm64-v8a。
+
+用户日常交付使用 `nas-md3` 的签名 Release，流程见 [Android 正式版交付](android-release.md)。NAS Release 保留 `io.legato.kazusa.debug` 安装身份与历史签名，可直接覆盖原 Debug 版并保留数据；它仍为启用 R8、资源压缩且不可调试的正式构建，版本名不带 `_debug`。`main` 继续保留上游身份配置；第二阶段整合必须保留 NAS 分支这一交付差异。正式 APK 留在工程默认 Release 输出目录。
 
 冷缓存下先独立编译 JVM 测试源码，再执行完整测试，两个步骤各限 20 分钟；测试继续逐类独立 JVM、串行执行。lint、架构和打包仍全部执行，验证 job 总时限保持 60 分钟，不通过扩大基线或跳过测试处理超时。
 

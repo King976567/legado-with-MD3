@@ -60,7 +60,7 @@ android {
         applicationId = "io.legato.kazusa"
         minSdk = 26
         targetSdk = 37
-        versionCode = System.getenv("COMMIT_NUMBER")?.toInt()?.let { 10000 + it } ?: 32640
+        versionCode = System.getenv("COMMIT_NUMBER")?.toInt()?.let { 10000 + it } ?: 32641
         versionName = System.getenv("APP_VERSION_NAME") ?: projectVersionName
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
 
@@ -90,6 +90,10 @@ android {
 
     buildTypes {
         getByName("release") {
+            // The user's installed NAS client has always used this identity.
+            // Keep it for in-place updates; the suffix does not make a Release debuggable.
+            applicationIdSuffix = ".debug"
+            isDebuggable = false
             if (project.hasProperty("RELEASE_STORE_FILE")) {
                 signingConfig = signingConfigs.getByName("myConfig")
             }
