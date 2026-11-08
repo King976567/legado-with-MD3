@@ -1,6 +1,7 @@
 package io.legado.app.feature.settings.search
 
 import android.app.Application
+import android.content.res.Configuration
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -8,6 +9,8 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.saveable.rememberSaveableStateHolder
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.platform.LocalInspectionMode
+import androidx.compose.ui.platform.LocalConfiguration
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.test.*
 import androidx.compose.ui.test.junit4.StateRestorationTester
 import androidx.compose.ui.test.junit4.createComposeRule
@@ -20,6 +23,7 @@ import io.legado.app.ui.config.readConfig.ReadConfigScreen
 import io.legado.app.ui.config.readConfig.ReadConfigUiState
 import io.legado.app.ui.theme.AppTheme
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNotEquals
 import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -29,6 +33,7 @@ import org.robolectric.annotation.Config
 import org.robolectric.annotation.GraphicsMode
 import org.robolectric.annotation.LooperMode
 import splitties.init.injectAsAppCtx
+import java.util.Locale
 
 @Suppress("DEPRECATION") // StateRestorationTester uses the JUnit4 ComposeContentTestRule.
 @RunWith(RobolectricTestRunner::class)
@@ -85,4 +90,60 @@ class SettingsSearchScreenTest {
     @Test fun `bottom result stays visible after returning and restoring search`() = exercise("material", browseAll = true)
     @Test @Config(qualifiers = "zh-rCN-w1000dp-h700dp")
     fun `Chinese catalog works in expanded windows`() = exercise("material")
+
+    @Test
+    fun `language change rebuilds cached index with the same resources and keeps query`() {
+        val app = RuntimeEnvironment.getApplication().also { it.injectAsAppCtx() }
+        val resources = app.resources
+        val original = Configuration(resources.configuration)
+        var configuration by mutableStateOf(Configuration(original))
+        val viewModel = SettingsSearchViewModel(SavedStateHandle())
+        val reading = ReadSetting.BrightnessPosition
+        val theme = requireNotNull(SettingsSearchCatalog.find("theme.miuix_monet"))
+
+        fun entry(id: String) = viewModel.uiState.value.results.single { it.id == id }
+        fun assertLocalizedEntries() {
+            val brightness = entry(reading.id)
+            assertEquals(resources.getString(reading.titleRes), brightness.title)
+            assertEquals(resources.getString(R.string.settings_search_path,
+                resources.getString(R.string.read_config), resources.getString(reading.section.titleRes)),
+                brightness.path)
+            assertEquals(resources.getString(reading.descriptionRes!!,
+                resources.getString(R.string.brightness_bar_vertical)), brightness.description)
+            val fixed = entry(theme.id)
+            assertEquals(resources.getString(theme.titleRes), fixed.title)
+            assertEquals(resources.getString(R.string.settings_search_path,
+                resources.getString(theme.page.titleRes), resources.getString(theme.groupTitleRes!!)), fixed.path)
+            assertEquals(listOf(
+                resources.getString(theme.descriptionRes!!),
+                resources.getString(R.string.settings_search_condition,
+                    resources.getString(SettingsSearchCatalog.find(theme.parentId!!)!!.titleRes)),
+            ).joinToString("\n"), fixed.description)
+            assertEquals(resources.getString(R.string.settings_search_theme_keywords), fixed.keywords)
+        }
+
+        try {
+            compose.setContent {
+                // Android may reuse Context and Resources while updating their configuration.
+                CompositionLocalProvider(LocalContext provides app, LocalConfiguration provides configuration) {
+                    AppTheme(AppUiConfiguration()) { SettingsSearchRouteScreen({}, {}, viewModel) }
+                }
+            }
+            compose.onNode(hasSetTextAction()).performTextInput("›")
+            lateinit var englishTitle: String
+            compose.runOnIdle {
+                assertLocalizedEntries()
+                englishTitle = entry(reading.id).title
+                configuration = Configuration(original).apply { setLocale(Locale.SIMPLIFIED_CHINESE) }
+                resources.updateConfiguration(configuration, resources.displayMetrics)
+            }
+            compose.runOnIdle {
+                assertEquals("›", viewModel.uiState.value.query)
+                assertLocalizedEntries()
+                assertNotEquals(englishTitle, entry(reading.id).title)
+            }
+        } finally {
+            resources.updateConfiguration(original, resources.displayMetrics)
+        }
+    }
 }

@@ -44,10 +44,10 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        include:
-          - product: Comic
-            label: comic
-    name: Verify sync (${{ matrix.label }})
+        product: [Comic]
+        label: [comic]
+        shard: [0, 1, 2, 3]
+    name: Verify sync (${{ matrix.label }}, shard ${{ matrix.shard }})
     runs-on: ubuntu-latest
     timeout-minutes: 60
     permissions:
@@ -90,11 +90,15 @@ jobs:
         timeout-minutes: 20
         run: |
           ./gradlew testApp${{ matrix.product }}DebugUnitTest \
+            --init-script .github/scripts/shard-tests.gradle \
+            --project-prop ciTestShardIndex=${{ matrix.shard }} \
+            --project-prop ciTestShardCount=4 \
+            --project-prop ciTestSourceSha="$VERIFY_SHA" \
             --project-prop ksp.incremental=false \
             --max-workers=2 --no-parallel --info \
             --continue --no-daemon --no-configuration-cache
       - name: Lint and architecture
-        if: ${{ !cancelled() && steps.tests.outcome != 'skipped' }}
+        if: ${{ !cancelled() && matrix.shard == 0 && steps.tests.outcome != 'skipped' }}
         timeout-minutes: 20
         run: |
           ./gradlew lintApp${{ matrix.product }}Debug verifyConfigArchitecture \
@@ -102,7 +106,7 @@ jobs:
             --max-workers=2 --no-parallel --info \
             --continue --no-daemon --no-configuration-cache
       - name: Arm64 debug APK
-        if: ${{ !cancelled() && steps.tests.outcome != 'skipped' }}
+        if: ${{ !cancelled() && matrix.shard == 0 && steps.tests.outcome != 'skipped' }}
         timeout-minutes: 20
         run: |
           ./gradlew assembleApp${{ matrix.product }}Debug \
@@ -111,21 +115,22 @@ jobs:
             --max-workers=2 --no-parallel --info \
             --continue --no-daemon --no-configuration-cache
       - name: Upload arm64 trial APK
+        if: ${{ success() && matrix.shard == 0 }}
         uses: actions/upload-artifact@v4
         with:
           name: nas-sync-arm64-${{ matrix.label }}-${{ env.VERIFY_SHA }}
           path: app/build/outputs/apk/app${{ matrix.product }}/debug/*arm64-v8a*.apk
           if-no-files-found: error
           retention-days: 14
-      - name: Upload reports
+      - name: Upload shard inventory and reports
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: sync-reports-${{ matrix.label }}-${{ env.VERIFY_SHA }}
-          if-no-files-found: warn
+          name: sync-test-shard-${{ matrix.shard }}-${{ env.VERIFY_SHA }}
+          if-no-files-found: error
           retention-days: 14
           path: |
-            app/build/test-results/testApp${{ matrix.product }}DebugUnitTest/**
+            app/build/test-shards/testApp${{ matrix.product }}DebugUnitTest/shard-${{ matrix.shard }}/**
             app/build/reports/tests/testApp${{ matrix.product }}DebugUnitTest/**
             app/build/reports/lint-results-app${{ matrix.product }}Debug.*
       - name: JVM diagnostics on failure
@@ -138,9 +143,36 @@ jobs:
             fi
           done
 
+  coverage:
+    needs: build
+    if: ${{ always() && needs.build.result != 'skipped' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read
+    env:
+      VERIFY_SHA: ${{ inputs.ref || github.event.pull_request.head.sha }}
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: ${{ env.VERIFY_SHA }}
+          persist-credentials: false
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: sync-test-shard-*-${{ env.VERIFY_SHA }}
+          path: shard-artifacts
+      - name: Verify complete Comic test coverage
+        run: |
+          test "$(git rev-parse HEAD)" = "$VERIFY_SHA"
+          python3 .github/scripts/test_verify_test_shards.py
+          python3 .github/scripts/verify_test_shards.py \
+            --artifacts-dir shard-artifacts --shard-count 4 \
+            --source-sha "$VERIFY_SHA" --task-path :app:testAppComicDebugUnitTest
+          test '${{ needs.build.result }}' = success
+
   result:
     # Keep the Comic gate independent from the candidate's read-only Gradle job.
-    needs: build
+    needs: [build, coverage]
     if: ${{ always() && needs.build.result != 'skipped' }}
     runs-on: ubuntu-latest
     permissions:
@@ -152,6 +184,7 @@ jobs:
       VERIFY_BASE: ${{ inputs.base || github.event.pull_request.base.sha }}
       STAGE: ${{ inputs.stage || (github.base_ref == 'main' && 'upstream' || 'nas') }}
       BUILD_RESULT: ${{ needs.build.result }}
+      COVERAGE_RESULT: ${{ needs.coverage.result }}
     steps:
       # Candidate Gradle code never receives this job's write token.
       - name: Publish verification status
@@ -163,9 +196,9 @@ jobs:
           current_base="$(gh api "repos/$GITHUB_REPOSITORY/git/ref/heads/$target" --jq .object.sha)"
           state=failure
           description="验证失败或已取消，请查看报告"
-          if [[ "$BUILD_RESULT" == success && "$current_base" == "$VERIFY_BASE" ]]; then
+          if [[ "$BUILD_RESULT" == success && "$COVERAGE_RESULT" == success && "$current_base" == "$VERIFY_BASE" ]]; then
             state=success
-            description="Comic 测试、lint、架构、arm64 APK 全部通过，请人工确认合并"
+            description="Comic 四片测试及覆盖、lint、架构、arm64 APK 全部通过，请人工确认合并"
           elif [[ "$current_base" != "$VERIFY_BASE" ]]; then
             description="目标分支已更新，请重新运行同步验证最新结果"
           fi
