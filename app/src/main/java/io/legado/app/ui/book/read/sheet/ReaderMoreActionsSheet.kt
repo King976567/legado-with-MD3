@@ -11,6 +11,8 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.pager.HorizontalPager
 import androidx.compose.foundation.pager.rememberPagerState
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.Chat
 import androidx.compose.material.icons.automirrored.filled.Login
@@ -21,6 +23,7 @@ import androidx.compose.material.icons.filled.Block
 import androidx.compose.material.icons.filled.Bookmark
 import androidx.compose.material.icons.filled.BugReport
 import androidx.compose.material.icons.filled.CleanHands
+import androidx.compose.material.icons.filled.Comment
 import androidx.compose.material.icons.filled.CloudDownload
 import androidx.compose.material.icons.filled.DisplaySettings
 import androidx.compose.material.icons.filled.Download
@@ -58,6 +61,8 @@ import io.legado.app.ui.book.read.ReadBookSheet
 import io.legado.app.ui.book.read.ReadBookUiState
 import io.legado.app.ui.book.read.isReadMenuActionApplicable
 import io.legado.app.ui.book.read.readMenuActionScopeLabelRes
+import io.legado.app.ui.theme.ComposeEngine
+import io.legado.app.ui.theme.LegadoTheme
 import io.legado.app.ui.widget.components.ConfigListEntry
 import io.legado.app.ui.widget.components.ReorderableConfigList
 import io.legado.app.ui.widget.components.menuItem.RoundDropdownMenu
@@ -147,7 +152,12 @@ private fun MoreActionsPager(
 ) {
     val pages = actions.chunked(8).ifEmpty { listOf(emptyList()) }
     val pagerState = rememberPagerState { pages.size }
-    BoxWithConstraints(modifier = Modifier.fillMaxWidth()) {
+    val scrollModifier = if (LegadoTheme.composeEngine == ComposeEngine.Mochi) {
+        Modifier.verticalScroll(rememberScrollState())
+    } else {
+        Modifier
+    }
+    BoxWithConstraints(modifier = Modifier.fillMaxWidth().then(scrollModifier)) {
         val itemSize = (maxWidth - 56.dp) / 4
         val rowCount = if (actions.size > 4) 2 else 1
         HorizontalPager(
@@ -411,6 +421,9 @@ private fun moreActionSpecs(
         applicable = state.inBookshelf && state.isReadingProgressSyncConfigured,
         onClick = { dispatch(ReadBookIntent.MenuCoverProgress) }),
     MoreActionSpec(
+        "bubble_style", stringResource(R.string.bubble_config), Icons.Default.Comment,
+        onClick = { onIntent(ReadBookIntent.ShowSheet(ReadBookSheet.BubbleStyle)) }),
+    MoreActionSpec(
         "bottom_button_config", stringResource(R.string.config_btn), Icons.Default.Settings,
         onClick = { onIntent(ReadBookIntent.ShowSheet(ReadBookSheet.ToolButtonConfig)) }),
     MoreActionSpec(
@@ -453,6 +466,9 @@ private fun PageAnimDropdown(
         R.string.page_anim_cover to PageAnim.coverPageAnim,
         R.string.page_anim_slide to PageAnim.slidePageAnim,
         R.string.page_anim_simulation to PageAnim.simulationPageAnim,
+        R.string.page_anim_ios_curl to PageAnim.iosCurlPageAnim,
+        R.string.page_anim_google_curl to PageAnim.googleCurlPageAnim,
+        R.string.page_anim_parallax to PageAnim.parallaxPageAnim,
         R.string.page_anim_scroll to PageAnim.scrollPageAnim,
         R.string.page_anim_fade to PageAnim.fadePageAnim,
         R.string.page_anim_none to PageAnim.noAnim,

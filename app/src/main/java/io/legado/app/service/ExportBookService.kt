@@ -18,6 +18,7 @@ import io.legado.app.data.entities.Book
 import io.legado.app.data.entities.BookChapter
 import io.legado.app.domain.gateway.TranslationCacheGateway
 import io.legado.app.domain.gateway.BookExportSettingsGateway
+import io.legado.app.domain.gateway.MangaExportGateway
 import io.legado.app.domain.gateway.OtherSettingsGateway
 import io.legado.app.domain.gateway.ReadSettingsGateway
 import io.legado.app.domain.gateway.TranslationSettingsGateway
@@ -26,8 +27,10 @@ import io.legado.app.exception.NoStackTraceException
 import io.legado.app.help.AppWebDav
 import io.legado.app.help.book.BookHelp
 import io.legado.app.help.book.ContentProcessor
+import io.legado.app.help.book.MixedContentSegments
 import io.legado.app.help.book.getExportFileName
 import io.legado.app.help.book.isLocalModified
+import io.legado.app.help.book.isImage
 import io.legado.app.model.ReadBook
 import io.legado.app.model.localBook.LocalBook
 import io.legado.app.ui.main.MainActivity
@@ -113,6 +116,7 @@ class ExportBookService : BaseService(), KoinComponent {
 
     private val translationCacheRepository: TranslationCacheGateway by inject()
     private val bookExportSettingsGateway: BookExportSettingsGateway by inject()
+    private val mangaExportGateway: MangaExportGateway by inject()
     private val translationSettingsGateway: TranslationSettingsGateway by inject()
     private val otherSettingsGateway: OtherSettingsGateway by inject()
     private val readSettingsGateway: ReadSettingsGateway by inject()
@@ -228,14 +232,27 @@ class ExportBookService : BaseService(), KoinComponent {
                 val book = appDb.bookDao.getBook(bookUrl)
                 try {
                     book ?: throw NoStackTraceException("获取${bookUrl}书籍出错")
-                    refreshChapterList(book)
+                    if (!book.isImage) refreshChapterList(book)
                     notificationContentText = getString(
                         R.string.export_book_notification_content,
                         book.name,
                         waitExportBooks.size
                     )
                     upExportNotification()
-                    if (exportConfig.type == "epub") {
+                    if (book.isImage) {
+                        exportMsg[bookUrl] = getString(R.string.feature_manga_export_checking)
+                        notifyExportBookChanged(bookUrl)
+                        mangaExportGateway.export(
+                            bookUrl = bookUrl,
+                            destination = exportConfig.path,
+                            format = exportConfig.settings.mangaExportFormat,
+                            fileNameTemplate = exportConfig.settings.bookExportFileName,
+                        ) { completed, total ->
+                            exportProgress[bookUrl] = completed
+                            exportMsg[bookUrl] = getString(R.string.feature_manga_export_progress, completed, total)
+                            notifyExportBookChanged(bookUrl)
+                        }
+                    } else if (exportConfig.type == "epub") {
                         if (exportConfig.epubScope.isNullOrBlank()) {
                             exportEpub(exportConfig.path, book)
                             // Also export translation if cache exists
@@ -412,7 +429,7 @@ class ExportBookService : BaseService(), KoinComponent {
             ContentSource.Original -> BookHelp.getContent(book, chapter)
             ContentSource.Translation -> translationCacheRepository.readTranslation(book, chapter, targetLanguage)
         }
-        val processedContent = contentProcessor
+        val processedContent = MixedContentSegments.toPlainText(contentProcessor
             .getContent(
                 book,
                 // 不导出vip标识
@@ -422,11 +439,11 @@ class ExportBookService : BaseService(), KoinComponent {
                 useReplace = useReplace,
                 chineseConvert = false,
                 reSegment = false
-            ).toString()
+            ).toString())
         if (currentExportSettings.exportPictureFile && source == ContentSource.Original) {
             //txt导出图片文件 - only for original source
             val srcList = arrayListOf<SrcData>()
-            content?.split("\n")?.forEachIndexed { index, text ->
+            MixedContentSegments.toPlainText(content.orEmpty()).split("\n").forEachIndexed { index, text ->
                 for (m in AppPattern.imgPattern.findAll(text)) {
                     m.groupValues[1].takeIf { it.isNotEmpty() }?.let {
                         val src = NetworkUtils.getAbsoluteURL(chapter.url, it)

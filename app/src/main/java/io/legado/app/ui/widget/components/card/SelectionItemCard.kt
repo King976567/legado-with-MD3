@@ -41,9 +41,9 @@ import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.zIndex
 import io.legado.app.R
+import io.legado.app.ui.theme.ComposeEngine
 import io.legado.app.ui.theme.LegadoTheme
 import io.legado.app.ui.theme.LegadoTheme.composeEngine
-import io.legado.app.ui.theme.ThemeResolver
 import io.legado.app.ui.widget.components.AdaptiveSwitch
 import io.legado.app.ui.widget.components.reorderAccessibility
 import io.legado.app.ui.widget.components.button.series.SmallPlainButton
@@ -78,14 +78,14 @@ fun SelectionItemCard(
     editContentDescription: String? = null,
     moreContentDescription: String? = null
 ) {
-    val composeEngine = ThemeResolver.isMiuixEngine(composeEngine)
+    val isMiuix = composeEngine == ComposeEngine.Miuix
     val animatedContainerColor by animateColorAsState(
         targetValue = if (isSelected)
             selectedContainerColor
-                ?: if (composeEngine) LegadoTheme.colorScheme.secondaryContainer else LegadoTheme.colorScheme.secondaryContainer
+                ?: if (isMiuix) LegadoTheme.colorScheme.secondaryContainer else LegadoTheme.colorScheme.secondaryContainer
         else
             containerColor
-                ?: if (composeEngine) LegadoTheme.colorScheme.surfaceContainer else LegadoTheme.colorScheme.surfaceContainerLow,
+                ?: if (isMiuix) LegadoTheme.colorScheme.surfaceContainer else LegadoTheme.colorScheme.surfaceContainerLow,
         animationSpec = tween(durationMillis = 200, easing = FastOutSlowInEasing),
         label = "CardColor"
     )
@@ -182,35 +182,20 @@ fun SelectionItemCardContent(
             }
         }
 
-        if (ThemeResolver.isMiuixEngine(composeEngine)) {
-            BasicComponent(
-                modifier = Modifier.weight(1f)
-            ) {
-                AppText(
-                    text = title,
-                    style = LegadoTheme.typography.titleSmall,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis
-                )
-                when {
-                    supportingContent != null -> supportingContent()
-                    !subtitle.isNullOrBlank() -> {
-                        AppText(
-                            text = subtitle,
-                            style = LegadoTheme.typography.bodySmall,
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis
-                        )
-                    }
-                }
-            }
-        } else {
-            ListItem(
-                modifier = Modifier.weight(1f),
-                supportingContent = when {
-                    supportingContent != null -> supportingContent
-                    !subtitle.isNullOrBlank() -> {
-                        {
+        when (composeEngine) {
+            ComposeEngine.Miuix -> {
+                BasicComponent(
+                    modifier = Modifier.weight(1f)
+                ) {
+                    AppText(
+                        text = title,
+                        style = LegadoTheme.typography.titleSmall,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                    when {
+                        supportingContent != null -> supportingContent()
+                        !subtitle.isNullOrBlank() -> {
                             AppText(
                                 text = subtitle,
                                 style = LegadoTheme.typography.bodySmall,
@@ -219,16 +204,34 @@ fun SelectionItemCardContent(
                             )
                         }
                     }
-                    else -> null
-                },
-                colors = ListItemDefaults.colors(containerColor = Color.Transparent)
-            ) {
-                AppText(
-                    text = title,
-                    style = LegadoTheme.typography.titleSmall,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis
-                )
+                }
+            }
+            ComposeEngine.Material, ComposeEngine.Mochi -> {
+                ListItem(
+                    modifier = Modifier.weight(1f),
+                    supportingContent = when {
+                        supportingContent != null -> supportingContent
+                        !subtitle.isNullOrBlank() -> {
+                            {
+                                AppText(
+                                    text = subtitle,
+                                    style = LegadoTheme.typography.bodySmall,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis
+                                )
+                            }
+                        }
+                        else -> null
+                    },
+                    colors = ListItemDefaults.colors(containerColor = Color.Transparent)
+                ) {
+                    AppText(
+                        text = title,
+                        style = LegadoTheme.typography.titleSmall,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                }
             }
         }
 
@@ -323,8 +326,22 @@ fun LazyItemScope.ReorderableSelectionItem(
             onMove = onMoveItem,
         )
     } else Modifier
+    val canDrag = canReorder && !inSelectionMode
 
     ReorderableItem(state, key = key) { isDragging ->
+        // 句柄捕获 ReorderableItem scope，排序状态或条目标识变化时必须随之更新。
+        val dragHandleModifier = remember(state, key, canDrag, hapticFeedback) {
+            if (canDrag) {
+                Modifier.longPressDraggableHandle(
+                    onDragStarted = {
+                        hapticFeedback.performHapticFeedback(HapticFeedbackType.GestureThresholdActivate)
+                    },
+                    onDragStopped = {
+                        hapticFeedback.performHapticFeedback(HapticFeedbackType.GestureEnd)
+                    }
+                )
+            } else Modifier
+        }
         val elevation by animateDpAsState(
             targetValue = if (isDragging) 8.dp else 0.dp,
             label = "DragElevation"
@@ -353,19 +370,7 @@ fun LazyItemScope.ReorderableSelectionItem(
             modifier = modifier
                 .then(reorderAccessibilityModifier)
                 .zIndex(if (isDragging) 1f else 0f)
-                .then(
-                    if (canReorder && !inSelectionMode) {
-                        Modifier.longPressDraggableHandle(
-                            onDragStarted = {
-                                hapticFeedback.performHapticFeedback(HapticFeedbackType.GestureThresholdActivate)
-                            },
-                            onDragStopped = {
-                                hapticFeedback.performHapticFeedback(HapticFeedbackType.GestureEnd)
-                            }
-                        )
-                    } else Modifier
-                )
-                .animateItem()
+                .then(dragHandleModifier)
         )
     }
 }
