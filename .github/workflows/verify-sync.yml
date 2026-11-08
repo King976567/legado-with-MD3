@@ -41,8 +41,17 @@ jobs:
       (github.event_name != 'pull_request' ||
       (github.event.pull_request.head.repo.full_name == github.repository &&
       startsWith(github.head_ref, 'automation/sync-')))
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - product: Comic
+            label: comic
+    name: Verify sync (${{ matrix.label }})
     runs-on: ubuntu-latest
     timeout-minutes: 60
+    permissions:
+      contents: read
     env:
       VERIFY_SHA: ${{ inputs.ref || github.event.pull_request.head.sha }}
       VERIFY_BASE: ${{ inputs.base || github.event.pull_request.base.sha }}
@@ -67,10 +76,12 @@ jobs:
           chmod +x gradlew
       # Keep cold compilation out of the test execution budget. Every test class
       # still runs in its own JVM, serially, with the existing 20-minute limit.
-      - name: Compile JVM test sources
+      # Instrumentation test compilation is part of the Comic verification gate.
+      - name: Compile JVM and Android test sources
         timeout-minutes: 20
         run: |
-          ./gradlew :app:compileAppDebugUnitTestKotlin \
+          ./gradlew :app:compileApp${{ matrix.product }}DebugUnitTestKotlin \
+            :app:compileApp${{ matrix.product }}DebugAndroidTestKotlin \
             --project-prop ksp.incremental=false \
             --max-workers=2 --no-parallel --info \
             --continue --no-daemon --no-configuration-cache
@@ -78,7 +89,7 @@ jobs:
         id: tests
         timeout-minutes: 20
         run: |
-          ./gradlew testAppDebugUnitTest \
+          ./gradlew testApp${{ matrix.product }}DebugUnitTest \
             --project-prop ksp.incremental=false \
             --max-workers=2 --no-parallel --info \
             --continue --no-daemon --no-configuration-cache
@@ -86,7 +97,7 @@ jobs:
         if: ${{ !cancelled() && steps.tests.outcome != 'skipped' }}
         timeout-minutes: 20
         run: |
-          ./gradlew lintAppDebug verifyConfigArchitecture \
+          ./gradlew lintApp${{ matrix.product }}Debug verifyConfigArchitecture \
             --project-prop ksp.incremental=false \
             --max-workers=2 --no-parallel --info \
             --continue --no-daemon --no-configuration-cache
@@ -94,7 +105,7 @@ jobs:
         if: ${{ !cancelled() && steps.tests.outcome != 'skipped' }}
         timeout-minutes: 20
         run: |
-          ./gradlew assembleAppDebug \
+          ./gradlew assembleApp${{ matrix.product }}Debug \
             --init-script .github/scripts/arm64-only.gradle \
             --project-prop ksp.incremental=false \
             --max-workers=2 --no-parallel --info \
@@ -102,21 +113,21 @@ jobs:
       - name: Upload arm64 trial APK
         uses: actions/upload-artifact@v4
         with:
-          name: nas-sync-arm64-${{ env.VERIFY_SHA }}
-          path: app/build/outputs/apk/app/debug/*arm64-v8a*.apk
+          name: nas-sync-arm64-${{ matrix.label }}-${{ env.VERIFY_SHA }}
+          path: app/build/outputs/apk/app${{ matrix.product }}/debug/*arm64-v8a*.apk
           if-no-files-found: error
           retention-days: 14
       - name: Upload reports
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: sync-reports-${{ env.VERIFY_SHA }}
+          name: sync-reports-${{ matrix.label }}-${{ env.VERIFY_SHA }}
           if-no-files-found: warn
           retention-days: 14
           path: |
-            app/build/test-results/testAppDebugUnitTest/**
-            app/build/reports/tests/testAppDebugUnitTest/**
-            app/build/reports/lint-results-appDebug.*
+            app/build/test-results/testApp${{ matrix.product }}DebugUnitTest/**
+            app/build/reports/tests/testApp${{ matrix.product }}DebugUnitTest/**
+            app/build/reports/lint-results-app${{ matrix.product }}Debug.*
       - name: JVM diagnostics on failure
         if: ${{ always() && (failure() || cancelled()) }}
         run: |
@@ -128,6 +139,7 @@ jobs:
           done
 
   result:
+    # Keep the Comic gate independent from the candidate's read-only Gradle job.
     needs: build
     if: ${{ always() && needs.build.result != 'skipped' }}
     runs-on: ubuntu-latest
@@ -153,7 +165,7 @@ jobs:
           description="验证失败或已取消，请查看报告"
           if [[ "$BUILD_RESULT" == success && "$current_base" == "$VERIFY_BASE" ]]; then
             state=success
-            description="测试、lint、架构检查、arm64 APK 全部通过，请人工确认合并"
+            description="Comic 测试、lint、架构、arm64 APK 全部通过，请人工确认合并"
           elif [[ "$current_base" != "$VERIFY_BASE" ]]; then
             description="目标分支已更新，请重新运行同步验证最新结果"
           fi

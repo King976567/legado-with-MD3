@@ -15,14 +15,22 @@ on:
 permissions:
   contents: read
 
-concurrency:
-  group: verify-${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
-
 jobs:
+  # Fork 门禁只验证 Comic 完整版；上游 Core 源码仍随同步保留。
   verify:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - product: Comic
+            label: comic
+    name: Verify (${{ matrix.label }})
     runs-on: ubuntu-latest
     timeout-minutes: 60
+    # concurrency 放在 job 层：workflow 层的 concurrency 不保证能解析 matrix 上下文。
+    concurrency:
+      group: verify-${{ github.workflow }}-${{ github.ref }}-${{ matrix.product }}
+      cancel-in-progress: true
     steps:
       - name: Checkout
         uses: actions/checkout@v5
@@ -43,11 +51,13 @@ jobs:
           sed -i '/maven.aliyun.com/d' settings.gradle
 
       # Separate cold compilation from the unchanged test execution budget.
-      - name: Compile JVM test sources
+      # Instrumentation test compilation is part of the Comic verification gate.
+      - name: Compile JVM and Android test sources
         timeout-minutes: 20
         run: |
           chmod +x gradlew
-          ./gradlew :app:compileAppDebugUnitTestKotlin \
+          ./gradlew :app:compileApp${{ matrix.product }}DebugUnitTestKotlin \
+            :app:compileApp${{ matrix.product }}DebugAndroidTestKotlin \
             --project-prop ksp.incremental=false \
             --max-workers=2 --no-parallel --info \
             --continue --no-daemon --no-configuration-cache
@@ -57,16 +67,17 @@ jobs:
         timeout-minutes: 20
         run: |
           chmod +x gradlew
-          ./gradlew testAppDebugUnitTest \
+          ./gradlew testApp${{ matrix.product }}DebugUnitTest \
             --project-prop ksp.incremental=false \
             --max-workers=2 --no-parallel --info \
             --continue --no-daemon --no-configuration-cache
 
+      # Run full, unfiltered JVM tests and lint, including the architecture gate.
       - name: Lint and architecture
         if: ${{ !cancelled() && steps.tests.outcome != 'skipped' }}
         timeout-minutes: 20
         run: |
-          ./gradlew lintAppDebug verifyConfigArchitecture \
+          ./gradlew lintApp${{ matrix.product }}Debug verifyConfigArchitecture \
             --project-prop ksp.incremental=false \
             --max-workers=2 --no-parallel --info \
             --continue --no-daemon --no-configuration-cache
@@ -75,7 +86,8 @@ jobs:
         if: ${{ !cancelled() && steps.tests.outcome != 'skipped' }}
         timeout-minutes: 20
         run: |
-          ./gradlew assembleAppDebug \
+          ./gradlew assembleApp${{ matrix.product }}Debug \
+            --init-script .github/scripts/arm64-only.gradle \
             --project-prop ksp.incremental=false \
             --max-workers=2 --no-parallel --info \
             --continue --no-daemon --no-configuration-cache
@@ -84,23 +96,24 @@ jobs:
         if: ${{ always() }}
         uses: actions/upload-artifact@v4
         with:
-          name: verify-unit-test-reports
+          name: verify-unit-test-reports-${{ matrix.label }}
           if-no-files-found: warn
           path: |
-            app/build/test-results/testAppDebugUnitTest/**
-            app/build/reports/tests/testAppDebugUnitTest/**
+            app/build/test-results/testApp${{ matrix.product }}DebugUnitTest/**
+            app/build/reports/tests/testApp${{ matrix.product }}DebugUnitTest/**
 
       - name: Upload lint reports
         if: ${{ always() }}
         uses: actions/upload-artifact@v4
         with:
-          name: verify-lint-reports
+          name: verify-lint-reports-${{ matrix.label }}
           if-no-files-found: warn
           path: |
-            app/build/reports/lint-results-appDebug.html
-            app/build/reports/lint-results-appDebug.xml
-            app/build/reports/lint-results-appDebug.txt
-            app/build/reports/lint-results-appDebug.sarif
+            app/build/reports/lint-results-app${{ matrix.product }}Debug.html
+            app/build/reports/lint-results-app${{ matrix.product }}Debug.xml
+            app/build/reports/lint-results-app${{ matrix.product }}Debug.txt
+            app/build/reports/lint-results-app${{ matrix.product }}Debug.sarif
+
       - name: JVM diagnostics on failure
         if: ${{ always() && (failure() || cancelled()) }}
         run: |

@@ -5,7 +5,7 @@
 ## 流程
 
 1. 每周一北京时间 11:17，或手动运行 **Sync upstream**：将 HapeLee 上游更新合并到 `automation/sync-upstream-main`，创建指向 `main` 的 PR。
-2. 同一次运行直接调用 **Verify sync PR**，执行 JVM 测试、lint、架构检查和 arm64 Debug APK 打包。检查结果通过 commit status 显示在 PR 中。
+2. 同一次运行直接调用 **Verify sync PR**，执行 JVM 测试、lint、架构检查和 arm64 Comic Debug APK 打包。检查结果通过 commit status 显示在 PR 中。
 3. 人工确认并合并第一份 PR 后，`main` 的 push 触发第二级：将 `main` 合并到基于 `nas-md3` 的 `automation/sync-nas-main`，创建指向 `nas-md3` 的 PR。
 4. 第二级也直接执行验证，下载 Artifacts 中的 arm64 APK 试用并确认后，再手动合并第二份 PR。
 
@@ -15,7 +15,9 @@
 
 机器人使用 `GITHUB_TOKEN` 创建 PR，不依赖该事件触发其他工作流；准备步骤完成后通过 `workflow_call` 直接执行验证。人工更新同步 PR 时，`pull_request` 入口也会重新验证。
 
-状态为 **Sync verification (upstream/nas)**；点击状态链接可查看报告和下载 APK，Artifacts 保留 14 天。此 APK 为 Debug 测试包，不会自动发布 Release。构建只打包 arm64-v8a。
+状态为 **Sync verification (upstream/nas)**；点击状态链接可查看报告和下载 APK，Artifacts 保留 14 天。此 APK 为 Comic Debug 测试包，不会自动发布 Release。构建只打包 arm64-v8a。
+
+本 Fork 只验证、构建和交付 Comic 漫画增强版（原 Full 完整版），包含本地 OCR、气泡检测及模型擦字引擎。Core 为轻量版，源码与上游一起保留，但不运行其构建流水线。上游公共源码仍完整同步，不按产品拆散 Git 提交。
 
 冷缓存下先独立编译 JVM 测试源码，再执行完整测试，两个步骤各限 20 分钟；测试继续逐类独立 JVM、串行执行。lint、架构和打包仍全部执行，验证 job 总时限保持 60 分钟，不通过扩大基线或跳过测试处理超时。
 

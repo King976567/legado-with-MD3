@@ -12,6 +12,11 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.platform.LocalInspectionMode
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.test.assertIsDisplayed
+import androidx.compose.ui.test.assert
+import androidx.compose.ui.test.assertHasClickAction
+import androidx.compose.ui.test.SemanticsMatcher
+import androidx.compose.ui.test.onNodeWithContentDescription
+import androidx.compose.ui.semantics.SemanticsActions
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.longClick
 import androidx.compose.ui.test.onNodeWithTag
@@ -105,6 +110,15 @@ class ReadAloudBarCapsuleInteractionTest {
                     }
                 }
             }
+            fun assertPlayerAction() {
+                compose.onNodeWithContentDescription("Open player for Book")
+                    .assertHasClickAction()
+                    .assert(SemanticsMatcher.keyIsDefined(SemanticsActions.OnLongClick))
+            }
+            assertPlayerAction()
+            for (label in listOf("Resume", "Exit")) {
+                compose.onNodeWithContentDescription(label).assertHasClickAction()
+            }
             compose.onNodeWithTag("read-aloud-capsule", useUnmergedTree = true)
                 .assertIsDisplayed()
                 .performTouchInput {
@@ -117,8 +131,10 @@ class ReadAloudBarCapsuleInteractionTest {
                 assertFalse("opens=$opens", expanded)
                 assertEquals(0, opens)
             }
+            assertPlayerAction()
         } finally {
             stopKoin()
         }
     }
+
 }

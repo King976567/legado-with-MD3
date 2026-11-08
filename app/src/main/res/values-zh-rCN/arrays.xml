@@ -5,6 +5,7 @@
         <item>音频</item>
         <item>图片</item>
         <item>文件</item>
+        <item>视频</item>
     </string-array>
 
     <string-array name="layout_type">
@@ -196,6 +197,7 @@
     <string-array name="composeEngine">
         <item>Material Design</item>
         <item>Miuix</item>
+        <item>Mochi</item>
     </string-array>
 
     <string-array name="customMode">

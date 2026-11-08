@@ -18,6 +18,7 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.WindowInsetsSides
 import androidx.compose.foundation.layout.consumeWindowInsets
 import androidx.compose.foundation.layout.defaultMinSize
@@ -68,6 +69,7 @@ import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import androidx.core.net.toUri
 import androidx.lifecycle.Lifecycle
@@ -95,8 +97,16 @@ import io.legado.app.ui.main.home.HomeRouteScreen
 import io.legado.app.ui.main.my.MyRouteScreen
 import io.legado.app.ui.main.my.PrefClickEvent
 import io.legado.app.ui.main.rss.RssRouteScreen
+import io.legado.app.ui.theme.ComposeEngine
 import io.legado.app.ui.theme.LegadoTheme
-import io.legado.app.ui.theme.ThemeResolver
+import io.legado.app.ui.theme.LocalBottomOverlayPadding
+import io.legado.app.ui.theme.ProvideAppContentColor
+import io.legado.app.ui.widget.components.mochi.AppMochiNavigationBar
+import kotlinx.collections.immutable.toImmutableList
+import ui.feice.mochi.basic.MochiTabItem
+import ui.feice.mochi.effect.glass.LocalMochiBackdrop
+import ui.feice.mochi.effect.glass.rememberMochiBackdrop
+import ui.feice.mochi.effect.glass.mochiBackdropSource
 import io.legado.app.ui.widget.components.AppScaffold
 import io.legado.app.ui.widget.components.FloatingBottomBar
 import io.legado.app.ui.widget.components.FloatingBottomBarItem
@@ -276,8 +286,28 @@ fun MainScreen(
     val useLiquidGlass = useFloatingBottomBar &&
             mainUiState.useFloatingBottomBarLiquidGlass &&
             Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU
+    var floatingFooterHeight by remember { mutableStateOf(0.dp) }
     val alwaysShowLabel = labelVisibilityMode == "labeled"
     val showLabel = !isUnlabeled
+    val isMochi = LegadoTheme.composeEngine == ComposeEngine.Mochi
+    val mochiPageBackdrop = if (isMochi && useLiquidGlass) rememberMochiBackdrop(LegadoTheme.colorScheme.background) else null
+    val mochiTabs = destinations.map { destination ->
+        val label = stringResource(destination.labelId)
+        val iconPath = mainUiState.customIconPath(destination)
+        val selectedPath = mainUiState.selectedCustomIconPath(destination).ifEmpty { iconPath }
+        MochiTabItem(
+            label = label,
+            selectedIcon = { tint -> ProvideAppContentColor(tint) {
+                NavigationIcon(destination, true, selectedPath, tint = tint)
+            } },
+            icon = { tint -> ProvideAppContentColor(tint) {
+                NavigationIcon(destination, false, iconPath, tint = tint)
+            } },
+        )
+    }.toImmutableList()
+    val onMochiTabSelect: (Int) -> Unit = { index ->
+        destinations.getOrNull(index)?.let { handleMainDestinationClick(index, it) }
+    }
 
     val navState = rememberWideNavigationRailState(
         initialValue = if (mainUiState.navExtended)
@@ -292,7 +322,7 @@ fun MainScreen(
             .windowInsetsPadding(mainAdaptiveInsets.only(WindowInsetsSides.Horizontal))
     ) {
         if (useRail && mainUiState.showBottomView) {
-            if (ThemeResolver.isMiuixEngine(LegadoTheme.composeEngine)) {
+            if (LegadoTheme.composeEngine == ComposeEngine.Miuix) {
                 val miuixNavState = rememberNavigationRailState(
                     initialValue = if (mainUiState.navExtended) {
                         NavigationRailValue.Expanded
@@ -473,50 +503,58 @@ fun MainScreen(
             modifier = Modifier.weight(1f),
             bottomBar = {
                 if (!useRail && mainUiState.showBottomView && !useFloatingBottomBar) {
-                    AppNavigationBar(
-                        showLabel = showLabel,
-                        alwaysShowLabel = alwaysShowLabel
-                    ) {
-                        destinations.forEachIndexed { index, destination ->
-                            val selected = pagerState.targetPage == index
-                            val customIconPath = mainUiState.customIconPath(destination)
-                            val selectedCustomIconPath =
-                                mainUiState.selectedCustomIconPath(destination)
-                            val destinationLabel = stringResource(destination.labelId)
-                            AppNavigationBarItem(
-                                modifier = Modifier.semantics(mergeDescendants = true) {
-                                    contentDescription = destinationLabel
-                                },
-                                selected = selected,
-                                onClick = {
-                                    handleMainDestinationClick(index, destination)
-                                },
-                                labelString = stringResource(destination.labelId),
-                                iconVector = AppIcons.mainDestination(destination, selected),
-                                m3Icon = {
-                                    NavigationIcon(
-                                        destination = destination,
-                                        selected = selected,
-                                        customIconPath = if (selected) {
-                                            selectedCustomIconPath.ifEmpty { customIconPath }
-                                        } else customIconPath,
-                                    )
-                                },
-                                m3IndicatorColor = GlassDefaults.glassColor(
-                                    noBlurColor = LegadoTheme.colorScheme.secondaryContainer,
-                                    blurAlpha = GlassDefaults.ThickBlurAlpha
-                                ),
-                                m3ShowLabel = showLabel,
-                                m3AlwaysShowLabel = alwaysShowLabel,
-                                useCustomIcon =
-                                    customIconPath.isNotEmpty() || selectedCustomIconPath.isNotEmpty(),
-                            )
+                    if (isMochi) AppMochiNavigationBar(
+                        mochiTabs, pagerState.targetPage, onMochiTabSelect,
+                        showLabel = showLabel, alwaysShowLabel = alwaysShowLabel,
+                    ) else {
+                        AppNavigationBar(
+                            showLabel = showLabel,
+                            alwaysShowLabel = alwaysShowLabel
+                        ) {
+                            destinations.forEachIndexed { index, destination ->
+                                val selected = pagerState.targetPage == index
+                                val customIconPath = mainUiState.customIconPath(destination)
+                                val selectedCustomIconPath =
+                                    mainUiState.selectedCustomIconPath(destination)
+                                val destinationLabel = stringResource(destination.labelId)
+                                AppNavigationBarItem(
+                                    modifier = Modifier.semantics(mergeDescendants = true) {
+                                        contentDescription = destinationLabel
+                                    },
+                                    selected = selected,
+                                    onClick = {
+                                        handleMainDestinationClick(index, destination)
+                                    },
+                                    labelString = stringResource(destination.labelId),
+                                    iconVector = AppIcons.mainDestination(destination, selected),
+                                    m3Icon = {
+                                        NavigationIcon(
+                                            destination = destination,
+                                            selected = selected,
+                                            customIconPath = if (selected) {
+                                                selectedCustomIconPath.ifEmpty { customIconPath }
+                                            } else customIconPath,
+                                        )
+                                    },
+                                    m3IndicatorColor = GlassDefaults.glassColor(
+                                        noBlurColor = LegadoTheme.colorScheme.secondaryContainer,
+                                        blurAlpha = GlassDefaults.ThickBlurAlpha
+                                    ),
+                                    m3ShowLabel = showLabel,
+                                    m3AlwaysShowLabel = alwaysShowLabel,
+                                    useCustomIcon =
+                                        customIconPath.isNotEmpty() || selectedCustomIconPath.isNotEmpty(),
+                                )
+                            }
                         }
                     }
                 }
             },
-            // The row owns side cutouts, child pages own top bars, and this scaffold owns the bottom.
-            contentWindowInsets = mainAdaptiveInsets.only(WindowInsetsSides.Bottom)
+            // Floating content draws to the window edge; only scrollable content's end padding
+            // reserves the measured overlay (including the system inset it actually handles).
+            contentWindowInsets =
+                if (useFloatingBottomBar) WindowInsets(0)
+                else mainAdaptiveInsets.only(WindowInsetsSides.Bottom)
         ) { padding ->
             Box(
                 modifier = Modifier
@@ -525,7 +563,7 @@ fun MainScreen(
                     .consumeWindowInsets(padding)
             ) {
                 Box(
-                    modifier = Modifier.then(
+                    modifier = Modifier.mochiBackdropSource(mochiPageBackdrop).then(
                         if (useLiquidGlass) {
                             Modifier
                                 .hazeSource(hazeState)
@@ -552,7 +590,11 @@ fun MainScreen(
                         val pageLifecycleOwner = rememberMainPageLifecycleOwner(
                             isActive = page == pagerState.currentPage
                         )
-                        CompositionLocalProvider(LocalLifecycleOwner provides pageLifecycleOwner) {
+                        CompositionLocalProvider(
+                            LocalLifecycleOwner provides pageLifecycleOwner,
+                            LocalBottomOverlayPadding provides
+                                if (useFloatingBottomBar) floatingFooterHeight + 12.dp else 0.dp,
+                        ) {
                             when (destination) {
                             MainDestination.Home -> HomeRouteScreen(
                                 onOpenBook = { book ->
@@ -677,7 +719,10 @@ fun MainScreen(
                         ),
                         label = "homePlaybackControls",
                     )
-                    FloatingNavigationContainer(modifier = Modifier.align(Alignment.BottomCenter)) {
+                    FloatingNavigationContainer(
+                        modifier = Modifier.align(Alignment.BottomCenter),
+                        onHeightChanged = { floatingFooterHeight = it },
+                    ) {
                         val gap = ReadAloudBarCapsuleEndPadding
                         val capsuleReserve by animateDpAsState(
                             targetValue = if (readAloudCapsuleShown) ReadAloudBarCapsuleSize + gap else 0.dp,
@@ -702,10 +747,25 @@ fun MainScreen(
                                 (expandedCapsuleWidth - ReadAloudBarCapsuleSize) * expansion
                         val navigationWidth = normalNavigationWidth +
                                 (ReadAloudBarCapsuleSize.coerceAtMost(maxWidth) - normalNavigationWidth) * expansion
-                        FloatingBottomBar(
+                        if (isMochi && !playbackControlsExpanded && expansion <= 0f) {
+                            CompositionLocalProvider(LocalMochiBackdrop provides mochiPageBackdrop) {
+                                AppMochiNavigationBar(
+                                    mochiTabs, pagerState.targetPage, onMochiTabSelect,
+                                    Modifier.align(Alignment.BottomStart)
+                                        .offset(x = navigationStartInset).width(navigationWidth),
+                                    showLabel = showLabel, alwaysShowLabel = alwaysShowLabel,
+                                    floating = true, glass = useLiquidGlass,
+                                )
+                            }
+                        } else FloatingBottomBar(
                             modifier = Modifier
                                 .align(Alignment.BottomStart)
-                                .offset(x = navigationStartInset * (1f - expansion))
+                                .offset {
+                                    IntOffset(
+                                        x = (navigationStartInset * (1f - expansion)).roundToPx(),
+                                        y = 0,
+                                    )
+                                }
                                 .width(navigationWidth),
                             compactProgress = expansion,
                             expandedWidth = normalNavigationWidth,
@@ -900,7 +960,8 @@ private fun NavigationIcon(
     destination: MainDestination,
     selected: Boolean,
     customIconPath: String,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    tint: Color = Color.Unspecified,
 ) {
     if (customIconPath.isNotEmpty()) {
         AsyncImage(
@@ -910,6 +971,6 @@ private fun NavigationIcon(
         )
     } else {
         val icon = AppIcons.mainDestination(destination, selected)
-        AppIcon(icon, contentDescription = null, modifier = modifier)
+        AppIcon(icon, contentDescription = null, modifier = modifier, tint = tint)
     }
 }
