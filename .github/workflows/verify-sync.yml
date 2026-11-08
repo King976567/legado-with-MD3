@@ -88,6 +88,7 @@ jobs:
         timeout-minutes: 20
         run: |
           ./gradlew :app:compileApp${{ matrix.product }}DebugUnitTestKotlin \
+            --init-script .github/scripts/official-kotlin-compiler.gradle \
             :app:compileApp${{ matrix.product }}DebugAndroidTestKotlin \
             --project-prop ksp.incremental=false \
             --max-workers=2 --no-parallel --info \
@@ -97,6 +98,7 @@ jobs:
         timeout-minutes: 20
         run: |
           ./gradlew testApp${{ matrix.product }}DebugUnitTest \
+            --init-script .github/scripts/official-kotlin-compiler.gradle \
             --init-script .github/scripts/shard-tests.gradle \
             --project-prop ciTestShardIndex=${{ matrix.shard }} \
             --project-prop ciTestShardCount=4 \
@@ -109,6 +111,7 @@ jobs:
         timeout-minutes: 20
         run: |
           ./gradlew lintApp${{ matrix.product }}Debug verifyConfigArchitecture \
+            --init-script .github/scripts/official-kotlin-compiler.gradle \
             --project-prop ksp.incremental=false \
             --max-workers=2 --no-parallel --info \
             --continue --no-daemon --no-configuration-cache
@@ -117,6 +120,7 @@ jobs:
         timeout-minutes: 20
         run: |
           ./gradlew assembleApp${{ matrix.product }}Debug \
+            --init-script .github/scripts/official-kotlin-compiler.gradle \
             --init-script .github/scripts/arm64-only.gradle \
             --project-prop ksp.incremental=false \
             --max-workers=2 --no-parallel --info \

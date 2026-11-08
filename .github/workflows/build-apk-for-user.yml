@@ -65,6 +65,7 @@ jobs:
           # appComic -> AppComic：Gradle 变体任务名是驼峰形式
           PRODUCT_CAP=$(echo "$PRODUCT" | awk '{print toupper(substr($0,1,1)) substr($0,2)}')
           ./gradlew assemble${PRODUCT_CAP}Debug \
+            --init-script .github/scripts/official-kotlin-compiler.gradle \
             --init-script .github/scripts/arm64-only.gradle \
             --project-prop ksp.incremental=false \
             --max-workers=2 --no-parallel --no-daemon --no-configuration-cache

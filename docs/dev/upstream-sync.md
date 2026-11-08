@@ -25,7 +25,7 @@ Comic 的完整 JVM 测试按原始编译类清单分为四片并行运行。每
 
 CI 在构建前从 Gradle 官方 GitHub release API 预取分发 ZIP，要求官方资产元数据、文件大小与 Wrapper 固定的 SHA256 全部一致，再交由 Wrapper 校验、解压。已完成的 Wrapper 缓存直接复用；不更换 Gradle 版本或分发 URL，不使用第三方镜像。下载步骤仅使用只读令牌，候选 Gradle 进程不继承该步骤的令牌。
 
-同一步骤从 JetBrains 官方资产接口预取版本目录指定的 Kotlin 编译器 JAR，同时核对官方 SHA256、Maven Central SHA1 和文件大小，再原子写入 Gradle artifact 缓存。Gradle 自行解析元数据、核验候选文件并登记缓存，不伪造 metadata；仍需要 Maven 的 POM、HEAD 和 checksum 请求可用。这样避开大文件下载的临时 504，不替换依赖版本或跳过依赖验证。
+同一步骤从 JetBrains 官方资产接口预取版本目录指定的 Kotlin 编译器 JAR，同时核对官方 SHA256、Maven Central SHA1 和文件大小，并保留经 Maven SHA1 验证的官方原始 POM。CI 初始化脚本仅将该模块的精确版本指向专用本地 Maven 仓库，Gradle 正常解析 POM 与传递依赖，不伪造 Gradle metadata；其他依赖继续使用原仓库。这样避开该大文件下载及 HEAD 重定向的临时 504，不替换依赖版本或跳过依赖验证。
 
 验证绑定候选提交 SHA 和目标分支基线 SHA。若构建期间目标分支更新，则标记失败并要求重新运行同步；旧结果不能代表新的合并结果。构建任务仅有只读令牌，结果发布由独立 job 完成。
 

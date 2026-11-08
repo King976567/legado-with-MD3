@@ -1,0 +1,54 @@
+import java.security.MessageDigest
+import org.gradle.api.GradleException
+
+// CI-only recovery for the official compiler JAR's failing remote HEAD redirect.
+// The preparation step keeps the real Maven POM and its transitive dependencies.
+gradle.settingsEvaluated { settings ->
+    def catalog = new File(settings.settingsDir, 'gradle/libs.versions.toml').getText('UTF-8')
+    def matches = (catalog =~ /(?m)^\s*kotlin\s*=\s*"([0-9]+\.[0-9]+\.[0-9]+)"\s*(?:#.*)?$/)
+    if (matches.size() != 1) {
+        throw new GradleException('A single stable Kotlin version is required in the version catalog')
+    }
+    String version = matches[0][1]
+    def repository = new File(gradle.gradleUserHomeDir, 'codex-official-kotlin-maven')
+    def directory = new File(repository, "org/jetbrains/kotlin/kotlin-compiler-embeddable/${version}")
+    def sha1 = { File source ->
+        def digest = MessageDigest.getInstance('SHA-1')
+        source.withInputStream { stream ->
+            byte[] buffer = new byte[1024 * 1024]
+            int count
+            while ((count = stream.read(buffer)) != -1) digest.update(buffer, 0, count)
+        }
+        digest.digest().encodeHex().toString()
+    }
+    ['jar', 'pom'].each { extension ->
+        def artifact = new File(directory, "kotlin-compiler-embeddable-${version}.${extension}")
+        def checksum = new File(directory, "${artifact.name}.sha1")
+        if (!artifact.isFile() || !checksum.isFile()) {
+            throw new GradleException('Prepare the complete official Kotlin Maven repository before Gradle')
+        }
+        String expected = checksum.getText('US-ASCII').trim()
+        if (!(expected ==~ /[0-9a-f]{40}/) || sha1(artifact) != expected) {
+            throw new GradleException('The prepared official Kotlin Maven repository has an invalid checksum')
+        }
+    }
+    def configureRepository = { repositories ->
+        repositories.exclusiveContent {
+            forRepository {
+                repositories.maven {
+                    name = 'PreparedOfficialKotlinCompiler'
+                    url = repository.toURI()
+                    metadataSources {
+                        mavenPom()
+                        ignoreGradleMetadataRedirection()
+                    }
+                }
+            }
+            filter { includeVersion('org.jetbrains.kotlin', 'kotlin-compiler-embeddable', version) }
+        }
+    }
+    // settings.gradle uses FAIL_ON_PROJECT_REPOS, so do not add project repositories.
+    configureRepository(settings.dependencyResolutionManagement.repositories)
+    // Do not make pluginManagement exclusive: app/mochi-compat.gradle adds buildscript repositories.
+    gradle.beforeProject { project -> configureRepository(project.buildscript.repositories) }
+}

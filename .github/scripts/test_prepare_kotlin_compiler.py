@@ -14,6 +14,24 @@ import prepare_kotlin_compiler as prepare
 CONTENTS = b"verified official Kotlin compiler fixture"
 SHA1 = hashlib.sha1(CONTENTS).hexdigest()
 SHA256 = hashlib.sha256(CONTENTS).hexdigest()
+POM = b'''<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0">
+  <!-- Preserve the official POM, including its dependencies and formatting. -->
+  <modelVersion>4.0.0</modelVersion>
+  <groupId>org.jetbrains.kotlin</groupId>
+  <artifactId>kotlin-compiler-embeddable</artifactId>
+  <version>2.4.20</version>
+  <dependencies>
+    <dependency>
+      <groupId>org.jetbrains.kotlin</groupId>
+      <artifactId>kotlin-stdlib</artifactId>
+      <version>2.4.20</version>
+      <scope>runtime</scope>
+    </dependency>
+  </dependencies>
+</project>
+'''
+POM_SHA1 = hashlib.sha1(POM).hexdigest()
 
 
 class CompilerPreparationTest(unittest.TestCase):
@@ -29,6 +47,27 @@ class CompilerPreparationTest(unittest.TestCase):
                       "url": f"{prepare.API}/releases/assets/587891620"}
         self.metadata = mock.patch.object(prepare, "get_release_asset", return_value=self.asset)
         self.checksum = mock.patch.object(prepare, "get_maven_sha1", return_value=SHA1)
+        self.pom = mock.patch.object(prepare, "get_maven_pom", return_value=(POM, POM_SHA1))
+
+    def repository_files(self):
+        destination = prepare.artifact_path(self.config)
+        return {destination: CONTENTS, destination.with_suffix(".pom"): POM,
+                destination.with_suffix(".jar.sha1"): (SHA1 + "\n").encode(),
+                destination.with_suffix(".pom.sha1"): (POM_SHA1 + "\n").encode()}
+
+    def write_repository(self):
+        files = self.repository_files()
+        for path, contents in files.items():
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_bytes(contents)
+        return files
+
+    def assert_repository(self):
+        expected = self.repository_files()
+        actual = {path: path.read_bytes() for path in prepare.repository_path(self.config).rglob("*")
+                  if path.is_file()}
+        self.assertEqual(expected, actual)
+        self.assertFalse((self.config.gradle_user_home / "caches").exists())
 
     def test_version_catalog_selects_kotlin_version_and_original_artifact_name(self):
         self.assertEqual("2.4.20", self.config.version)
@@ -42,14 +81,18 @@ class CompilerPreparationTest(unittest.TestCase):
                 with self.assertRaises(prepare.PrepareError):
                     prepare.load_compiler(self.versions, self.root)
 
-    def test_actual_gradle_sha1_artifact_cache_layout(self):
-        sha1 = "23b042894dcabe39edd0f8bd30b7be0f25fe9933"
-        expected = self.root / "gradle/caches/modules-2/files-2.1/org.jetbrains.kotlin/kotlin-compiler-embeddable/2.4.20" / sha1 / self.config.filename
-        self.assertEqual(expected, prepare.artifact_path(self.config, sha1))
-        self.assertEqual("abc", prepare.artifact_path(self.config, "0" * 37 + "abc").parent.name)
-        for bad in ("../escape", "a" * 39, "G" * 40):
-            with self.assertRaises(prepare.PrepareError):
-                prepare.artifact_path(self.config, bad)
+    def test_dedicated_repository_has_standard_maven_layout_and_rejects_escape(self):
+        repository = self.root / "gradle/codex-official-kotlin-maven"
+        expected = repository / "org/jetbrains/kotlin/kotlin-compiler-embeddable/2.4.20" / self.config.filename
+        self.assertEqual(repository, prepare.repository_path(self.config))
+        self.assertEqual(expected, prepare.artifact_path(self.config))
+        self.assertNotIn("files-2.1", str(expected))
+        for config in (prepare.Compiler("../../../../../../escape", self.config.filename, self.config.gradle_user_home),
+                       prepare.Compiler(self.config.version, str(self.root / "escaped.jar"), self.config.gradle_user_home)):
+            with self.subTest(config=config):
+                with self.assertRaises(prepare.PrepareError):
+                    prepare.artifact_path(config)
+        self.assertFalse(self.config.gradle_user_home.exists())
 
     def test_release_metadata_selects_exact_official_asset(self):
         with mock.patch.object(prepare, "_open", return_value=io.BytesIO(json.dumps({"assets": [self.asset]}).encode())) as opened:
@@ -58,8 +101,8 @@ class CompilerPreparationTest(unittest.TestCase):
         self.assertEqual("application/vnd.github+json", opened.call_args.args[2])
 
     def test_release_rejects_duplicate_or_invalid_metadata(self):
-        invalid = [{"assets": []}, {"assets": [self.asset, self.asset]}]
-        for changes in ({"id": True}, {"size": -1}, {"size": True},
+        invalid = [{"assets": []}, {"assets": [self.asset, self.asset]}, {"assets": None}, {}]
+        for changes in ({"id": True}, {"id": 0}, {"size": -1}, {"size": True},
                         {"url": "https://evil.invalid/asset"},
                         {"url": f"{prepare.API}/releases/assets/123"},
                         {"digest": None}, {"digest": "sha256:wrong"}):
@@ -70,79 +113,150 @@ class CompilerPreparationTest(unittest.TestCase):
                     with self.assertRaises(prepare.PrepareError):
                         prepare.get_release_asset(self.config, "token")
 
-    def test_maven_sha1_request_never_carries_github_authorization(self):
+    def test_maven_jar_checksum_and_pom_requests_never_carry_github_authorization(self):
         opener = mock.Mock()
-        opener.open.return_value = io.BytesIO((SHA1 + "\n").encode())
+        opener.open.side_effect = [io.BytesIO((SHA1 + "\n").encode()), io.BytesIO(POM),
+                                   io.BytesIO((POM_SHA1 + "\n").encode())]
         with mock.patch.object(prepare.urllib.request, "build_opener", return_value=opener):
             self.assertEqual(SHA1, prepare.get_maven_sha1(self.config))
-        request = opener.open.call_args.args[0]
-        self.assertTrue(request.full_url.startswith(prepare.MAVEN))
-        self.assertTrue(request.full_url.endswith(self.config.filename + ".sha1"))
-        self.assertFalse(request.has_header("Authorization"))
+            self.assertEqual((POM, POM_SHA1), prepare.get_maven_pom(self.config))
+        pom_filename = self.config.filename.removesuffix(".jar") + ".pom"
+        self.assertEqual([f"{prepare.MAVEN}/2.4.20/{filename}" for filename in
+                          (self.config.filename + ".sha1", pom_filename, pom_filename + ".sha1")],
+                         [call.args[0].full_url for call in opener.open.call_args_list])
+        for call in opener.open.call_args_list:
+            self.assertFalse(call.args[0].has_header("Authorization"))
 
     def test_maven_sha1_rejects_malformed_or_extended_checksums(self):
-        for value in ("bad", SHA1 + " extra", "f" * 41):
+        for value in ("bad", SHA1 + " extra", "f" * 41, "f" * 257):
             opener = mock.Mock()
             opener.open.return_value = io.BytesIO(value.encode())
             with mock.patch.object(prepare.urllib.request, "build_opener", return_value=opener):
                 with self.assertRaises(prepare.PrepareError):
                     prepare.get_maven_sha1(self.config)
+        with mock.patch.object(prepare, "_maven_bytes", return_value=(SHA1.upper() + "\n").encode()):
+            self.assertEqual(SHA1, prepare.get_maven_sha1(self.config))
 
     def test_maven_checksum_redirect_rejects_other_hosts_and_credentials(self):
         request = urllib.request.Request(prepare.MAVEN + "/file.sha1")
         for target in ("https://github.com/asset", "http://repo.maven.apache.org/a",
-                       "https://user:pass@repo.maven.apache.org/a", "https://repo.maven.apache.org.evil.invalid/a"):
+                       "https://user:pass@repo.maven.apache.org/a", "https://repo.maven.apache.org:444/a",
+                       "https://repo.maven.apache.org.evil.invalid/a"):
             with self.subTest(target=target):
                 with self.assertRaises(prepare.PrepareError):
                     prepare.MavenRedirectHandler().redirect_request(request, None, 302, "Found", {}, target)
 
-    def test_existing_jar_requires_size_and_both_checksums_before_skipping(self):
-        destination = prepare.artifact_path(self.config, SHA1)
+    def test_official_pom_bytes_and_dependencies_are_preserved(self):
+        with mock.patch.object(prepare, "_maven_bytes", side_effect=[POM, POM_SHA1.encode()]) as fetched:
+            self.assertEqual((POM, POM_SHA1), prepare.get_maven_pom(self.config))
+        filename = self.config.filename.removesuffix(".jar") + ".pom"
+        self.assertEqual([mock.call(self.config, filename, 1024 * 1024),
+                          mock.call(self.config, filename + ".sha1", 256)], fetched.call_args_list)
+
+    def test_pom_must_match_its_official_maven_checksum(self):
+        with mock.patch.object(prepare, "_maven_bytes", side_effect=[POM, b"f" * 40]):
+            with self.assertRaises(prepare.PrepareError):
+                prepare.get_maven_pom(self.config)
+
+    def test_pom_requires_valid_xml_exact_coordinates_and_no_relocation(self):
+        invalid = [b"<project", POM.replace(b' xmlns="http://maven.apache.org/POM/4.0.0"', b""),
+                   POM.replace(b"org.jetbrains.kotlin", b"untrusted.group", 1),
+                   POM.replace(b"kotlin-compiler-embeddable", b"other-artifact", 1),
+                   POM.replace(b"2.4.20", b"2.4.21", 1),
+                   POM.replace(b"</project>", b"<distributionManagement><relocation>"
+                               b"<artifactId>other-artifact</artifactId></relocation>"
+                               b"</distributionManagement></project>")]
+        for contents in invalid:
+            with self.subTest(contents=contents):
+                sha1 = hashlib.sha1(contents).hexdigest().encode()
+                with mock.patch.object(prepare, "_maven_bytes", side_effect=[contents, sha1]):
+                    with self.assertRaises(prepare.PrepareError):
+                        prepare.get_maven_pom(self.config)
+
+    def test_complete_repository_requires_jar_size_and_both_hashes_before_skipping(self):
+        self.write_repository()
+        with self.metadata, self.checksum, self.pom, mock.patch.object(prepare, "download_compiler") as download:
+            self.assertEqual("cached-repository", prepare.prepare_compiler(self.config, "token", cached_only=True))
+        download.assert_not_called()
+        cases = [(self.asset | {"size": len(CONTENTS) + 1}, SHA1),
+                 (self.asset | {"digest": "sha256:" + "f" * 64}, SHA1),
+                 (self.asset, "f" * 40)]
+        for asset, sha1 in cases:
+            with self.subTest(asset=asset, sha1=sha1):
+                with mock.patch.object(prepare, "get_release_asset", return_value=asset), self.pom:
+                    with mock.patch.object(prepare, "get_maven_sha1", return_value=sha1):
+                        with mock.patch.object(prepare, "download_compiler") as download:
+                            with self.assertRaises(prepare.PrepareError):
+                                prepare.prepare_compiler(self.config, cached_only=True)
+                        download.assert_not_called()
+                self.assert_repository()
+
+    def test_cached_only_rejects_missing_or_invalid_pom_and_checksum_companions(self):
+        destination = prepare.artifact_path(self.config)
+        companions = [path for path in self.repository_files() if path != destination]
+        for companion in companions:
+            for missing in (True, False):
+                with self.subTest(companion=companion.name, missing=missing):
+                    self.write_repository()
+                    if missing:
+                        companion.unlink()
+                    else:
+                        companion.write_bytes(b"invalid cached companion")
+                    before = {path: path.read_bytes() for path in destination.parent.iterdir()}
+                    with self.metadata, self.checksum, self.pom, mock.patch.object(prepare, "download_compiler") as download:
+                        with self.assertRaises(prepare.PrepareError):
+                            prepare.prepare_compiler(self.config, cached_only=True)
+                    download.assert_not_called()
+                    self.assertEqual(before, {path: path.read_bytes() for path in destination.parent.iterdir()})
+
+    def test_missing_companions_are_repaired_without_redownloading_valid_jar(self):
+        destination = prepare.artifact_path(self.config)
         destination.parent.mkdir(parents=True)
         destination.write_bytes(CONTENTS)
-        with self.metadata, self.checksum, mock.patch.object(prepare, "download_compiler") as download:
-            self.assertEqual("cached-jar", prepare.prepare_compiler(self.config, "token"))
+        with self.metadata, self.checksum, self.pom, mock.patch.object(prepare, "download_compiler") as download:
+            self.assertEqual("prepared-repository", prepare.prepare_compiler(self.config))
         download.assert_not_called()
+        self.assert_repository()
 
     def test_correct_size_with_wrong_hash_is_replaced_after_verified_download(self):
-        destination = prepare.artifact_path(self.config, SHA1)
+        destination = prepare.artifact_path(self.config)
         destination.parent.mkdir(parents=True)
         destination.write_bytes(b"x" * len(CONTENTS))
-        with self.metadata, self.checksum, mock.patch.object(prepare, "_open", return_value=io.BytesIO(CONTENTS)):
-            self.assertEqual("downloaded", prepare.prepare_compiler(self.config))
-        self.assertEqual(CONTENTS, destination.read_bytes())
-        self.assertEqual([destination], list(destination.parent.iterdir()))
-        self.assertFalse((self.config.gradle_user_home / "caches/modules-2/metadata-2.107").exists())
+        with self.metadata, self.checksum, self.pom, mock.patch.object(prepare, "_open", return_value=io.BytesIO(CONTENTS)) as opened:
+            self.assertEqual("prepared-repository", prepare.prepare_compiler(self.config, "private-token"))
+        self.assertEqual((self.asset["url"], "private-token", "application/octet-stream"), opened.call_args.args)
+        self.assert_repository()
 
     def test_bad_sha1_sha256_or_length_keeps_previous_jar_and_cleans_part(self):
-        destination = prepare.artifact_path(self.config, SHA1)
-        destination.parent.mkdir(parents=True)
-        previous = b"old invalid cache file"
+        destination = prepare.artifact_path(self.config)
         cases = [(CONTENTS[:-1], self.asset, SHA1), (CONTENTS + b"extra", self.asset, SHA1),
                  (CONTENTS, self.asset | {"digest": "sha256:" + "f" * 64}, SHA1),
-                 (b"x" * len(CONTENTS), self.asset, SHA1)]
+                 (CONTENTS, self.asset, "f" * 40), (b"x" * len(CONTENTS), self.asset, SHA1)]
         for contents, asset, sha1 in cases:
             with self.subTest(size=len(contents), digest=asset["digest"]):
-                destination.write_bytes(previous)
-                with mock.patch.object(prepare, "get_release_asset", return_value=asset), self.checksum:
-                    with mock.patch.object(prepare, "_open", return_value=io.BytesIO(contents)):
-                        with self.assertRaises(prepare.PrepareError):
-                            prepare.prepare_compiler(self.config)
-                self.assertEqual(previous, destination.read_bytes())
-                self.assertEqual([destination], list(destination.parent.iterdir()))
+                previous = self.write_repository()
+                previous[destination] = b"previous compiler file"
+                destination.write_bytes(previous[destination])
+                with mock.patch.object(prepare, "get_release_asset", return_value=asset), self.pom:
+                    with mock.patch.object(prepare, "get_maven_sha1", return_value=sha1):
+                        with mock.patch.object(prepare, "_open", return_value=io.BytesIO(contents)):
+                            with self.assertRaises(prepare.PrepareError):
+                                prepare.prepare_compiler(self.config)
+                self.assertEqual(previous, {path: path.read_bytes() for path in destination.parent.iterdir()})
 
     def test_valid_download_cannot_succeed_when_maven_sha1_disagrees(self):
         different_sha1 = "f" * 40
-        destination = prepare.artifact_path(self.config, different_sha1)
-        with self.metadata, mock.patch.object(prepare, "get_maven_sha1", return_value=different_sha1):
+        destination = prepare.artifact_path(self.config)
+        with self.metadata, self.pom, mock.patch.object(prepare, "get_maven_sha1", return_value=different_sha1):
             with mock.patch.object(prepare, "_open", return_value=io.BytesIO(CONTENTS)):
                 with self.assertRaises(prepare.PrepareError):
                     prepare.prepare_compiler(self.config)
         self.assertFalse(destination.exists())
+        self.assertFalse(list(prepare.repository_path(self.config).rglob("*.pom")))
         self.assertFalse(list(destination.parent.glob("*.part")))
 
-    def test_cached_only_does_not_download_or_create_missing_cache_directories(self):
-        with self.metadata, self.checksum, mock.patch.object(prepare, "download_compiler") as download:
+    def test_cached_only_does_not_download_or_create_missing_repository_directories(self):
+        with self.metadata, self.checksum, self.pom, mock.patch.object(prepare, "download_compiler") as download:
             with self.assertRaises(prepare.PrepareError):
                 prepare.prepare_compiler(self.config, cached_only=True)
         download.assert_not_called()

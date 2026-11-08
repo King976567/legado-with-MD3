@@ -203,6 +203,7 @@ jobs:
           PRODUCT_CAP=$(echo ${{ env.product }} | awk '{print toupper(substr($0,1,1))substr($0,2)}')
           TYPE_CAP=$(echo ${{ env.type }} | awk '{print toupper(substr($0,1,1))substr($0,2)}')
           ./gradlew assemble${PRODUCT_CAP}${TYPE_CAP} \
+            --init-script .github/scripts/official-kotlin-compiler.gradle \
             --init-script .github/scripts/arm64-only.gradle \
             --project-prop ksp.incremental=false \
             --max-workers=2 --no-parallel --no-configuration-cache
