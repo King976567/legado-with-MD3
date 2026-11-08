@@ -1,0 +1,101 @@
+import groovy.json.JsonOutput
+import org.gradle.api.GradleException
+import org.gradle.api.file.FileTreeElement
+import org.gradle.api.specs.Spec
+import org.gradle.api.tasks.testing.Test
+
+// CI-only class-file partitioning. Keep Gradle's JUnit discovery, resource setup,
+// classpath and per-class JVM isolation exactly as configured by the app.
+gradle.projectsEvaluated {
+    def properties = gradle.startParameter.projectProperties
+    def required = ['ciTestShardIndex', 'ciTestShardCount', 'ciTestSourceSha']
+    if (required.any { !properties.containsKey(it) }) {
+        throw new GradleException("Test sharding requires ${required.join(', ')}")
+    }
+    int shardIndex
+    int shardCount
+    try {
+        shardIndex = Integer.parseInt(properties.ciTestShardIndex)
+        shardCount = Integer.parseInt(properties.ciTestShardCount)
+    } catch (NumberFormatException error) {
+        throw new GradleException('Test shard index/count must be integers', error)
+    }
+    if (shardCount < 2 || shardCount > 4 || shardIndex < 0 || shardIndex >= shardCount) {
+        throw new GradleException('Test sharding requires 2-4 shards and a zero-based index within that range')
+    }
+    String sourceSha = properties.ciTestSourceSha
+    if (!(sourceSha ==~ /[0-9a-f]{40}/)) {
+        throw new GradleException('Test sharding requires the full lowercase source commit SHA')
+    }
+
+    def app = gradle.rootProject.findProject(':app')
+    def task = app?.tasks?.findByName('testAppComicDebugUnitTest')
+    if (!(task instanceof Test)) {
+        throw new GradleException('The Comic JVM Test task :app:testAppComicDebugUnitTest was not found')
+    }
+    def shardDirectory = app.layout.buildDirectory.dir(
+        "test-shards/${task.name}/shard-${shardIndex}",
+    )
+    def manifestFile = shardDirectory.map { it.file('shard-manifest.json') }
+    task.inputs.property('ciTestShardIndex', shardIndex)
+    task.inputs.property('ciTestShardCount', shardCount)
+    task.inputs.property('ciTestSourceSha', sourceSha)
+    task.outputs.file(manifestFile).withPropertyName('ciTestShardManifest')
+    task.reports.junitXml.outputLocation.set(shardDirectory.map { it.dir('junit') })
+    task.forkEvery = 1
+    task.maxParallelForks = 1
+
+    // Test.executeTests reads candidateClassFiles after doFirst actions. Capture
+    // that public FileTree before adding our exclusion, preserving every original
+    // include/exclude (including Spec filters), rather than guessing test names or
+    // copying Gradle's private PatternSet. The original candidate set remains a
+    // conservative task input; the explicit shard inputs separate cached results.
+    task.doFirst {
+        def candidates = {
+            def paths = new TreeSet<String>()
+            task.candidateClassFiles.visit { entry ->
+                if (!entry.directory && entry.name.endsWith('.class')) {
+                    String relativePath = entry.relativePath.pathString.replace('\\', '/')
+                    if (!paths.add(relativePath)) {
+                        throw new GradleException("Duplicate Comic test class path: ${relativePath}")
+                    }
+                }
+            }
+            paths.toList()
+        }
+        def allCandidates = candidates()
+        if (allCandidates.empty) {
+            throw new GradleException('Comic JVM test candidates are empty')
+        }
+        task.exclude({ FileTreeElement entry ->
+            // Excluding a directory would prune unrelated classes below it.
+            if (entry.directory || !entry.name.endsWith('.class')) return false
+            String relativePath = entry.relativePath.pathString.replace('\\', '/')
+            String owner = relativePath.substring(0, relativePath.length() - '.class'.length())
+            int nested = owner.indexOf('$')
+            if (nested >= 0) owner = owner.substring(0, nested)
+            Math.floorMod(owner.hashCode(), shardCount) != shardIndex
+        } as Spec<FileTreeElement>)
+        def selectedCandidates = candidates()
+        if (selectedCandidates.empty) {
+            throw new GradleException("Comic JVM test shard ${shardIndex} is empty")
+        }
+        def manifest = [
+            schemaVersion: 1,
+            taskPath: task.path,
+            variant: 'appComicDebug',
+            shardIndex: shardIndex,
+            shardCount: shardCount,
+            sourceSha: sourceSha,
+            allCandidates: allCandidates,
+            selectedCandidates: selectedCandidates,
+        ]
+        def output = manifestFile.get().asFile
+        output.parentFile.mkdirs()
+        output.setText(JsonOutput.prettyPrint(JsonOutput.toJson(manifest)) + '\n', 'UTF-8')
+        task.logger.lifecycle(
+            "Comic JVM shard ${shardIndex + 1}/${shardCount}: " +
+                "${selectedCandidates.size()} of ${allCandidates.size()} candidate class files",
+        )
+    }
+}

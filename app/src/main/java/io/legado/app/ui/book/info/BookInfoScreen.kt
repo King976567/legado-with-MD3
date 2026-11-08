@@ -8,6 +8,7 @@ import android.net.Uri
 import android.os.Message
 import android.view.MotionEvent
 import android.view.View
+import android.webkit.RenderProcessGoneDetail
 import android.webkit.WebChromeClient
 import android.webkit.WebResourceRequest
 import android.webkit.WebSettings
@@ -27,6 +28,8 @@ import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -86,8 +89,9 @@ import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.ui.layout.ContentScale
-import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.LocalWindowInfo
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.clearAndSetSemantics
@@ -110,15 +114,16 @@ import io.legado.app.data.entities.BookSource
 import io.legado.app.data.entities.SearchBook
 import io.legado.app.help.WebCacheManager
 import io.legado.app.help.coil.CoverExtras
+import io.legado.app.help.http.handleRenderProcessGone
 import io.legado.app.help.webView.WebJsExtensions
 import io.legado.app.ui.association.OnLineImportActivity
 import io.legado.app.ui.main.homepage.modules.BannerModule
+import io.legado.app.ui.theme.ComposeEngine
 import io.legado.app.ui.theme.LegadoTheme
 import io.legado.app.ui.theme.LocalAppUiConfiguration
 import io.legado.app.ui.theme.LocalLegadoThemeColors
 import io.legado.app.ui.theme.ProvideColorSchemeOverride
 import io.legado.app.ui.theme.ThemeOverrideState
-import io.legado.app.ui.theme.ThemeResolver
 import io.legado.app.ui.theme.animateColorSchemeAsState
 import io.legado.app.ui.theme.fadingEdge
 import io.legado.app.ui.theme.rememberImageSeedColor
@@ -176,6 +181,7 @@ fun BookInfoScreen(
     groups: ImmutableList<BookGroup>,
     onIntent: (BookInfoIntent) -> Unit,
     onBack: () -> Unit,
+    onOpenExplore: (title: String, url: String) -> Unit = { _, _ -> },
     sharedTransitionScope: SharedTransitionScope? = null,
     animatedVisibilityScope: AnimatedVisibilityScope? = null,
     sharedCoverKey: String? = null,
@@ -239,6 +245,7 @@ fun BookInfoScreen(
             sharedCoverKey = sharedCoverKey,
             backdropStyle = backdropStyle,
             usesDefaultCover = usesDefaultCover,
+            onOpenExplore = onOpenExplore,
             onNetworkCoverLoadError = { failedCoverPath ->
                 if (failedCoverPath == state.book?.coverPath) {
                     usesDefaultCover = true
@@ -284,8 +291,9 @@ private fun BookInfoScreenContent(
     backdropStyle: BookInfoBackdropStyle?,
     usesDefaultCover: Boolean,
     onNetworkCoverLoadError: (String?) -> Unit,
+    onOpenExplore: (title: String, url: String) -> Unit,
 ) {
-    val isMiuix = ThemeResolver.isMiuixEngine(LegadoTheme.composeEngine)
+    val isMiuix = LegadoTheme.composeEngine == ComposeEngine.Miuix
     val scrollBehavior = if (isMiuix) {
         MiuixGlassScrollBehavior(MiuixScrollBehavior())
     } else {
@@ -299,6 +307,7 @@ private fun BookInfoScreenContent(
     // 语言/字体缩放切换后可能拿到过期值（LocalContextGetResourceValueCall）。
     val jumpToAnotherAppMessage = stringResource(R.string.jump_to_another_app)
     val confirmLabel = stringResource(R.string.confirm)
+    val readingLabel = stringResource(R.string.reading)
     val jumpToAnotherApp: (Uri) -> Unit = { uri ->
         scope.launch {
             val result = snackbarHostState.showSnackbar(
@@ -329,6 +338,9 @@ private fun BookInfoScreenContent(
             if (!state.privateLocked) {
                 ExtendedFloatingActionButton(
                     onClick = { onIntent(BookInfoIntent.ReadClick) },
+                    modifier = Modifier.semantics {
+                        contentDescription = readingLabel
+                    },
                     containerColor = LegadoTheme.colorScheme.primaryContainer,
                     contentColor = LegadoTheme.colorScheme.onPrimaryContainer,
                     icon = { AppIcon(Icons.Default.Book, null) },
@@ -402,9 +414,10 @@ private fun BookInfoScreenContent(
                                                 it.trim().matches(Regex(".*\\d.*字$"))
                                         },
                                         groupNames = state.groupNames,
+                                        onKindClick = onOpenExplore,
                                         onCoverClick = { onIntent(BookInfoIntent.CoverClick) },
                                         onCoverLongClick = { onIntent(BookInfoIntent.CoverLongClick) },
-                                        onAuthorClick = { onIntent(BookInfoIntent.AuthorClick(it)) },
+                                        onAuthorClick = { longClick, author -> onIntent(BookInfoIntent.AuthorClick(longClick, author)) },
                                         onBookNameClick = { onIntent(BookInfoIntent.BookNameClick(it)) },
                                         onOriginClick = { onIntent(BookInfoIntent.OriginClick) },
                                         onNetworkCoverLoadError = {
@@ -688,9 +701,10 @@ private fun BookInfoLockedContent(
                 highlightedTags = emptyList(),
                 kindLabels = emptyList(),
                 groupNames = null,
+                onKindClick = { _, _ -> },
                 onCoverClick = {},
                 onCoverLongClick = {},
-                onAuthorClick = {},
+                onAuthorClick = { _, _ -> },
                 onBookNameClick = {},
                 onOriginClick = {},
                 onNetworkCoverLoadError = {},
@@ -1100,15 +1114,17 @@ internal fun BookInfoOverflowMenu(
     }
 }
 
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
 private fun BookInfoHeader(
     book: BookInfoBookUi,
     highlightedTags: List<HighlightedTag>,
     kindLabels: List<String>,
     groupNames: String?,
+    onKindClick: (String, String) -> Unit,
     onCoverClick: () -> Unit,
     onCoverLongClick: () -> Unit,
-    onAuthorClick: (Boolean) -> Unit,
+    onAuthorClick: (Boolean, String?) -> Unit,
     onBookNameClick: (Boolean) -> Unit,
     onOriginClick: () -> Unit,
     onNetworkCoverLoadError: () -> Unit,
@@ -1250,15 +1266,38 @@ private fun BookInfoHeader(
                         )
                     }
                 }
-                AnimatedTextLine(
-                    text = stringResource(R.string.author_show, book.realAuthor),
-                    style = LegadoTheme.typography.bodyLarge,
-                    color = LegadoTheme.colorScheme.onSurfaceVariant,
-                    modifier = Modifier.combinedClickable(
-                        onClick = { onAuthorClick(false) },
-                        onLongClick = { onAuthorClick(true) }
+                val authorLabels = remember(book.realAuthor) {
+                    book.realAuthor.split(",", "，")
+                        .map { it.trim() }
+                        .filter { it.isNotBlank() }
+                }
+                if (authorLabels.size > 1) {
+                    FlowRow(
+                        horizontalArrangement = Arrangement.spacedBy(12.dp),
+                    ) {
+                        authorLabels.forEach { author ->
+                            AnimatedTextLine(
+                                text = author,
+                                style = LegadoTheme.typography.bodyLarge,
+                                color = LegadoTheme.colorScheme.onSurfaceVariant,
+                                modifier = Modifier.combinedClickable(
+                                    onClick = { onAuthorClick(false, author) },
+                                    onLongClick = { onAuthorClick(true, author) }
+                                )
+                            )
+                        }
+                    }
+                } else {
+                    AnimatedTextLine(
+                        text = stringResource(R.string.author_show, book.realAuthor),
+                        style = LegadoTheme.typography.bodyLarge,
+                        color = LegadoTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.combinedClickable(
+                            onClick = { onAuthorClick(false, null) },
+                            onLongClick = { onAuthorClick(true, null) }
+                        )
                     )
-                )
+                }
                 AnimatedTextLine(
                     text = stringResource(R.string.origin_show, book.originName),
                     style = LegadoTheme.typography.labelMedium,
@@ -1302,11 +1341,13 @@ private fun BookInfoHeader(
                         items = kindLabels,
                         key = { index, label -> "kind-$index-$label" }
                     ) { _, label ->
+                        val (labelText, labelUrl) = parseKindTagLabel(label)
                         TextCard(
-                            text = label,
+                            text = labelText,
                             textStyle = LegadoTheme.typography.labelLargeEmphasized,
                             backgroundColor = LegadoTheme.colorScheme.surfaceContainer,
                             contentColor = LegadoTheme.colorScheme.onSurfaceVariant,
+                            onClick = labelUrl?.let { url -> { onKindClick(labelText, url) } },
                         )
                     }
                 }
@@ -1681,7 +1722,6 @@ private fun parseBookInfoIntro(intro: String?): BookInfoIntroContent? {
  * 在 Android 16 HWUI Vulkan 后端上引发 drawVk SIGTRAP 原生崩溃（issue #2468）。
  */
 @Composable
-@SuppressLint("SetJavaScriptEnabled")
 private fun BookInfoWebIntro(
     html: String,
     baseUrl: String?,
@@ -1690,7 +1730,10 @@ private fun BookInfoWebIntro(
 ) {
     val context = LocalContext.current
     // 初始高度先给一屏，否则 WebView 在 0 高度下不会被布局，也就无法测量内容高度
-    val pageHeight = LocalConfiguration.current.screenHeightDp.dp.coerceAtLeast(320.dp)
+    // 分屏/折叠屏下物理屏高不等于容器高，初始占位高度按窗口容器算
+    val pageHeight = with(LocalDensity.current) {
+        LocalWindowInfo.current.containerSize.height.toDp()
+    }.coerceAtLeast(320.dp)
     val textColor = LegadoTheme.colorScheme.onSurface
     val textColorHex = remember(textColor) {
         ColorUtils.intToString(textColor.toArgb())
@@ -1769,6 +1812,7 @@ private fun BookInfoWebIntro(
  * 详情页 `<useweb>` 简介的 WebView：实例级配置（settings、JS 桥接、ChromeClient），
  * 随 [WebViewContainerCompose] 的 factory 创建。
  */
+@SuppressLint("SetJavaScriptEnabled")
 private fun createBookInfoWebIntroWebView(context: Context, bookSource: BookSource?): WebView =
     WebView(context).apply {
         setBackgroundColor(android.graphics.Color.TRANSPARENT)
@@ -1831,6 +1875,8 @@ private fun buildBookInfoWebIntroHtml(html: String, textColorHex: String): Strin
     </html>
 """.trimIndent()
 
+// MissingOnRenderProcessGone：该规则按 Java PSI 查构造调用，看不到 Kotlin 匿名对象里的 override。
+@SuppressLint("MissingOnRenderProcessGone")
 private fun buildBookInfoWebIntroClient(
     context: Context,
     isCurrentLoad: () -> Boolean,
@@ -1863,6 +1909,10 @@ private fun buildBookInfoWebIntroClient(
         }
     }
 
+    // 渲染进程被系统回收时默认会连带杀掉宿主进程
+    override fun onRenderProcessGone(view: WebView, detail: RenderProcessGoneDetail): Boolean =
+        view.handleRenderProcessGone()
+
     override fun onPageStarted(view: WebView?, url: String?, favicon: Bitmap?) {
         super.onPageStarted(view, url, favicon)
         view?.let { runCatching { it.evaluateJavascript(injectionString, null) } }
@@ -1881,7 +1931,9 @@ private fun buildBookInfoWebIntroClient(
     }
 }
 
-@SuppressLint("SetJavaScriptEnabled")
+// MissingOnRenderProcessGone：onCreateWindow 里的弹窗 WebViewClient 已实现该回调，
+// 但规则按 Java PSI 查构造调用，看不到 Kotlin 匿名对象里的 override。
+@SuppressLint("SetJavaScriptEnabled", "MissingOnRenderProcessGone")
 private fun buildBookInfoWebChromeClient(): WebChromeClient = object : WebChromeClient() {
 
     override fun onCreateWindow(
@@ -1895,6 +1947,11 @@ private fun buildBookInfoWebChromeClient(): WebChromeClient = object : WebChrome
         val popup = WebView(host.context).apply {
             settings.javaScriptEnabled = true
             webViewClient = object : WebViewClient() {
+                override fun onRenderProcessGone(
+                    view: WebView,
+                    detail: RenderProcessGoneDetail,
+                ): Boolean = view.handleRenderProcessGone()
+
                 override fun shouldOverrideUrlLoading(
                     popupView: WebView?,
                     request: WebResourceRequest?,
@@ -2467,4 +2524,19 @@ private fun EventInfoCard(
             )
         }
     }
+}
+
+/**
+ * kind 标签支持「显示名|链接」编码，链接必须是 http(s) 绝对地址或根相对路径；
+ * 后半段不像链接时整段按普通文本展示，避免存量 kind 里合法的 `|` 被误拆或误跳转。
+ */
+internal fun parseKindTagLabel(label: String): Pair<String, String?> {
+    val separator = label.indexOf('|')
+    if (separator <= 0 || separator == label.lastIndex) return label to null
+    val text = label.substring(0, separator)
+    val url = label.substring(separator + 1).trim()
+    val isLink = url.startsWith("http://", ignoreCase = true) ||
+        url.startsWith("https://", ignoreCase = true) ||
+        url.startsWith("/")
+    return if (isLink) text to url else label to null
 }

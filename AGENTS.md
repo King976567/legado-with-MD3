@@ -104,6 +104,8 @@ platform implementations (Android/JVM/iOS/...)
   3 图组装。
 - 使用项目的 `AppScaffold`、主题、top bar、dialog/sheet、列表和设置组件。正确处理 edge-to-edge 与
   predictive back。
+- 所有交互控件必须具有稳定、可本地化的无障碍名称和可执行语义；动画文字隐藏时仍须保留名称，菜单关闭区域须说明用途，
+  排序须暴露当前位置。修复无障碍问题时验证语义树与动作，并记录尚未完成的屏幕阅读器实测。
 - Activity 仅在遗留 `Intent`/result 兼容确有需要时作为薄宿主保留。
 
 具体文件形态和审查清单由 Compose migration/review skill 维护，本文件不复制完整模板。
@@ -158,18 +160,18 @@ platform implementations (Android/JVM/iOS/...)
 开发与 CI 使用 JDK 21。按风险选择最小充分验证：
 
 ```powershell
-# Kotlin/Compose 快速编译
-.\gradlew.bat :app:compileAppDebugKotlin
+# Kotlin/Compose 快速编译（本 Fork 只使用 Comic 完整版）
+.\gradlew.bat :app:compileAppComicDebugKotlin
 
 # 当前主验证集
-.\gradlew.bat testAppDebugUnitTest lintAppDebug verifyConfigArchitecture assembleAppDebug --continue --no-configuration-cache
+.\gradlew.bat testAppComicDebugUnitTest lintAppComicDebug verifyConfigArchitecture assembleAppComicDebug compileAppComicDebugAndroidTestKotlin --continue --no-configuration-cache
 
 # 资源、Manifest、生成绑定或打包变化
-.\gradlew.bat :app:assembleAppDebug
+.\gradlew.bat :app:assembleAppComicDebug
 
 # Release/R8 相关
-.\gradlew.bat assembleAppRelease
-.\gradlew.bat assembleAppNoR8
+.\gradlew.bat assembleAppComicRelease
+.\gradlew.bat assembleAppComicNoR8
 
 # Web 前端
 pnpm --dir modules/web build
@@ -191,10 +193,15 @@ KMP 任务名在模块实际创建后才存在；不要假装运行尚未定义�
   再通过能力契约替换 JVM API。
 - 代码 namespace 为 `io.legado.app`，`defaultConfig.applicationId` 为 `io.legato.kazusa`。`nas-md3` 的 Release 沿用历史安装身份 `io.legato.kazusa.debug`，以便覆盖用户原 Debug 版并保留数据；包名中的 `.debug` 不代表构建可调试。不要把此 NAS 交付约定带回 `main` 上游基线。
 - 当前 minSdk 26、target/compile SDK 37；Release 启用 R8 与资源压缩，`noR8` 变体用于排障。
-- 用户日常交付只提供签名的 arm64 Release：不可调试、版本名无 `_debug`，沿用历史兼容签名和安装包名；Debug 仅用于测试。APK 保留工程默认 `app/build/outputs/apk/app/release/`，不复制到 Downloads。构建、签名与覆盖升级验证见 [docs/dev/android-release.md](docs/dev/android-release.md)。
+- 用户日常交付只提供签名的 Comic arm64 Release：不可调试、版本名无 `_debug`，沿用历史兼容签名和安装包名；Debug 仅用于测试。APK 保留工程默认 `app/build/outputs/apk/appComic/release/`，文件名含 `-comic-arm64-v8a`，不复制到 Downloads。每次交付递增 NAS 版本号基线，构建、签名与覆盖升级验证见 [docs/dev/android-release.md](docs/dev/android-release.md)。
 - Rhino 书源/RSS/TTS 规则、Android 服务、Web 服务和阅读器渲染属于高行为风险平台能力，迁移前必须建立兼容测试或
   capability 边界。
 - `modules/web` 必须连接应用内 Ktor WebService；开发环境通过 `VITE_API` 指向设备服务地址。
+- 上游保留 `core` 轻量版和 `comic` 漫画增强版两种产品，`comic` 原名 `full`。
+  本 Fork 按用户要求只验证、构建和交付 **Comic 完整版**，包含本地漫画引擎；Core 源码继续保留，公共源码完整同步，不能按产品拆散 Git 提交。
+  APK 附件名须带 `comic` 产品标记，应用内更新按 `AppProduct` 匹配本产品；
+  R8 mapping 使用 `appComicRelease` 目录。不为减体积替换推理栈或引入扩展包路线。上游背景见
+  `docs/dev/manga-engine-extension-plan.md` §5.1。
 
 ## 交付说明
 

@@ -20,6 +20,7 @@ import io.legado.app.help.book.BookHelp
 import io.legado.app.help.book.isAudio
 import io.legado.app.help.book.isLocal
 import io.legado.app.help.book.isNotShelf
+import io.legado.app.help.book.isVideo
 import io.legado.app.model.CacheBook
 import io.legado.app.model.CacheBookModel
 import io.legado.app.model.cache.CacheBookDownloadState
@@ -67,6 +68,7 @@ data class BookCacheBookItem(
     val pausedCount: Int,
     val errorCount: Int,
     val isNotShelf: Boolean,
+    val isVideo: Boolean = false,
     val group: Long,
     val isCheckingCache: Boolean = false,
 ) {
@@ -319,7 +321,7 @@ class BookCacheManageViewModel(
         bookReloadJobs.clear()
         fullReloadJob = viewModelScope.launch {
             val sourceBooks = (if (forceDatabase) repository.getAllBooks()
-                else books ?: repository.getAllBooks()).filterNot { it.isLocal || it.isAudio }
+                else books ?: repository.getAllBooks()).filterNot { it.isLocal || it.isAudio || it.isVideo }
             loadCacheItemsInStages(
                 books = sourceBooks,
                 loadSummary = { book ->
@@ -498,7 +500,7 @@ class BookCacheManageViewModel(
         val result = withContext(Dispatchers.IO) {
             val book = repository.getBook(bookUrl)
             val item = book
-                ?.takeUnless { it.isLocal || it.isAudio }
+                ?.takeUnless { it.isLocal || it.isAudio || it.isVideo }
                 ?.let { buildBookItem(it) }
                 ?.takeIf(::shouldShowItem)
             val chapters = if (expanded && item != null) {
@@ -572,6 +574,7 @@ class BookCacheManageViewModel(
             pausedCount = pausedCount,
             errorCount = errorIndices.size,
             isNotShelf = book.isNotShelf,
+            isVideo = book.isVideo,
             group = book.group,
             isCheckingCache = !checkCache,
         )

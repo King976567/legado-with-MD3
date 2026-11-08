@@ -54,7 +54,7 @@ import io.legado.app.R
 import io.legado.app.core.ui.book.BookDetailHeaderLayout
 import io.legado.app.core.ui.book.BookDetailTopBar
 import io.legado.app.ui.theme.LegadoTheme
-import io.legado.app.ui.theme.ThemeResolver
+import io.legado.app.ui.theme.ComposeEngine
 import io.legado.app.ui.widget.components.AppScaffold
 import io.legado.app.ui.widget.components.card.TextCard
 import io.legado.app.ui.widget.components.menuItem.RoundDropdownMenu
@@ -82,7 +82,7 @@ internal fun NasBookDetailScreen(
             book.fileName.substringAfterLast('.', "").equals("cbz", ignoreCase = true)
         var expandedTitle by rememberSaveable { mutableStateOf(false) }
         val listState = rememberLazyListState()
-        val scrollBehavior = if (ThemeResolver.isMiuixEngine(LegadoTheme.composeEngine)) {
+        val scrollBehavior = if (LegadoTheme.composeEngine == ComposeEngine.Miuix) {
             MiuixGlassScrollBehavior(MiuixScrollBehavior())
         } else {
             M3GlassScrollBehavior(TopAppBarDefaults.exitUntilCollapsedScrollBehavior())
