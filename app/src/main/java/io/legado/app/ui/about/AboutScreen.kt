@@ -33,14 +33,15 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import io.legado.app.R
 import io.legado.app.constant.AppConst.appInfo
+import io.legado.app.ui.theme.ComposeEngine
 import io.legado.app.ui.theme.LegadoTheme
-import io.legado.app.ui.theme.ThemeResolver
 import io.legado.app.ui.widget.components.AppScaffold
 import io.legado.app.ui.widget.components.SettingItemWithDivider
 import io.legado.app.ui.widget.components.SplicedColumnGroup
 import io.legado.app.ui.widget.components.alert.AppAlertDialog
 import io.legado.app.ui.widget.components.card.TextCard
 import io.legado.app.ui.widget.components.log.CrashLogSheet
+import io.legado.app.ui.widget.components.modalBottomSheet.MarkdownSheet
 import io.legado.app.ui.widget.components.progressIndicator.AppCircularProgressIndicator
 import io.legado.app.ui.widget.components.settingItem.SettingItem
 import io.legado.app.ui.widget.components.text.AppText
@@ -54,23 +55,29 @@ import kotlinx.coroutines.delay
 fun AboutScreen(
     state: AboutUiState,
     onIntent: (AboutIntent) -> Unit,
+    onOpenLicenses: () -> Unit,
     onBack: () -> Unit = {},
     versionName: String = appInfo.versionName,
 ) {
-    if (ThemeResolver.isMiuixEngine(LegadoTheme.composeEngine)) {
-        MiuixAboutScreen(
-            state = state,
-            onIntent = onIntent,
-            onBack = onBack,
-            versionName = versionName,
-        )
-    } else {
-        MaterialAboutScreen(
-            state = state,
-            onIntent = onIntent,
-            onBack = onBack,
-            versionName = versionName,
-        )
+    when (LegadoTheme.composeEngine) {
+        ComposeEngine.Miuix -> {
+            MiuixAboutScreen(
+                state = state,
+                onIntent = onIntent,
+                onOpenLicenses = onOpenLicenses,
+                onBack = onBack,
+                versionName = versionName,
+            )
+        }
+        ComposeEngine.Material, ComposeEngine.Mochi -> {
+            MaterialAboutScreen(
+                state = state,
+                onIntent = onIntent,
+                onOpenLicenses = onOpenLicenses,
+                onBack = onBack,
+                versionName = versionName,
+            )
+        }
     }
 
     AboutOverlays(
@@ -84,6 +91,7 @@ fun AboutScreen(
 private fun MaterialAboutScreen(
     state: AboutUiState,
     onIntent: (AboutIntent) -> Unit,
+    onOpenLicenses: () -> Unit,
     onBack: () -> Unit,
     versionName: String,
 ) {
@@ -195,6 +203,12 @@ private fun MaterialAboutScreen(
                     SettingItem(
                         title = stringResource(R.string.license),
                         onClick = { onIntent(AboutIntent.ShowMdFile(licenseTitle, "LICENSE.md")) }
+                    )
+                }
+                SettingItemWithDivider {
+                    SettingItem(
+                        title = stringResource(R.string.about_third_party_licenses),
+                        onClick = onOpenLicenses,
                     )
                 }
                 SettingItemWithDivider {

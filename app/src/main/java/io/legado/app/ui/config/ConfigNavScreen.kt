@@ -8,14 +8,17 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
+import androidx.lifecycle.compose.dropUnlessResumed
 import io.legado.app.R
 import io.legado.app.ui.theme.adaptiveContentPadding
 import io.legado.app.ui.widget.components.AppScaffold
+import io.legado.app.ui.widget.components.icon.AppIcons
 import io.legado.app.ui.widget.components.SplicedColumnGroup
 import io.legado.app.ui.widget.components.settingItem.ClickableSettingItem
 import io.legado.app.ui.widget.components.topbar.GlassMediumFlexibleTopAppBar
 import io.legado.app.ui.widget.components.topbar.GlassTopAppBarDefaults
 import io.legado.app.ui.widget.components.topbar.TopBarNavigationButton
+import io.legado.app.ui.widget.components.topbar.TopBarActionButton
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -23,6 +26,7 @@ fun ConfigNavScreen(
     onBackClick: () -> Unit,
     onNavigateToOther: () -> Unit,
     onNavigateToRead: () -> Unit,
+    onNavigateToManga: () -> Unit,
     onNavigateToReadAloud: () -> Unit,
     onNavigateToCover: () -> Unit,
     onNavigateToTheme: () -> Unit,
@@ -31,7 +35,9 @@ fun ConfigNavScreen(
     onNavigateToDownloadCache: () -> Unit,
     onNavigateToTranslation: () -> Unit,
     onNavigateToLab: () -> Unit,
-    onNavigateToPrivate: () -> Unit
+    onNavigateToPrivate: () -> Unit,
+    onNavigateToBubble: () -> Unit,
+    onSearchSettings: () -> Unit,
 ) {
     val scrollBehavior = GlassTopAppBarDefaults.defaultScrollBehavior()
 
@@ -43,6 +49,13 @@ fun ConfigNavScreen(
                 scrollBehavior = scrollBehavior,
                 navigationIcon = {
                     TopBarNavigationButton(onClick = onBackClick)
+                },
+                actions = {
+                    TopBarActionButton(
+                        onClick = dropUnlessResumed(block = onSearchSettings),
+                        imageVector = AppIcons.Search,
+                        contentDescription = stringResource(R.string.settings_search_title),
+                    )
                 }
             )
         }
@@ -69,6 +82,10 @@ fun ConfigNavScreen(
                         onClick = onNavigateToRead
                     )
                     ClickableSettingItem(
+                        title = stringResource(R.string.manga_config),
+                        onClick = onNavigateToManga
+                    )
+                    ClickableSettingItem(
                         title = stringResource(R.string.aloud_config),
                         description = stringResource(R.string.multi_role_rule_summary),
                         onClick = onNavigateToReadAloud
@@ -76,6 +93,11 @@ fun ConfigNavScreen(
                     ClickableSettingItem(
                         title = stringResource(R.string.cover_config),
                         onClick = onNavigateToCover
+                    )
+                    ClickableSettingItem(
+                        title = stringResource(R.string.bubble_config),
+                        description = stringResource(R.string.bubble_config_entry_summary),
+                        onClick = onNavigateToBubble
                     )
                     ClickableSettingItem(
                         title = stringResource(R.string.download_cache_config),

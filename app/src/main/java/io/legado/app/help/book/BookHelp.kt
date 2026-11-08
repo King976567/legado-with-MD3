@@ -132,6 +132,25 @@ object BookHelp {
         }
     }
 
+    /**
+     * Deletes a maintenance entry only while it has no active reader/writer lease.
+     * The existence check, byte snapshot and deletion share the same guard, so two
+     * maintenance requests cannot count the same entry as deleted twice.
+     * null means this call did not delete it; 0L is a successful empty deletion.
+     */
+    internal fun deleteCacheEntryIfIdle(entry: File): Long? {
+        var removedBytes: Long? = null
+        imageFiles.deleteIfIdle(entry) { target ->
+            if (!target.exists()) return@deleteIfIdle false
+            val bytes = target.walkTopDown().filter(File::isFile).sumOf(File::length)
+            // Count only a complete deletion, rather than FileUtils' rename fallback.
+            if (!target.deleteRecursively()) return@deleteIfIdle false
+            removedBytes = bytes
+            true
+        }
+        return removedBytes
+    }
+
     fun updateCacheFolder(oldBook: Book, newBook: Book) {
         val oldFolderName = oldBook.getFolderNameNoCache()
         val newFolderName = newBook.getFolderNameNoCache()
@@ -246,7 +265,9 @@ object BookHelp {
         book: Book,
         bookChapter: BookChapter,
         content: String,
-        saveToSource: Boolean = false
+        saveToSource: Boolean = false,
+        // Initial EPUB extraction only populates a cache; its semantic source is unchanged.
+        notifyContentChange: Boolean = true,
     ) {
         if (content.isEmpty()) return
         if (book.isLocalTxt && saveToSource) {
@@ -259,6 +280,7 @@ object BookHelp {
         }
         // 保存阅读缓存文本(.nb)
         getChapterContentFile(book, bookChapter).apply { parentFile?.mkdirs() }.writeText(content)
+        if (notifyContentChange) ContentProcessor.invalidateSemanticContent(book.bookUrl, bookChapter.index)
         if (book.isOnLineTxt && readGateway.currentSettings.tocCountWords) {
             // 正文里携带的 <img src="data:base64">、内联 SVG 等富文本源码会把章节字数虚抬
             // 几倍（3 页正文显示 3000+ 字）。这里剔除标签/Base64 后按可读纯文本计数，
@@ -278,6 +300,7 @@ object BookHelp {
     fun saveChapterTitle(bookChapter: BookChapter, title: String) {
         bookChapter.title = title
         appDb.bookChapterDao.update(bookChapter)
+        ContentProcessor.invalidateSemanticContent(bookChapter.bookUrl, bookChapter.index)
     }
 
     private fun saveToLocalTxt(book: Book, bookChapter: BookChapter, content: String) {
@@ -566,6 +589,27 @@ object BookHelp {
         }
     }
 
+    /** A validated cached original and its lease; this path never downloads or promotes the cache. */
+    fun openCachedImage(book: Book, chapter: BookChapter, src: String): java.io.InputStream {
+        val file = getImage(book, chapter, src)
+        val lease = pinImageFile(file)
+        try {
+            if (!imageFiles.isValid(file)) throw IOException("Cached comic image is missing or invalid")
+            return object : java.io.FilterInputStream(file.inputStream()) {
+                override fun close() {
+                    try {
+                        super.close()
+                    } finally {
+                        lease.close()
+                    }
+                }
+            }
+        } catch (error: Throwable) {
+            lease.close()
+            throw error
+        }
+    }
+
     fun pinImageFile(file: File): Closeable {
         val lease = imageFiles.pin(file)
         val closed = AtomicBoolean()
@@ -575,6 +619,15 @@ object BookHelp {
                 imageCleanupRequests.trySend(Unit)
             }
         }
+    }
+
+    /** Protect chapter planning before its image URLs are known, including legacy text. */
+    internal fun pinChapterCache(book: Book, chapter: BookChapter): Closeable {
+        val leases = listOf(
+            requireNotNull(getChapterContentFile(book, chapter).parentFile),
+            legacyChapterContentFile(book, chapter),
+        ).map(::pinImageFile)
+        return Closeable { leases.asReversed().forEach(Closeable::close) }
     }
 
     /**
@@ -880,15 +933,19 @@ object BookHelp {
         val file = cachedChapterContentFile(book, bookChapter)
         if (file.exists()) {
             val string = file.readText()
-            if (string.isEmpty()) {
-                return null
+            if (string.isNotEmpty()) {
+                return string
             }
-            return string
+            // A stale empty cache (e.g. a title-only chapter cached before blank
+            // pages were supported) must not read as a load failure: drop it and
+            // reload. Local books reparse to a blank page; online books fall
+            // through to null so the caller still triggers a download.
+            file.delete()
         }
         if (book.isLocal) {
             val string = LocalBook.getContent(book, bookChapter)
             if (string != null && book.isEpub) {
-                saveText(book, bookChapter, string)
+                saveText(book, bookChapter, string, notifyContentChange = false)
             }
             return string
         }
@@ -952,6 +1009,7 @@ object BookHelp {
         legacyChapterContentFile(book, bookChapter).delete()
         // 章节目录里可能还有图片，非空时 delete 会失败，不会误删。
         file.parentFile?.delete()
+        ContentProcessor.invalidateSemanticContent(book.bookUrl, bookChapter.index)
     }
 
     /**
@@ -968,6 +1026,7 @@ object BookHelp {
             FileUtils.createFileIfNotExist(getChapterContentFile(book, bookChapter, "nr").absolutePath)
             contentProcessor.removeSameTitleCache.add(fileName)
         }
+        ContentProcessor.invalidateSemanticContent(book.bookUrl, bookChapter.index)
     }
 
     /**

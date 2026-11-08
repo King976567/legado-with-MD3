@@ -15,14 +15,24 @@ on:
 permissions:
   contents: read
 
-concurrency:
-  group: verify-${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
-
 jobs:
+  # Fork 门禁只验证 Comic 完整版；上游 Core 源码仍随同步保留。
   verify:
+    strategy:
+      fail-fast: false
+      matrix:
+        product: [Comic]
+        label: [comic]
+        shard: [0, 1, 2, 3]
+    name: Verify (${{ matrix.label }}, shard ${{ matrix.shard }})
     runs-on: ubuntu-latest
     timeout-minutes: 60
+    # concurrency 放在 job 层：workflow 层的 concurrency 不保证能解析 matrix 上下文。
+    concurrency:
+      group: verify-${{ github.workflow }}-${{ github.ref }}-${{ matrix.product }}-${{ matrix.shard }}
+      cancel-in-progress: true
+    env:
+      VERIFY_SHA: ${{ github.sha }}
     steps:
       - name: Checkout
         uses: actions/checkout@v5
@@ -36,6 +46,14 @@ jobs:
       - name: Set up Gradle
         uses: gradle/actions/setup-gradle@v4
 
+      - name: Prepare official Gradle and Kotlin distributions
+        timeout-minutes: 10
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          python3 .github/scripts/prepare_gradle_distribution.py
+          python3 .github/scripts/prepare_kotlin_compiler.py
+
       # 与 auto-release.yml 同一处理：settings.gradle 里的 aliyun 镜像面向国内开发机，
       # 在 GitHub runner 上会 502，且 Gradle 一旦判定某仓库失败就整个禁用它。
       - name: Remove Aliyun mirrors (unreliable in CI)
@@ -43,11 +61,14 @@ jobs:
           sed -i '/maven.aliyun.com/d' settings.gradle
 
       # Separate cold compilation from the unchanged test execution budget.
-      - name: Compile JVM test sources
+      # Instrumentation test compilation is part of the Comic verification gate.
+      - name: Compile JVM and Android test sources
         timeout-minutes: 20
         run: |
           chmod +x gradlew
-          ./gradlew :app:compileAppDebugUnitTestKotlin \
+          ./gradlew :app:compileApp${{ matrix.product }}DebugUnitTestKotlin \
+            --init-script .github/scripts/official-kotlin-compiler.gradle \
+            :app:compileApp${{ matrix.product }}DebugAndroidTestKotlin \
             --project-prop ksp.incremental=false \
             --max-workers=2 --no-parallel --info \
             --continue --no-daemon --no-configuration-cache
@@ -57,50 +78,60 @@ jobs:
         timeout-minutes: 20
         run: |
           chmod +x gradlew
-          ./gradlew testAppDebugUnitTest \
+          ./gradlew testApp${{ matrix.product }}DebugUnitTest \
+            --init-script .github/scripts/official-kotlin-compiler.gradle \
+            --init-script .github/scripts/shard-tests.gradle \
+            --project-prop ciTestShardIndex=${{ matrix.shard }} \
+            --project-prop ciTestShardCount=4 \
+            --project-prop ciTestSourceSha="$VERIFY_SHA" \
             --project-prop ksp.incremental=false \
             --max-workers=2 --no-parallel --info \
             --continue --no-daemon --no-configuration-cache
 
+      # Every class runs in one shard. Variant-wide gates run once on shard 0.
       - name: Lint and architecture
-        if: ${{ !cancelled() && steps.tests.outcome != 'skipped' }}
+        if: ${{ !cancelled() && matrix.shard == 0 && steps.tests.outcome != 'skipped' }}
         timeout-minutes: 20
         run: |
-          ./gradlew lintAppDebug verifyConfigArchitecture \
+          ./gradlew lintApp${{ matrix.product }}Debug verifyConfigArchitecture \
+            --init-script .github/scripts/official-kotlin-compiler.gradle \
             --project-prop ksp.incremental=false \
             --max-workers=2 --no-parallel --info \
             --continue --no-daemon --no-configuration-cache
 
       - name: Debug build
-        if: ${{ !cancelled() && steps.tests.outcome != 'skipped' }}
+        if: ${{ !cancelled() && matrix.shard == 0 && steps.tests.outcome != 'skipped' }}
         timeout-minutes: 20
         run: |
-          ./gradlew assembleAppDebug \
+          ./gradlew assembleApp${{ matrix.product }}Debug \
+            --init-script .github/scripts/official-kotlin-compiler.gradle \
+            --init-script .github/scripts/arm64-only.gradle \
             --project-prop ksp.incremental=false \
             --max-workers=2 --no-parallel --info \
             --continue --no-daemon --no-configuration-cache
 
-      - name: Upload unit test reports
+      - name: Upload shard inventory and unit test reports
         if: ${{ always() }}
         uses: actions/upload-artifact@v4
         with:
-          name: verify-unit-test-reports
-          if-no-files-found: warn
+          name: verify-test-shard-${{ matrix.shard }}-${{ env.VERIFY_SHA }}
+          if-no-files-found: error
           path: |
-            app/build/test-results/testAppDebugUnitTest/**
-            app/build/reports/tests/testAppDebugUnitTest/**
+            app/build/test-shards/testApp${{ matrix.product }}DebugUnitTest/shard-${{ matrix.shard }}/**
+            app/build/reports/tests/testApp${{ matrix.product }}DebugUnitTest/**
 
       - name: Upload lint reports
-        if: ${{ always() }}
+        if: ${{ always() && matrix.shard == 0 }}
         uses: actions/upload-artifact@v4
         with:
-          name: verify-lint-reports
+          name: verify-lint-reports-${{ matrix.label }}
           if-no-files-found: warn
           path: |
-            app/build/reports/lint-results-appDebug.html
-            app/build/reports/lint-results-appDebug.xml
-            app/build/reports/lint-results-appDebug.txt
-            app/build/reports/lint-results-appDebug.sarif
+            app/build/reports/lint-results-app${{ matrix.product }}Debug.html
+            app/build/reports/lint-results-app${{ matrix.product }}Debug.xml
+            app/build/reports/lint-results-app${{ matrix.product }}Debug.txt
+            app/build/reports/lint-results-app${{ matrix.product }}Debug.sarif
+
       - name: JVM diagnostics on failure
         if: ${{ always() && (failure() || cancelled()) }}
         run: |
@@ -110,3 +141,27 @@ jobs:
               timeout 10s jcmd "$pid" Thread.print || true
             fi
           done
+
+  coverage:
+    needs: verify
+    if: ${{ always() && needs.verify.result != 'skipped' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: verify-test-shard-*-${{ github.sha }}
+          path: shard-artifacts
+      - name: Verify complete Comic test coverage
+        run: |
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+          python3 .github/scripts/test_verify_test_shards.py
+          python3 .github/scripts/verify_test_shards.py \
+            --artifacts-dir shard-artifacts --shard-count 4 \
+            --source-sha "$GITHUB_SHA" --task-path :app:testAppComicDebugUnitTest
+          test '${{ needs.verify.result }}' = success

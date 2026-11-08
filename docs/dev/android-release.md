@@ -8,7 +8,7 @@
 
 - `defaultConfig.applicationId` 仍为 `io.legato.kazusa`，代码 namespace 仍为 `io.legado.app`。
 - `nas-md3` 的 `release.applicationIdSuffix` 固定为 `.debug`，与旧 Debug 相同。
-- 正式交付使用 `appRelease`：`debuggable=false`、R8 和资源压缩开启，版本名无 `_debug`。
+- 正式交付只使用 Comic 完整版 `appComicRelease`，含本地漫画引擎：`debuggable=false`、R8 和资源压缩开启，版本名无 `_debug`。Core 源码随上游完整保留，不运行其构建和交付。
 - Debug 变体继续用于开发和 CI 验证。现在两种变体在 NAS 分支使用同一安装身份，安装前确认签名相同。
 - `main` 保留上游身份约定；第二阶段同步时保留 NAS Release 的后缀配置，不能整块覆盖回上游。
 - 签名与包名同时匹配才可升级。不能卸载旧包、清空数据、强行降级或换证书来掩盖升级失败。
@@ -19,15 +19,17 @@
 ## 本机构建与签名
 
 使用 JDK 21、当前 Android SDK；只交付 arm64-v8a。APK 留在工程默认
-`app/build/outputs/apk/app/release/`，不复制到 Downloads。
+`app/build/outputs/apk/appComic/release/`，文件名含 `-comic-arm64-v8a`，不复制到 Downloads。
 
 ```powershell
 $env:JAVA_HOME = 'C:\Program Files\Android\Android Studio\jbr'
 $env:ANDROID_HOME = 'C:\Users\11017\AppData\Local\Android\Sdk'
-.\gradlew.bat :app:assembleAppRelease --project-prop ksp.incremental=false --init-script .github/scripts/arm64-only.gradle --no-configuration-cache --max-workers=1 --no-parallel
+.\gradlew.bat :app:assembleAppComicRelease --project-prop ksp.incremental=false --init-script .github/scripts/arm64-only.gradle --no-configuration-cache --max-workers=1 --no-parallel
 ```
 
 默认本机版本号必须高于上次交付，构建前核对已安装/交付的 versionCode。
+每次交付显式递增 `app/build.gradle.kts` 中的 `nasReleaseVersionCode`；环境提供的
+`COMMIT_NUMBER` 推导值不能低于此基线。一次设置下限不能替代以后每次递增。
 不要带入会覆盖版本号的旧 `COMMIT_NUMBER` 或 `APP_VERSION_NAME` 环境变量。
 有内存压力时不同时运行 Gradle 与模拟器。
 
@@ -39,7 +41,7 @@ $env:ANDROID_HOME = 'C:\Users\11017\AppData\Local\Android\Sdk'
 
 ```powershell
 & 'D:\DevCache\AndroidSigning\md3-reading\sign-apk.ps1' `
-  -InputApk 'D:\pythonproject\yuedu-md3\app\build\outputs\apk\app\release\app-app-arm64-v8a-release-unsigned.apk' `
+  -InputApk 'D:\pythonproject\yuedu-md3\app\build\outputs\apk\appComic\release\app-app-comic-arm64-v8a-release-unsigned.apk' `
   -OutputApk '<同一 release 目录中尚不存在的正式 APK 绝对路径>'
 ```
 
@@ -50,7 +52,7 @@ $env:ANDROID_HOME = 'C:\Users\11017\AppData\Local\Android\Sdk'
 
 先执行与改动相关的构建/测试；正式产物再检查：
 
-1. 实际包名 `io.legato.kazusa.debug`，版本号不降低，名称“MD3阅读”，仅 arm64-v8a。
+1. 实际包名 `io.legato.kazusa.debug`，版本号递增，名称“MD3阅读”，Comic 产品及 `MANGA_LOCAL_ENGINE=true`，仅 arm64-v8a。
 2. APK 的 `debuggable=false`，R8 和资源压缩任务通过；无 `_debug` 版本名。
 3. APK 的证书指纹与此前已交付 Debug/兼容正式包一致，签名及 16 KiB 对齐校验通过。
 4. 在保留旧 Debug 数据的模拟器上 `adb install -r`，确认同 UID、首次安装时间不变，

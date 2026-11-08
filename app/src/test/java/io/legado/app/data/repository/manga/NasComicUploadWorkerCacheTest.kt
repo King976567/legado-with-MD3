@@ -23,6 +23,7 @@ import org.junit.After
 import org.junit.Assert.assertArrayEquals
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
@@ -147,6 +148,7 @@ class NasComicUploadWorkerCacheTest {
         try {
             NasComicImageLeases().use { leases ->
                 val pages = listOf(first, second).map { chapter ->
+                    leases.pinChapter(book, chapter)
                     acquireNasComicPageImage(source, book, chapter, url, leases).file
                 }
                 val archive = NasComicCbzBuilder.build(
@@ -162,6 +164,11 @@ class NasComicUploadWorkerCacheTest {
                     BookHelp.updateCacheFolder(book, renamed)
                     assertTrue(oldPages.all(File::isFile))
                     assertFalse(newPages.any(File::exists))
+                    listOf(first, second).forEach { chapter ->
+                        assertNull(BookHelp.deleteCacheEntryIfIdle(
+                            BookHelp.getChapterContentFile(book, chapter).parentFile!!,
+                        ))
+                    }
                 }
                 ZipFile(archive.file).use { zip ->
                     assertEquals(3, zip.size())
@@ -259,6 +266,65 @@ class NasComicUploadWorkerCacheTest {
         }
         assertFalse(target.exists())
         BookHelp.clearCache(renamed)
+    }
+
+    @Test
+    fun `chapter planning protects current directory and legacy body before images exist`() {
+        val current = BookHelp.getChapterContentFile(book, first)
+        val directory = current.parentFile!!
+        val legacy = File(directory.parentFile, first.getFileName())
+        val body = "<img src=\"new-page.png\">".toByteArray()
+        NasComicImageLeases().use { leases ->
+            // Match execute(): acquire a chapter lease before getContent/saveText.
+            leases.pinChapter(book, first)
+            directory.mkdirs()
+            current.writeBytes(body)
+            legacy.writeBytes(body)
+            assertFalse(File(directory, "images").exists())
+            assertNull(BookHelp.deleteCacheEntryIfIdle(directory))
+            assertNull(BookHelp.deleteCacheEntryIfIdle(legacy))
+            assertArrayEquals(body, current.readBytes())
+            assertArrayEquals(body, legacy.readBytes())
+        }
+        assertEquals(body.size.toLong(), requireNotNull(BookHelp.deleteCacheEntryIfIdle(directory)))
+        assertEquals(body.size.toLong(), requireNotNull(BookHelp.deleteCacheEntryIfIdle(legacy)))
+    }
+
+    @Test
+    fun `chapter planning failure releases leases before any image is acquired`() {
+        val current = BookHelp.getChapterContentFile(book, second)
+        val directory = current.parentFile!!
+        try {
+            NasComicImageLeases().use { leases ->
+                leases.pinChapter(book, second)
+                directory.mkdirs()
+                current.writeText("body parsed before a later chapter fails")
+                throw NasComicUploadException(NasComicUploadFailure.EmptyChapter)
+            }
+        } catch (error: NasComicUploadException) {
+            assertEquals(NasComicUploadFailure.EmptyChapter, error.reason)
+        }
+        assertTrue(requireNotNull(BookHelp.deleteCacheEntryIfIdle(directory)) > 0L)
+        assertFalse(directory.exists())
+    }
+
+    @Test
+    fun `chapter planning cancellation releases leases and repeated close is harmless`() {
+        val current = BookHelp.getChapterContentFile(book, second)
+        val directory = current.parentFile!!
+        val leases = NasComicImageLeases()
+        try {
+            leases.use {
+                it.pinChapter(book, second)
+                directory.mkdirs()
+                current.writeText("body before cancellation")
+                throw CancellationException("cancel chapter planning")
+            }
+        } catch (_: CancellationException) {
+            leases.close()
+        }
+        assertTrue(requireNotNull(BookHelp.deleteCacheEntryIfIdle(directory)) > 0L)
+        assertFalse(directory.exists())
     }
 
     private fun png(color: Int): ByteArray {

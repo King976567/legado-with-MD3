@@ -108,47 +108,49 @@ class NasComicUploadWorker(
         val persistedChapters = repository.database().bookChapterDao
             .getChapterList(snapshot.bookUrl)
         val persistedByUrl = persistedChapters.associateBy { it.url }
-        val chapterPlans = snapshot.chapters.mapIndexed { chapterIndex, chapter ->
-            currentCoroutineContext().ensureActive()
-            update(
-                NasComicUploadStage.Refreshing,
-                chapterIndex + 1,
-                snapshot.chapters.size,
-            )
-            val nextUrl = snapshot.chapters.getOrNull(chapterIndex + 1)?.url
-            // Keep the local chapter title/index so existing .nb and image cache
-            // paths remain stable even when the source changes its chapter title.
-            val cacheChapter = persistedByUrl[chapter.url]?.let { persisted ->
-                chapter.copy(
-                    bookUrl = snapshot.bookUrl,
-                    title = persisted.title,
-                    index = persisted.index,
-                )
-            } ?: chapter.copy(bookUrl = snapshot.bookUrl)
-            val content = BookHelp.getContent(cacheBook, cacheChapter) ?: run {
-                // A detached bookUrl prevents title-rule parsing from updating
-                // the persisted chapter row during an upload-only refresh.
-                val fetchChapter = cacheChapter.copy(bookUrl = "${snapshot.bookUrl}#nas-upload")
-                val fetched = WebBook.getContentAwait(
-                    source,
-                    cacheBook,
-                    fetchChapter,
-                    nextUrl,
-                    needSave = false,
-                )
-                BookHelp.saveText(cacheBook, cacheChapter, fetched)
-                fetched
-            }
-            val urls = BookHelp.flowImages(cacheChapter, content).distinctUntilChanged().toList()
-            if (urls.isEmpty()) throw NasComicUploadException(NasComicUploadFailure.EmptyChapter)
-            ComicChapterPlan(cacheChapter, urls)
-        }
-        val totalPages = chapterPlans.sumOf { it.urls.size }
+        var totalPages = 0
         var completedPages = 0
         var cacheReused = 0
         var downloaded = 0
         val imageLeases = NasComicImageLeases()
         val archive = try {
+            val chapterPlans = snapshot.chapters.mapIndexed { chapterIndex, chapter ->
+                currentCoroutineContext().ensureActive()
+                update(
+                    NasComicUploadStage.Refreshing,
+                    chapterIndex + 1,
+                    snapshot.chapters.size,
+                )
+                val nextUrl = snapshot.chapters.getOrNull(chapterIndex + 1)?.url
+                // Keep the local chapter title/index so existing .nb and image cache
+                // paths remain stable even when the source changes its chapter title.
+                val cacheChapter = persistedByUrl[chapter.url]?.let { persisted ->
+                    chapter.copy(
+                        bookUrl = snapshot.bookUrl,
+                        title = persisted.title,
+                        index = persisted.index,
+                    )
+                } ?: chapter.copy(bookUrl = snapshot.bookUrl)
+                imageLeases.pinChapter(cacheBook, cacheChapter)
+                val content = BookHelp.getContent(cacheBook, cacheChapter) ?: run {
+                    // A detached bookUrl prevents title-rule parsing from updating
+                    // the persisted chapter row during an upload-only refresh.
+                    val fetchChapter = cacheChapter.copy(bookUrl = "${snapshot.bookUrl}#nas-upload")
+                    val fetched = WebBook.getContentAwait(
+                        source,
+                        cacheBook,
+                        fetchChapter,
+                        nextUrl,
+                        needSave = false,
+                    )
+                    BookHelp.saveText(cacheBook, cacheChapter, fetched)
+                    fetched
+                }
+                val urls = BookHelp.flowImages(cacheChapter, content).distinctUntilChanged().toList()
+                if (urls.isEmpty()) throw NasComicUploadException(NasComicUploadFailure.EmptyChapter)
+                ComicChapterPlan(cacheChapter, urls)
+            }
+            totalPages = chapterPlans.sumOf { it.urls.size }
             val archiveChapters = chapterPlans.mapIndexed { chapterIndex, plan ->
                 currentCoroutineContext().ensureActive()
                 val pages = plan.urls.mapIndexed { pageIndex, url ->
@@ -456,7 +458,7 @@ internal data class NasComicPageImage(
     val downloaded: Boolean,
 )
 
-/** Holds chapter images against cache cleanup until the CBZ builder finishes reading them. */
+/** Holds chapter planning and image leases until the CBZ builder finishes reading them. */
 internal class NasComicImageLeases : Closeable {
     private val leases = mutableListOf<Closeable>()
     private var closed = false
@@ -464,6 +466,11 @@ internal class NasComicImageLeases : Closeable {
     fun pin(file: File) {
         check(!closed) { "Image leases already closed" }
         leases += BookHelp.pinImageFile(file)
+    }
+
+    fun pinChapter(book: Book, chapter: BookChapter) {
+        check(!closed) { "Image leases already closed" }
+        leases += BookHelp.pinChapterCache(book, chapter)
     }
 
     override fun close() {

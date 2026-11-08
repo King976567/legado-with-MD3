@@ -52,7 +52,6 @@ import io.legado.app.ui.widget.components.topbar.DynamicTopAppBar
 import io.legado.app.ui.widget.components.topbar.GlassMediumFlexibleTopAppBar
 import io.legado.app.ui.widget.components.topbar.GlassTopAppBarDefaults
 import io.legado.app.ui.widget.components.topbar.TopBarActionButton
-import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.drop
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.launch
@@ -101,23 +100,11 @@ fun ExploreMainRoute(
             }
             // 只订阅列表/网格布局字段供书源 sheet 呈现，其余状态仍由各分类界面自己持有。
             val showViewModel = activeViewModel
-            val layoutProjection = remember(showViewModel) {
-                showViewModel?.uiState?.let { uiState ->
-                    uiState.map { it.layoutState }.distinctUntilChanged() to
-                        uiState.value.layoutState
-                }
+            val showLayoutMode = showViewModel?.let { vm ->
+                vm.layoutState.collectAsStateWithLifecycle().value
             }
-            val showLayoutMode = layoutProjection?.let { (flow, initialValue) ->
-                flow.collectAsStateWithLifecycle(initialValue).value
-            }
-            val gridCountProjection = remember(showViewModel) {
-                showViewModel?.uiState?.let { uiState ->
-                    uiState.map { it.gridCount }.distinctUntilChanged() to
-                        uiState.value.gridCount
-                }
-            }
-            val showGridCount = gridCountProjection?.let { (flow, initialValue) ->
-                flow.collectAsStateWithLifecycle(initialValue).value
+            val showGridCount = showViewModel?.let { vm ->
+                vm.gridCount.collectAsStateWithLifecycle().value
             } ?: 3
             var sourceSheetVisible by remember { mutableStateOf(false) }
             var kindSheetVisible by remember { mutableStateOf(false) }

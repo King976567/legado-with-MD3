@@ -4,6 +4,7 @@ import java.util.Properties
 plugins {
     alias(libs.plugins.compose.compiler)
     alias(libs.plugins.android.application)
+    alias(libs.plugins.aboutlibraries.android)
     alias(libs.plugins.kotlin.parcelize)
     alias(libs.plugins.kotlin.serialization)
     alias(libs.plugins.room)
@@ -13,6 +14,13 @@ plugins {
 }
 
 apply(from = "download.gradle")
+apply(from = "mochi-compat.gradle")
+
+aboutLibraries {
+    collect {
+        configPath = file("aboutlibraries")
+    }
+}
 
 
 val versionPropsFile = file("version.properties")
@@ -60,7 +68,13 @@ android {
         applicationId = "io.legato.kazusa"
         minSdk = 26
         targetSdk = 37
-        versionCode = System.getenv("COMMIT_NUMBER")?.toInt()?.let { 10000 + it } ?: 32641
+        // Increment this NAS delivery baseline for each release. Upstream CI's commit
+        // counter can be lower than the user's installed version and must not downgrade it.
+        val nasReleaseVersionCode = 32642
+        versionCode = maxOf(
+            nasReleaseVersionCode,
+            System.getenv("COMMIT_NUMBER")?.toInt()?.let { 10000 + it } ?: 0,
+        )
         versionName = System.getenv("APP_VERSION_NAME") ?: projectVersionName
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
 
@@ -138,11 +152,24 @@ android {
         }
     }
 
-    flavorDimensions += "mode"
+    // 维度顺序决定变体名：appCoreDebug / appComicDebug。
+    flavorDimensions += listOf("mode", "engine")
     productFlavors {
         create("app") {
             dimension = "mode"
             manifestPlaceholders["APP_CHANNEL_VALUE"] = "app"
+        }
+        // 基础产品：不含本地推理运行时与内置模型；云端 OCR、AI 识图/翻译保持可用。
+        create("core") {
+            dimension = "engine"
+            buildConfigField("boolean", "MANGA_LOCAL_ENGINE", "false")
+        }
+        // 漫画增强版：内置 ML Kit、ONNX Runtime、气泡模型和本地引擎装配。
+        // 产品标记与变体名统一用 comic，不再叫 full——它相对 core 多的就是漫画本地翻译能力。
+        create("comic") {
+            dimension = "engine"
+            buildConfigField("boolean", "MANGA_LOCAL_ENGINE", "true")
+            proguardFile("proguard-manga-engine.pro")
         }
     }
 
@@ -244,7 +271,10 @@ dependencies {
     implementation(libs.lifecycle.service)
     implementation(libs.media.media)
     implementation(libs.media3.exoplayer)
+    implementation(libs.media3.exoplayer.hls)
+    implementation(libs.media3.exoplayer.dash)
     implementation(libs.media3.datasource.okhttp)
+    implementation(libs.media3.ui)
     implementation(libs.splitties.appctx)
     implementation(libs.splitties.systemservices)
     implementation(libs.splitties.views)
@@ -310,6 +340,7 @@ dependencies {
     implementation(libs.androidx.compose.ui.tooling.preview)
     debugImplementation(libs.androidx.compose.ui.tooling)
     implementation(libs.androidx.compose.material3)
+    implementation(libs.aboutlibraries.core)
     implementation(libs.androidx.lifecycle.runtime.compose)
     implementation(libs.coil.compose)
     implementation(libs.coil.gif)
@@ -318,6 +349,13 @@ dependencies {
     implementation(libs.telephoto.zoomable.image.coil3)
     implementation(libs.accompanist.webview)
     implementation(libs.kotlinx.coroutines.android)
+    // Bundled recognizers work without Google Play Services or first-use downloads.
+    // 仅 comic（漫画增强版）内置；core 用 UnavailableMangaLocalEngine 装配，依赖图里不得出现这些库。
+    "comicImplementation"(libs.onnxruntime.android)
+    "comicImplementation"("com.google.mlkit:text-recognition:${libs.versions.mlkitText.get()}")
+    "comicImplementation"("com.google.mlkit:text-recognition-japanese:${libs.versions.mlkitText.get()}")
+    "comicImplementation"("com.google.mlkit:text-recognition-chinese:${libs.versions.mlkitText.get()}")
+    "comicImplementation"("com.google.mlkit:text-recognition-korean:${libs.versions.mlkitText.get()}")
     implementation(libs.kotlinx.datetime)
     implementation(libs.androidx.lifecycle.viewmodel.compose)
     implementation(libs.androidx.lifecycle.viewmodel.navigation3)
@@ -352,6 +390,8 @@ dependencies {
     implementation(libs.miuix.core)
     implementation(libs.capsule)
     implementation(libs.backdrop)
+    implementation(libs.mochi.compose)
+    implementation(libs.mochi.ios)
     implementation(libs.lyricViewx)
     implementation(libs.timber)
 }
