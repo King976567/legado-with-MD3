@@ -70,11 +70,13 @@ jobs:
           distribution: temurin
           java-version: 21
       - uses: gradle/actions/setup-gradle@v4
-      - name: Prepare official Gradle distribution
+      - name: Prepare official Gradle and Kotlin distributions
         timeout-minutes: 10
         env:
           GH_TOKEN: ${{ github.token }}
-        run: python3 .github/scripts/prepare_gradle_distribution.py
+        run: |
+          python3 .github/scripts/prepare_gradle_distribution.py
+          python3 .github/scripts/prepare_kotlin_compiler.py
       - name: Prepare verification
         run: |
           sed -i '/maven.aliyun.com/d' settings.gradle
