@@ -238,6 +238,70 @@ class AppDatabaseUpgradeTest {
         }
     }
 
+    @Test
+    fun version133PreservesComicProgressAndAudioDownloadsWithoutInventingCompletionOrNightColors() {
+        lateinit var originalRows: Map<String, TableSnapshot>
+        lateinit var migratedRows: Map<String, TableSnapshot>
+        val preservedTables = PRESERVED_TABLES + "read_aloud_audio_downloads"
+        val name = createHistoricalDatabase(133) { db ->
+            insertBook(db, LOCAL_CBZ, BookType.local or BookType.image, BookType.localTag)
+            insertBook(db, ONLINE_COMIC, BookType.image, "https://source.example.invalid")
+            insertChapter(db, LOCAL_CBZ, "0002_第二章/0001.jpg", "第二章")
+            insertChapter(db, ONLINE_COMIC, "$ONLINE_COMIC/chapter/2", "第二章")
+            db.execSQL(
+                "INSERT INTO caches (`key`, `value`, deadline) VALUES (?, ?, ?)",
+                arrayOf<Any>("comic-cache-key", "cached chapter content", 4_102_444_800_000L),
+            )
+            insertHighlightRule(db)
+            db.execSQL(
+                """UPDATE highlightRules SET borderColor = ?, borderWidth = 2.5, borderRadius = 6.0
+                    WHERE id = 'custom-highlight'""".trimIndent(),
+                arrayOf(0xff456789.toInt()),
+            )
+            insertFixture(db, "read_aloud_audio_downloads", ContentValues().apply {
+                put("bookUrl", ONLINE_COMIC)
+                put("chapterIndex", 1)
+                put("title", "第二章")
+                put("files", "cached-sentence-one,cached-sentence-two")
+                put("createTime", 1_792_000_000_123L)
+            })
+            originalRows = preservedTables.associateWith { snapshot(db, it) }
+            assertEquals(133, db.version)
+        }
+
+        withCurrentDatabase(name) { db ->
+            assertEquals(CURRENT_DATABASE_VERSION, db.version)
+            assertPreserved(db, originalRows)
+            assertVersion135Defaults(db)
+            migratedRows = preservedTables.associateWith { snapshot(db, it) }
+        }
+        // Reopen through Room to check the final identity hash and retain the new null columns.
+        withCurrentDatabase(name) { db ->
+            assertEquals(CURRENT_DATABASE_VERSION, db.version)
+            assertPreserved(db, migratedRows)
+            assertVersion135Defaults(db)
+        }
+    }
+
+    private fun assertVersion135Defaults(db: SupportSQLiteDatabase) {
+        db.query(
+            """SELECT textColorNight, bgColorNight, borderColorNight, underlineColorNight
+                FROM highlightRules WHERE id = 'custom-highlight'""".trimIndent(),
+        ).use { cursor ->
+            assertTrue(cursor.moveToFirst())
+            cursor.columnNames.forEachIndexed { index, column ->
+                assertTrue("Existing rules must follow the daytime value for $column", cursor.isNull(index))
+            }
+        }
+        db.query(
+            "SELECT expectedSentenceCount FROM read_aloud_audio_downloads WHERE bookUrl = ? AND chapterIndex = 1",
+            arrayOf(ONLINE_COMIC),
+        ).use { cursor ->
+            assertTrue(cursor.moveToFirst())
+            assertTrue("Legacy files do not prove that a whole chapter was downloaded", cursor.isNull(0))
+        }
+    }
+
     private fun assertHighlightBorderDefaults(db: SupportSQLiteDatabase) {
         db.query(
             "SELECT borderColor, borderWidth, borderRadius FROM highlightRules WHERE id = 'custom-highlight'",
@@ -476,7 +540,7 @@ class AppDatabaseUpgradeTest {
     private data class TableSnapshot(val columns: List<String>, val rows: List<List<Any?>>)
 
     companion object {
-        private const val CURRENT_DATABASE_VERSION = 133
+        private const val CURRENT_DATABASE_VERSION = 135
         private const val LOCAL_CBZ = "content://local-comics/downloaded.cbz"
         private const val ONLINE_COMIC = "https://comic.example.invalid/book/42"
         private val PRESERVED_TABLES = listOf("books", "chapters", "caches", "highlightRules")

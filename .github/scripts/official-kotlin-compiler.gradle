@@ -4,6 +4,9 @@ import org.gradle.api.GradleException
 // CI-only recovery for the official compiler JAR's failing remote HEAD redirect.
 // The preparation step keeps the real Maven POM and its transitive dependencies.
 gradle.settingsEvaluated { settings ->
+    // Init scripts also run for composite builds. UI forks own their compiler
+    // versions and do not use the host's prepared Maven repository.
+    if (!new File(settings.settingsDir, '.github/scripts/prepare_kotlin_compiler.py').isFile()) return
     def catalog = new File(settings.settingsDir, 'gradle/libs.versions.toml').getText('UTF-8')
     def matches = (catalog =~ /(?m)^\s*kotlin\s*=\s*"([0-9]+\.[0-9]+\.[0-9]+)"\s*(?:#.*)?$/)
     if (matches.size() != 1) {

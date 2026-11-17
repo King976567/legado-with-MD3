@@ -60,6 +60,7 @@ jobs:
         with:
           ref: ${{ env.VERIFY_SHA }}
           fetch-depth: 0
+          submodules: true
           persist-credentials: false
       - name: Verify target baseline
         run: |
@@ -77,6 +78,8 @@ jobs:
         run: |
           python3 .github/scripts/prepare_gradle_distribution.py
           python3 .github/scripts/prepare_kotlin_compiler.py
+      - name: Prepare pinned UI forks
+        uses: ./.github/actions/prepare-ui-forks
       - name: Prepare verification
         run: |
           sed -i '/maven.aliyun.com/d' settings.gradle

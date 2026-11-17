@@ -134,7 +134,7 @@ fun ProvideColorSchemeOverride(
         miuixColorSpec
     ) {
         when (composeEngine) {
-            ComposeEngine.Material, ComposeEngine.Mochi -> null
+            ComposeEngine.Material, ComposeEngine.Mochi, ComposeEngine.Coui -> null
             ComposeEngine.Miuix -> ThemeController(
                 colorSchemeMode = miuixColorSchemeMode,
                 keyColor = seedColor,
@@ -145,9 +145,18 @@ fun ProvideColorSchemeOverride(
         }
     }
 
+    // 记录本次覆盖，供玻璃 sheet / dialog 把色板带进 root popup host 的独立 composition。
+    val overrideState = remember(colorScheme, seedColor, resolvedIsDark) {
+        ThemeOverrideState(
+            seedColor = seedColor,
+            colorScheme = colorScheme,
+            isDark = resolvedIsDark,
+        )
+    }
     CompositionLocalProvider(
         LocalLegadoThemeColors provides overrideThemeMode,
-        LocalLegadoColorScheme provides legadoColorScheme
+        LocalLegadoColorScheme provides legadoColorScheme,
+        LocalThemeOverride provides overrideState
     ) {
         when (composeEngine) {
             ComposeEngine.Miuix -> {
@@ -164,13 +173,17 @@ fun ProvideColorSchemeOverride(
                     ProvideMochiTheme(colorScheme, resolvedIsDark, content = content)
                 }
             }
-            ComposeEngine.Material -> {
+            ComposeEngine.Material, ComposeEngine.Coui -> {
                 MaterialTheme(
                     colorScheme = colorScheme,
                     typography = MaterialTheme.typography,
                     shapes = MaterialTheme.shapes
                 ) {
-                    content()
+                    if (composeEngine == ComposeEngine.Coui && ThemeResolver.isCouiSupported()) {
+                        ProvideCouiTheme(resolvedIsDark, content = content)
+                    } else {
+                        content()
+                    }
                 }
             }
         }
