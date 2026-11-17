@@ -67,6 +67,8 @@ jobs:
 
       # Separate cold compilation from the unchanged test execution budget.
       # Instrumentation test compilation is part of the Comic verification gate.
+      # The enlarged test suite exceeds the 3 GiB Kotlin daemon heap. Compile in
+      # the 6 GiB Gradle process and serialize workers instead of adding JVM heaps.
       - name: Compile JVM and Android test sources
         timeout-minutes: 20
         run: |
@@ -75,7 +77,9 @@ jobs:
             --init-script .github/scripts/official-kotlin-compiler.gradle \
             :app:compileApp${{ matrix.product }}DebugAndroidTestKotlin \
             --project-prop ksp.incremental=false \
-            --max-workers=2 --no-parallel --info \
+            --project-prop kotlin.compiler.execution.strategy=in-process \
+            -Dorg.gradle.jvmargs="-Xmx6g -Xms512m -XX:MaxMetaspaceSize=1024m -XX:+HeapDumpOnOutOfMemoryError -Dfile.encoding=UTF-8 -XX:+UseG1GC" \
+            --max-workers=1 --no-parallel --info \
             --continue --no-daemon --no-configuration-cache
 
       - name: JVM tests
@@ -90,7 +94,9 @@ jobs:
             --project-prop ciTestShardCount=4 \
             --project-prop ciTestSourceSha="$VERIFY_SHA" \
             --project-prop ksp.incremental=false \
-            --max-workers=2 --no-parallel --info \
+            --project-prop kotlin.compiler.execution.strategy=in-process \
+            -Dorg.gradle.jvmargs="-Xmx6g -Xms512m -XX:MaxMetaspaceSize=1024m -XX:+HeapDumpOnOutOfMemoryError -Dfile.encoding=UTF-8 -XX:+UseG1GC" \
+            --max-workers=1 --no-parallel --info \
             --continue --no-daemon --no-configuration-cache
 
       # Every class runs in one shard. Variant-wide gates run once on shard 0.
@@ -101,7 +107,9 @@ jobs:
           ./gradlew lintApp${{ matrix.product }}Debug verifyConfigArchitecture \
             --init-script .github/scripts/official-kotlin-compiler.gradle \
             --project-prop ksp.incremental=false \
-            --max-workers=2 --no-parallel --info \
+            --project-prop kotlin.compiler.execution.strategy=in-process \
+            -Dorg.gradle.jvmargs="-Xmx6g -Xms512m -XX:MaxMetaspaceSize=1024m -XX:+HeapDumpOnOutOfMemoryError -Dfile.encoding=UTF-8 -XX:+UseG1GC" \
+            --max-workers=1 --no-parallel --info \
             --continue --no-daemon --no-configuration-cache
 
       - name: Debug build
@@ -112,7 +120,9 @@ jobs:
             --init-script .github/scripts/official-kotlin-compiler.gradle \
             --init-script .github/scripts/arm64-only.gradle \
             --project-prop ksp.incremental=false \
-            --max-workers=2 --no-parallel --info \
+            --project-prop kotlin.compiler.execution.strategy=in-process \
+            -Dorg.gradle.jvmargs="-Xmx6g -Xms512m -XX:MaxMetaspaceSize=1024m -XX:+HeapDumpOnOutOfMemoryError -Dfile.encoding=UTF-8 -XX:+UseG1GC" \
+            --max-workers=1 --no-parallel --info \
             --continue --no-daemon --no-configuration-cache
 
       - name: Upload shard inventory and unit test reports
