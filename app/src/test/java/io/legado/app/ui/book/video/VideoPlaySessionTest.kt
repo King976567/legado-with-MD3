@@ -2,6 +2,7 @@ package io.legado.app.ui.book.video
 
 import android.app.Application
 import android.os.Looper
+import androidx.lifecycle.ViewModelStore
 import androidx.media3.common.MediaItem
 import androidx.media3.common.PlaybackParameters
 import androidx.media3.common.Player
@@ -69,6 +70,7 @@ class VideoPlaySessionTest {
     private lateinit var fixture: InMemoryAppDatabaseFixture
     private lateinit var books: BookRepository
     private lateinit var player: TestPlayer
+    private val viewModels = ViewModelStore()
 
     private val source = BookSource(
         bookSourceUrl = "https://video.test",
@@ -110,6 +112,8 @@ class VideoPlaySessionTest {
             fixture.database.bookDao, fixture.database.bookChapterDao, fixture.database
         )
         player = TestPlayer()
+        // 规则测试也会执行 stop()；始终绑定假播放器，避免收尾时懒创建真实 ExoPlayer。
+        VideoPlay.attachPlayer(player.instance)
         // 其它测试类可能已经起过 Koin，这里只保留视频会话需要的绑定
         runCatching { stopKoin() }
         startKoin {
@@ -143,6 +147,8 @@ class VideoPlaySessionTest {
 
     @After
     fun tearDown() {
+        // 先取消 UI 宿主的初始化协程，避免会话释放后它们继续恢复并创建真实播放器。
+        viewModels.clear()
         // Koin 关掉之前必须让会话的后台协程跑完，否则它们会在下一个测试里抛未捕获异常
         runBlocking { VideoPlay.stop(); awaitWrites() }
         VideoPlay.release()
@@ -214,7 +220,6 @@ class VideoPlaySessionTest {
     @Test
     fun openBookFillsMissingChaptersBeforePlaying() = runBlocking {
         val book = insertVideoBook(withChapters = false)
-        VideoPlay.attachPlayer(player.instance)
 
         VideoPlay.openBook(book.bookUrl)
 
@@ -228,7 +233,6 @@ class VideoPlaySessionTest {
     @Test
     fun pauseSavesProgressAndKeepsConcurrentEdits() = runBlocking {
         val book = insertVideoBook()
-        VideoPlay.attachPlayer(player.instance)
         VideoPlay.openBook(book.bookUrl, autoPlay = true)
                 awaitState("Episode 1") { it.chapterTitle == "Episode 1" }
 
@@ -249,7 +253,6 @@ class VideoPlaySessionTest {
     @Test
     fun successivePauseSnapshotsArePersistedInOrder() = runBlocking {
         val book = insertVideoBook()
-        VideoPlay.attachPlayer(player.instance)
         VideoPlay.openBook(book.bookUrl)
                 awaitState("Episode 1") { it.chapterTitle == "Episode 1" }
 
@@ -265,7 +268,6 @@ class VideoPlaySessionTest {
     @Test
     fun stopSavesFinalProgressAndResetsSession() = runBlocking {
         val book = insertVideoBook()
-        VideoPlay.attachPlayer(player.instance)
         VideoPlay.openBook(book.bookUrl)
                 awaitState("Episode 1") { it.chapterTitle == "Episode 1" }
 
@@ -280,7 +282,6 @@ class VideoPlaySessionTest {
 
     @Test
     fun singleUrlProgressIsRememberedByUrl() = runBlocking {
-        VideoPlay.attachPlayer(player.instance)
 
         VideoPlay.openUrl("https://video.test/once.mp4", "Once")
         player.position = 12_000L
@@ -303,7 +304,6 @@ class VideoPlaySessionTest {
             type = 2,
         )
         fixture.database.rssStarDao.insert(article.toStar())
-        VideoPlay.attachPlayer(player.instance)
 
         VideoPlay.openRssArticle(article)
         awaitState("RSS Video") { it.bookName == "RSS Video" }
@@ -330,7 +330,6 @@ class VideoPlaySessionTest {
             content = "https://rss.test/uncached.mp4",
             type = 2,
         )
-        VideoPlay.attachPlayer(player.instance)
 
         VideoPlay.openRssArticle(article)
         awaitState("RSS Video") { it.bookName == "RSS Video" }
@@ -349,7 +348,6 @@ class VideoPlaySessionTest {
     @Test
     fun volumesSplitEpisodesAndNextCanCrossVolume() = runBlocking {
         val book = insertVideoBook(withVolumes = true)
-        VideoPlay.attachPlayer(player.instance)
         VideoPlay.openBook(book.bookUrl)
                 awaitState("Episode 1") { it.chapterTitle == "Episode 1" }
 
@@ -374,7 +372,6 @@ class VideoPlaySessionTest {
     @Test
     fun previousAtFirstEpisodeDoesNotWrap() = runBlocking {
         val book = insertVideoBook()
-        VideoPlay.attachPlayer(player.instance)
         VideoPlay.openBook(book.bookUrl)
                 awaitState("Episode 1") { it.chapterTitle == "Episode 1" }
 
@@ -388,7 +385,6 @@ class VideoPlaySessionTest {
     @Test
     fun selectEpisodeSwitchesVolumeAndEpisode() = runBlocking {
         val book = insertVideoBook(withVolumes = true)
-        VideoPlay.attachPlayer(player.instance)
         VideoPlay.openBook(book.bookUrl)
                 awaitState("Episode 1") { it.chapterTitle == "Episode 1" }
 
@@ -407,8 +403,7 @@ class VideoPlaySessionTest {
         source.loginUrl = "https://video.test/login"
         source.customButton = true
         val book = insertVideoBook()
-        VideoPlay.attachPlayer(player.instance)
-        val viewModel = VideoPlayerViewModel()
+        val viewModel = createViewModel()
 
         viewModel.init(book.bookUrl)
         val state = awaitUiState(viewModel) { it.chapterTitle == "Episode 1" }
@@ -424,8 +419,7 @@ class VideoPlaySessionTest {
     fun uiStateHidesSourceCapabilitiesTheSourceDoesNotOffer() = runBlocking {
         // 默认书源既没有登录地址，也没有声明自定义按钮
         val book = insertVideoBook()
-        VideoPlay.attachPlayer(player.instance)
-        val viewModel = VideoPlayerViewModel()
+        val viewModel = createViewModel()
 
         viewModel.init(book.bookUrl)
         val state = awaitUiState(viewModel) { it.chapterTitle == "Episode 1" }
@@ -446,8 +440,7 @@ class VideoPlaySessionTest {
             content = "https://rss.test/menu.mp4",
             type = 2,
         )
-        VideoPlay.attachPlayer(player.instance)
-        val viewModel = VideoPlayerViewModel()
+        val viewModel = createViewModel()
 
         viewModel.initRss(article)
         val state = awaitUiState(viewModel) { it.bookName == "RSS Video" }
@@ -512,6 +505,10 @@ class VideoPlaySessionTest {
         title = title,
         isVolume = isVolume,
     )
+
+    private fun createViewModel() = VideoPlayerViewModel().also {
+        viewModels.put("video", it)
+    }
 
     /** 等播放页 UiState 出现期望的快照。 */
     private suspend fun awaitUiState(
