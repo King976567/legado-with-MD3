@@ -1,13 +1,10 @@
 package io.legado.app.help.coil
 
 import android.app.Application
+import coil3.ImageLoader
 import coil3.intercept.Interceptor
 import coil3.request.ErrorResult
 import coil3.request.ImageRequest
-import io.mockk.coEvery
-import io.mockk.coVerify
-import io.mockk.every
-import io.mockk.mockk
 import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertSame
@@ -24,7 +21,8 @@ class CoverInterceptorNasTest {
     fun `final NAS cover URL and bearer headers reach the fetcher unchanged`() = runTest {
         val url = "https://nas.example/api/books/1/cover"
         val headers = mapOf("Authorization" to "Bearer fixture-token")
-        val request = ImageRequest.Builder(RuntimeEnvironment.getApplication<Application>())
+        val application = RuntimeEnvironment.getApplication()
+        val request = ImageRequest.Builder(application)
             .data(url)
             .apply {
                 extras[CoverExtras.SkipAnalysis] = true
@@ -33,14 +31,24 @@ class CoverInterceptorNasTest {
                 extras[CoverExtras.PreferCache] = true
                 extras[CoverExtras.BookUrl] = "nas-cover-fixture"
             }.build()
-        val result = ErrorResult(request = request, throwable = IllegalStateException("fixture"))
-        val chain = mockk<Interceptor.Chain>()
-        every { chain.request } returns request
-        coEvery { chain.proceed() } returns result
+        var interceptedRequest: ImageRequest? = null
+        val intercepted = IllegalStateException("Stopped by test interceptor")
+        val loader = ImageLoader.Builder(application).components {
+            add(CoverInterceptor())
+            add(Interceptor { chain ->
+                interceptedRequest = chain.request
+                ErrorResult(image = null, request = chain.request, throwable = intercepted)
+            })
+        }.build()
 
-        assertSame(result, CoverInterceptor().intercept(chain))
-        assertEquals(url, request.data)
-        assertEquals(headers, request.extras[CoverExtras.Headers])
-        coVerify(exactly = 1) { chain.proceed() }
+        try {
+            val result = loader.execute(request)
+            assertSame(intercepted, (result as ErrorResult).throwable)
+            val forwarded = requireNotNull(interceptedRequest)
+            assertEquals(url, forwarded.data)
+            assertEquals(headers, forwarded.extras[CoverExtras.Headers])
+        } finally {
+            loader.shutdown()
+        }
     }
 }

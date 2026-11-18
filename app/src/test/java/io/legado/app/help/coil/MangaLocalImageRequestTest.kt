@@ -42,7 +42,7 @@ class MangaLocalImageRequestTest {
     fun `SAF long pages keep original proportions before bounded preview is displayed`() = runBlocking {
         val root = Files.createTempDirectory("saf-manga-request").toFile()
         val image = File(root, "page.png")
-        val context = RuntimeEnvironment.getApplication<Application>()
+        val context = RuntimeEnvironment.getApplication()
         val authority = "io.legado.test.manga.original"
         val uri = Uri.parse("content://$authority/pages/1")
         writeLongPage(image)
@@ -92,7 +92,7 @@ class MangaLocalImageRequestTest {
             writeLongPage(image)
             var ratioAtSuccess: Float? = null
             val request = page(image.toURI().toString()).imageRequest(
-                MangaReaderSettings(), RuntimeEnvironment.getApplication<Application>(),
+                MangaReaderSettings(), RuntimeEnvironment.getApplication(),
                 Size(Dimension(64), Dimension.Undefined), owner,
                 onSuccess = { ratioAtSuccess = owner.aspectRatio() },
             ).newBuilder().allowHardware(false).build()
@@ -109,7 +109,7 @@ class MangaLocalImageRequestTest {
         }
     }
 
-    private fun localLoader() = ImageLoader.Builder(RuntimeEnvironment.getApplication<Application>())
+    private fun localLoader() = ImageLoader.Builder(RuntimeEnvironment.getApplication())
         .components {
             add(BitmapFactoryDecoder.Factory())
             add(CoverInterceptor { _, _ -> error("Local manga must not acquire an online page") })
@@ -142,13 +142,13 @@ class MangaLocalImageRequestTest {
         ): Cursor {
             val columns = projection ?: arrayOf(OpenableColumns.DISPLAY_NAME, OpenableColumns.SIZE)
             return MatrixCursor(columns).apply {
-                addRow(columns.map {
-                    when (it) {
+                addRow(Array<Any?>(columns.size) { index ->
+                    when (columns[index]) {
                         OpenableColumns.DISPLAY_NAME -> image.name
                         OpenableColumns.SIZE -> image.length()
                         else -> null
                     }
-                }.toTypedArray())
+                })
             }
         }
 
