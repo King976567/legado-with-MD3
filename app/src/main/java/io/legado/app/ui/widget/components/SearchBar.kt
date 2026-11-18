@@ -77,7 +77,7 @@ fun SearchBar(
             // 某些情况下需要手动调用 show() 确保键盘弹出
             keyboardController?.show()
             hasFocused = true
-        } else if (!autoFocus) {
+        } else if (!autoFocus && hasFocused) {
             focusManager.clearFocus(force = true)
             keyboardController?.hide()
         }
@@ -130,7 +130,7 @@ fun SearchBar(
                 miuixOnSearch = submitSearch,
             )
         }
-        ComposeEngine.Material, ComposeEngine.Mochi -> {
+        ComposeEngine.Material, ComposeEngine.Mochi, ComposeEngine.Coui -> {
             Surface(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -144,6 +144,7 @@ fun SearchBar(
                         .fillMaxWidth()
                         .focusRequester(focusRequester),
                     placeholder = { AppText(resolvedPlaceholder) },
+                    placeholderText = resolvedPlaceholder,
                     leadingIcon = leadingIcon,
                     trailingIcon = trailingIcon,
                     keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),

@@ -202,6 +202,7 @@ fun MangaReaderScreen(
     onRecomposePage: ((String) -> Unit)? = null,
     canRecomposePage: (String) -> Boolean = { false },
     hasTranslatedPage: (String) -> Boolean = { false },
+    onReselectBookDirectory: (() -> Unit)? = null,
     footerStatus: @Composable () -> Unit = {},
 ) {
     BackHandler(
@@ -357,7 +358,7 @@ fun MangaReaderScreen(
                     else -> readerBackground
                 },
             )
-            ReaderStatusOverlay(state, onIntent)
+            ReaderStatusOverlay(state, onIntent, onReselectBookDirectory)
         }
     }
     if (state.activeSheet == MangaReaderSheet.SourceActions) {
@@ -2287,12 +2288,11 @@ private fun MangaReaderItemUi.Page.backgroundColorRequest(
     })
     .build()
 
+// SAF content URIs remain strings so CoverInterceptor reads the original dimensions.
 private fun mangaImageRequestData(imageUrl: String): Any = when {
     imageUrl.startsWith("file:", ignoreCase = true) ->
         runCatching { File(URI(imageUrl)) }.getOrDefault(imageUrl)
-    imageUrl.startsWith("content:", ignoreCase = true) ->
-        android.net.Uri.parse(imageUrl)
-    imageUrl.startsWith("/" ) -> File(imageUrl)
+    imageUrl.startsWith("/") -> File(imageUrl)
     else -> imageUrl
 }
 

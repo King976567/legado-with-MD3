@@ -32,7 +32,9 @@ import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.RowScope
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -62,7 +64,7 @@ import androidx.compose.material.icons.outlined.Book
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.ExperimentalMaterial3ExpressiveApi
 import androidx.compose.material3.ExtendedFloatingActionButton
-import androidx.compose.material3.Icon
+import androidx.compose.material3.MediumFlexibleTopAppBar
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.SnackbarResult
@@ -106,8 +108,6 @@ import coil3.compose.AsyncImage
 import coil3.size.Size
 import io.legado.app.R
 import io.legado.app.constant.BookType
-import io.legado.app.core.ui.book.BookDetailHeaderLayout
-import io.legado.app.core.ui.book.BookDetailTopBar
 import io.legado.app.data.entities.BaseSource
 import io.legado.app.data.entities.BookGroup
 import io.legado.app.data.entities.BookSource
@@ -121,6 +121,7 @@ import io.legado.app.ui.main.homepage.modules.BannerModule
 import io.legado.app.ui.theme.ComposeEngine
 import io.legado.app.ui.theme.LegadoTheme
 import io.legado.app.ui.theme.LocalAppUiConfiguration
+import io.legado.app.ui.theme.LocalHazeState
 import io.legado.app.ui.theme.LocalLegadoThemeColors
 import io.legado.app.ui.theme.ProvideColorSchemeOverride
 import io.legado.app.ui.theme.ThemeOverrideState
@@ -128,6 +129,8 @@ import io.legado.app.ui.theme.animateColorSchemeAsState
 import io.legado.app.ui.theme.fadingEdge
 import io.legado.app.ui.theme.rememberImageSeedColor
 import io.legado.app.ui.theme.rememberThemeOverride
+import io.legado.app.ui.theme.responsiveHazeEffectFixedStyle
+import io.legado.app.ui.theme.MiuixBlurredTopBar
 import io.legado.app.ui.widget.components.AppPullToRefresh
 import io.legado.app.ui.widget.components.AppScaffold
 import io.legado.app.ui.widget.components.AppTextField
@@ -147,8 +150,6 @@ import io.legado.app.ui.widget.components.image.cover.buildCoverImageRequest
 import io.legado.app.ui.widget.components.image.cover.cachedCoverAspectRatio
 import io.legado.app.ui.widget.components.image.cover.usesDefaultBookCover
 import io.legado.app.ui.widget.components.log.AppLogSheet
-import io.legado.app.ui.widget.components.menuItem.RoundDropdownMenu
-import io.legado.app.ui.widget.components.menuItem.RoundDropdownMenuItem
 import io.legado.app.ui.widget.components.privacy.PrivateLockedCover
 import io.legado.app.ui.widget.components.privacy.PrivateLockedHint
 import io.legado.app.ui.widget.components.privacy.PrivateMaskLine
@@ -157,15 +158,26 @@ import io.legado.app.ui.widget.components.text.AnimatedTextLine
 import io.legado.app.ui.widget.components.text.AppText
 import io.legado.app.ui.widget.components.text.HtmlContent
 import io.legado.app.ui.widget.components.text.MarkdownBlock
+import io.legado.app.ui.widget.components.topbar.GlassTopAppBarDefaults
 import io.legado.app.ui.widget.components.topbar.GlassTopAppBarScrollBehavior
 import io.legado.app.ui.widget.components.topbar.M3GlassScrollBehavior
 import io.legado.app.ui.widget.components.topbar.MiuixGlassScrollBehavior
+import io.legado.app.ui.widget.components.topbar.MiuixNativeTopBar
 import io.legado.app.ui.widget.components.topbar.TopBarActionButton
+import io.legado.app.ui.widget.components.topbar.TopBarActionsRow
+import io.legado.app.ui.widget.components.mochi.ProvideMochiScrollBlurProgress
+import io.legado.app.ui.widget.components.topbar.TopBarNavigationButton
+import ui.feice.mochi.basic.MochiButtonDefaults
 import io.legado.app.ui.widget.components.variable.VariableEditorSheet
 import io.legado.app.utils.ColorUtils
 import io.legado.app.utils.HtmlFormatter
 import io.legado.app.utils.openUrl
 import kotlinx.collections.immutable.ImmutableList
+import io.legado.app.ui.widget.components.menu.AppAction
+import io.legado.app.ui.widget.components.menu.AppActionGroup
+import io.legado.app.ui.widget.components.menu.AppActionMenu
+import io.legado.app.ui.widget.components.topbar.TopBarActionMenu
+import kotlinx.collections.immutable.persistentListOf
 import kotlinx.collections.immutable.toImmutableList
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
@@ -173,6 +185,7 @@ import org.koin.compose.koinInject
 import top.yukonga.miuix.kmp.basic.MiuixScrollBehavior
 import kotlin.math.abs
 import io.legado.app.model.BookCover as BookCoverModel
+import top.yukonga.miuix.kmp.basic.TopAppBar as MiuixTopAppBar
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -404,11 +417,7 @@ private fun BookInfoScreenContent(
                                     BookInfoHeader(
                                         book = book,
                                         highlightedTags = state.highlightedTags,
-                                        // A local CBZ is an image book. Older imports could
-                                        // leave the archive byte count in the text-book
-                                        // word-count tag (for example "12602.2万字"). It is
-                                        // not meaningful for comics and makes the header look
-                                        // like a novel, so only render the real comic/file tags.
+                                        // Old CBZ imports may retain an archive byte count as a novel word-count tag.
                                         kindLabels = state.kindLabels.filterNot {
                                             (book.type and BookType.image) != 0 &&
                                                 it.trim().matches(Regex(".*\\d.*字$"))
@@ -756,8 +765,73 @@ private fun BookInfoTransparentTopAppBar(
     onBackPressed: () -> Unit,
     scrollBehavior: GlassTopAppBarScrollBehavior,
 ) {
-    BookDetailTopBar(onBackPressed, scrollBehavior) {
-        BookInfoTopBarActions(state, onMenuAction)
+    val hazeState = LocalHazeState.current
+    val isMiuix = LegadoTheme.composeEngine == ComposeEngine.Miuix
+    val isMochi = LegadoTheme.composeEngine == ComposeEngine.Mochi
+    // The M3 host supplies 4dp inside each slot. Complete the engine's outer margin.
+    val slotEdgePadding = if (isMochi) MochiButtonDefaults.BarHorizontalPadding - 4.dp else 12.dp
+    val collapsedColor = if (isMiuix) {
+        GlassTopAppBarDefaults.getMiuixAppBarColor()
+    } else {
+        GlassTopAppBarDefaults.scrolledContainerColor()
+    }
+    val isAtTop = scrollBehavior.collapsedFraction <= 0.001f
+    val resolvedColor = if (isAtTop) Color.Transparent else collapsedColor
+    val topBarColors = TopAppBarDefaults.topAppBarColors(
+        containerColor = resolvedColor,
+        scrolledContainerColor = resolvedColor,
+    )
+
+    if (isMiuix) {
+        val miuixBehavior = (scrollBehavior as? MiuixGlassScrollBehavior)?.miuixBehavior
+        val navigationIcon: @Composable () -> Unit = { TopBarNavigationButton(onClick = onBackPressed) }
+        val actions: @Composable RowScope.() -> Unit = {
+            BookInfoTopBarActions(state = state, onMenuAction = onMenuAction)
+        }
+        MiuixNativeTopBar(
+            title = "",
+            scrollBehavior = miuixBehavior,
+            defaultWindowInsetsPadding = true,
+            navigationIcon = navigationIcon,
+            actions = actions,
+        ) {
+            MiuixBlurredTopBar(scrollBehavior = miuixBehavior, fixedStyle = true) {
+                MiuixTopAppBar(
+                    title = "",
+                    navigationIcon = navigationIcon,
+                    actions = actions,
+                    color = resolvedColor,
+                    scrollBehavior = miuixBehavior,
+                )
+            }
+        }
+    } else {
+        if (isMochi) ProvideMochiScrollBlurProgress { scrollBehavior.collapsedFraction }
+        MediumFlexibleTopAppBar(
+            modifier = hazeState?.let { Modifier.responsiveHazeEffectFixedStyle(it) } ?: Modifier,
+            title = { AppText(text = "", maxLines = 1) },
+            navigationIcon = {
+                // This M3 slot contributes 4dp itself. Complete Mochi's 16dp edge margin.
+                TopBarNavigationButton(
+                    onClick = onBackPressed,
+                    modifier = if (isMochi) {
+                        Modifier.padding(start = slotEdgePadding)
+                    } else Modifier,
+                )
+            },
+            actions = {
+                Box(modifier = Modifier.padding(end = slotEdgePadding)) {
+                    TopBarActionsRow {
+                        BookInfoTopBarActions(
+                            state = state,
+                            onMenuAction = onMenuAction,
+                        )
+                    }
+                }
+            },
+            scrollBehavior = (scrollBehavior as? M3GlassScrollBehavior)?.m3Behavior,
+            colors = topBarColors,
+        )
     }
 }
 
@@ -832,6 +906,9 @@ private fun resolveBookInfoBackdropStyle(
     return resolveBookInfoBackdropStyle(backgroundMode)
 }
 
+/** 详情页更多菜单的稳定 ID 前缀：`book_` + `BookInfoMenuAction.name`。 */
+private const val MENU_PREFIX = "book_"
+
 @Composable
 private fun BookInfoTopBarActions(
     state: BookInfoUiState,
@@ -858,28 +935,190 @@ private fun BookInfoTopBarActions(
 }
 
 @Composable
-private fun BookInfoOverflowAction(
+internal fun BookInfoOverflowAction(
     state: BookInfoUiState,
     onMenuAction: (BookInfoMenuAction) -> Unit,
 ) {
-    var expanded by remember { mutableStateOf(false) }
-
-    Box {
-        TopBarActionButton(
-            onClick = { expanded = true },
-            imageVector = AppIcons.MoreVert,
-            contentDescription = stringResource(R.string.more_actions),
-        )
-        BookInfoOverflowMenu(
-            expanded = expanded,
-            onDismissRequest = { expanded = false },
-            state = state,
-            onMenuAction = {
-                expanded = false
-                onMenuAction(it)
-            },
-        )
-    }
+    val book = state.book
+    val source = state.bookSourceUi
+    // 条件项保留原有顺序与可见性；ID = 前缀 + 枚举名，分派时无歧义还原成动作。
+    TopBarActionMenu(
+        groups = persistentListOf(
+            AppActionGroup(
+                id = "book_info_menu",
+                actions = buildList {
+                    if (source?.hasCustomButton == true) {
+                        add(
+                            AppAction(
+                                id = "$MENU_PREFIX${BookInfoMenuAction.CustomButton.name}",
+                                label = stringResource(R.string.custom_button),
+                            )
+                        )
+                    }
+                    if (state.inBookshelf) {
+                        add(
+                            AppAction(
+                                id = "$MENU_PREFIX${BookInfoMenuAction.Edit.name}",
+                                label = stringResource(R.string.edit),
+                            )
+                        )
+                    }
+                    add(
+                        AppAction(
+                            id = "$MENU_PREFIX${BookInfoMenuAction.Refresh.name}",
+                            label = stringResource(R.string.refresh),
+                        )
+                    )
+                    add(
+                        AppAction(
+                            id = "$MENU_PREFIX${BookInfoMenuAction.ReadRecord.name}",
+                            label = stringResource(R.string.read_record),
+                        )
+                    )
+                    if (state.inBookshelf && book != null) {
+                        add(
+                            AppAction(
+                                id = "$MENU_PREFIX${BookInfoMenuAction.ToggleReadRecordDisabled.name}",
+                                label = stringResource(R.string.book_disable_read_record),
+                                checked = book.disableReadRecord,
+                            )
+                        )
+                    }
+                    if (book?.isLocal == true) {
+                        add(
+                            AppAction(
+                                id = "$MENU_PREFIX${BookInfoMenuAction.SyncRemote.name}",
+                                label = stringResource(R.string.re_sync_webdav),
+                            )
+                        )
+                        add(
+                            AppAction(
+                                id = "$MENU_PREFIX${BookInfoMenuAction.Upload.name}",
+                                label = stringResource(R.string.upload_to_remote),
+                            )
+                        )
+                    }
+                    if (book?.isLocal == true && state.nasUploadVisible) {
+                        add(
+                            AppAction(
+                                id = "$MENU_PREFIX${BookInfoMenuAction.UploadNas.name}",
+                                label = stringResource(
+                                    if (state.nasUploadDenied) R.string.feature_book_info_nas_read_only
+                                    else R.string.feature_book_info_upload_nas,
+                                ),
+                                enabled = !state.isBusy && state.nasUploadStage == null && !state.nasUploadDenied,
+                            )
+                        )
+                    }
+                    if (book?.isLocal == false && (book.type and BookType.image) != 0 && state.nasUploadVisible) {
+                        add(
+                            AppAction(
+                                id = "$MENU_PREFIX${BookInfoMenuAction.UploadNasComic.name}",
+                                label = stringResource(R.string.feature_book_info_nas_comic_title),
+                                enabled = !state.isBusy && !state.nasUploadDenied &&
+                                    !state.nasComicPreparing && !state.nasComicUpload.running,
+                            )
+                        )
+                    }
+                    if (source?.hasLogin == true) {
+                        add(
+                            AppAction(
+                                id = "$MENU_PREFIX${BookInfoMenuAction.Login.name}",
+                                label = stringResource(R.string.login),
+                            )
+                        )
+                    }
+                    if (source != null) {
+                        add(
+                            AppAction(
+                                id = "$MENU_PREFIX${BookInfoMenuAction.SetSourceVariable.name}",
+                                label = stringResource(R.string.set_source_variable),
+                            )
+                        )
+                        add(
+                            AppAction(
+                                id = "$MENU_PREFIX${BookInfoMenuAction.SetBookVariable.name}",
+                                label = stringResource(R.string.set_book_variable),
+                            )
+                        )
+                        add(
+                            AppAction(
+                                id = "$MENU_PREFIX${BookInfoMenuAction.CopyBookUrl.name}",
+                                label = stringResource(R.string.copy_book_url),
+                            )
+                        )
+                        add(
+                            AppAction(
+                                id = "$MENU_PREFIX${BookInfoMenuAction.CopyTocUrl.name}",
+                                label = stringResource(R.string.copy_toc_url),
+                            )
+                        )
+                    }
+                    add(
+                        AppAction(
+                            id = "$MENU_PREFIX${BookInfoMenuAction.Top.name}",
+                            label = stringResource(R.string.to_top),
+                        )
+                    )
+                    if (book?.isLocal == false) {
+                        add(
+                            AppAction(
+                                id = "$MENU_PREFIX${BookInfoMenuAction.ToggleCanUpdate.name}",
+                                label = stringResource(R.string.allow_update),
+                                checked = book.canUpdate,
+                            )
+                        )
+                    }
+                    if (book?.isLocal == true && book.type and BookType.text > 0) {
+                        add(
+                            AppAction(
+                                id = "$MENU_PREFIX${BookInfoMenuAction.ToggleSplitLongChapter.name}",
+                                label = stringResource(R.string.split_long_chapter),
+                                checked = book.splitLongChapter,
+                            )
+                        )
+                    }
+                    add(
+                        AppAction(
+                            id = "$MENU_PREFIX${BookInfoMenuAction.ToggleDeleteAlert.name}",
+                            label = stringResource(R.string.delete_alert),
+                            checked = state.deleteAlertEnabled,
+                        )
+                    )
+                    add(
+                        AppAction(
+                            id = "$MENU_PREFIX${BookInfoMenuAction.ClearCache.name}",
+                            label = stringResource(R.string.clear_cache),
+                        )
+                    )
+                    add(
+                        AppAction(
+                            id = "$MENU_PREFIX${BookInfoMenuAction.ShowLog.name}",
+                            label = stringResource(R.string.log),
+                        )
+                    )
+                    add(
+                        AppAction(
+                            id = "$MENU_PREFIX${BookInfoMenuAction.TogglePrivate.name}",
+                            label = stringResource(
+                                if (state.bookPrivate) {
+                                    R.string.private_unmark_book
+                                } else {
+                                    R.string.private_mark_book
+                                }
+                            ),
+                            checked = state.bookPrivate,
+                        )
+                    )
+                }.toImmutableList(),
+            ),
+        ),
+        onAction = { id ->
+            BookInfoMenuAction.entries
+                .firstOrNull { id == "$MENU_PREFIX${it.name}" }
+                ?.let(onMenuAction)
+        },
+    )
 }
 
 @Composable
@@ -988,131 +1227,26 @@ private data class BookInfoBackdropState(
     val style: BookInfoBackdropStyle,
 )
 
+/** 书名长按菜单的稳定 ID；声明与分派共用，避免字面量漂移。 */
+private const val TITLE_MENU_SEARCH = "title_menu_search"
+private const val TITLE_MENU_TOGGLE_EXPAND = "title_menu_toggle_expand"
+
 @Composable
-internal fun BookInfoOverflowMenu(
-    expanded: Boolean,
-    onDismissRequest: () -> Unit,
-    state: BookInfoUiState,
-    onMenuAction: (BookInfoMenuAction) -> Unit,
-) {
-    val book = state.book
-    RoundDropdownMenu(expanded = expanded, onDismissRequest = onDismissRequest) {
-        if (state.bookSourceUi?.hasCustomButton == true) {
-            RoundDropdownMenuItem(
-                text = stringResource(R.string.custom_button),
-                onClick = { onMenuAction(BookInfoMenuAction.CustomButton) }
-            )
-        }
-        if (state.inBookshelf) {
-            RoundDropdownMenuItem(
-                text = stringResource(R.string.edit),
-                onClick = { onMenuAction(BookInfoMenuAction.Edit) }
-            )
-        }
-        RoundDropdownMenuItem(
-            text = stringResource(R.string.refresh),
-            onClick = { onMenuAction(BookInfoMenuAction.Refresh) }
-        )
-        RoundDropdownMenuItem(
-            text = stringResource(R.string.read_record),
-            onClick = { onMenuAction(BookInfoMenuAction.ReadRecord) }
-        )
-        if (state.inBookshelf && book != null) {
-            RoundDropdownMenuItem(
-                text = stringResource(R.string.book_disable_read_record),
-                onClick = { onMenuAction(BookInfoMenuAction.ToggleReadRecordDisabled) },
-                isSelected = book.disableReadRecord,
-            )
-        }
-        if (book?.isLocal == true) {
-            RoundDropdownMenuItem(
-                text = stringResource(R.string.re_sync_webdav),
-                onClick = { onMenuAction(BookInfoMenuAction.SyncRemote) }
-            )
-            RoundDropdownMenuItem(
-                text = stringResource(R.string.upload_to_remote),
-                onClick = { onMenuAction(BookInfoMenuAction.Upload) }
-            )
-            if (state.nasUploadVisible) {
-                RoundDropdownMenuItem(
-                    text = stringResource(if (state.nasUploadDenied) R.string.feature_book_info_nas_read_only
-                        else R.string.feature_book_info_upload_nas),
-                    enabled = !state.isBusy && state.nasUploadStage == null && !state.nasUploadDenied,
-                    onClick = { onMenuAction(BookInfoMenuAction.UploadNas) },
-                )
-            }
-        }
-        if (book?.isLocal == false && (book.type and BookType.image) != 0 && state.nasUploadVisible) {
-            RoundDropdownMenuItem(
-                text = stringResource(R.string.feature_book_info_nas_comic_title),
-                enabled = !state.isBusy && !state.nasComicPreparing && !state.nasComicUpload.running,
-                onClick = { onMenuAction(BookInfoMenuAction.UploadNasComic) },
-            )
-        }
-        if (state.bookSourceUi?.hasLogin == true) {
-            RoundDropdownMenuItem(
-                text = stringResource(R.string.login),
-                onClick = { onMenuAction(BookInfoMenuAction.Login) }
-            )
-        }
-        if (state.bookSourceUi != null) {
-            RoundDropdownMenuItem(
-                text = stringResource(R.string.set_source_variable),
-                onClick = { onMenuAction(BookInfoMenuAction.SetSourceVariable) }
-            )
-            RoundDropdownMenuItem(
-                text = stringResource(R.string.set_book_variable),
-                onClick = { onMenuAction(BookInfoMenuAction.SetBookVariable) }
-            )
-            RoundDropdownMenuItem(
-                text = stringResource(R.string.copy_book_url),
-                onClick = { onMenuAction(BookInfoMenuAction.CopyBookUrl) }
-            )
-            RoundDropdownMenuItem(
-                text = stringResource(R.string.copy_toc_url),
-                onClick = { onMenuAction(BookInfoMenuAction.CopyTocUrl) }
-            )
-        }
-        RoundDropdownMenuItem(
-            text = stringResource(R.string.to_top),
-            onClick = { onMenuAction(BookInfoMenuAction.Top) }
-        )
-        if (book?.isLocal == false ){
-            RoundDropdownMenuItem(
-                text = stringResource(R.string.allow_update),
-                onClick = { onMenuAction(BookInfoMenuAction.ToggleCanUpdate) },
-                isSelected = book.canUpdate
-            )
-        }
-        if (book?.isLocal == true && book.type and BookType.text > 0) {
-            RoundDropdownMenuItem(
-                text = stringResource(R.string.split_long_chapter),
-                onClick = { onMenuAction(BookInfoMenuAction.ToggleSplitLongChapter) },
-                isSelected = book.splitLongChapter
-            )
-        }
-        RoundDropdownMenuItem(
-            text = stringResource(R.string.delete_alert),
-            onClick = { onMenuAction(BookInfoMenuAction.ToggleDeleteAlert) },
-            isSelected = state.deleteAlertEnabled
-        )
-        RoundDropdownMenuItem(
-            text = stringResource(R.string.clear_cache),
-            onClick = { onMenuAction(BookInfoMenuAction.ClearCache) }
-        )
-        RoundDropdownMenuItem(
-            text = stringResource(R.string.log),
-            onClick = { onMenuAction(BookInfoMenuAction.ShowLog) }
-        )
-        RoundDropdownMenuItem(
-            text = stringResource(
-                if (state.bookPrivate) R.string.private_unmark_book else R.string.private_mark_book
+private fun bookInfoTitleMenuGroups(isTitleExpanded: Boolean): ImmutableList<AppActionGroup> =
+    persistentListOf(
+        AppActionGroup(
+            id = "book_info_title_menu",
+            actions = persistentListOf(
+                AppAction(id = TITLE_MENU_SEARCH, label = stringResource(R.string.search)),
+                AppAction(
+                    id = TITLE_MENU_TOGGLE_EXPAND,
+                    label = stringResource(
+                        if (isTitleExpanded) R.string.collapse else R.string.expand
+                    ),
+                ),
             ),
-            onClick = { onMenuAction(BookInfoMenuAction.TogglePrivate) },
-            isSelected = state.bookPrivate
-        )
-    }
-}
+        ),
+    )
 
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
@@ -1160,153 +1294,181 @@ private fun BookInfoHeader(
     val onCoverImageAspectRatio: ((Float) -> Unit)? = if (allowCoverRatioAdapt) {
         { aspectRatio -> coverAspectRatioState.floatValue = aspectRatio }
     } else null
-    BookDetailHeaderLayout(
-        applySeedOverlay = applySeedOverlay,
-        cover = {
-            Box(
-                modifier = Modifier
-                    .width(BOOK_INFO_COVER_WIDTH_DP.dp)
-                    .height(coverHeightDp.dp)
-                    .then(
-                        // 脱敏时封面不可点：点开大图等于直接泄漏
-                        if (locked) {
-                            Modifier
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .background(
+                Brush.verticalGradient(
+                    colors = listOf(
+                        Color.Transparent,
+                        if (applySeedOverlay) {
+                            lerp(LegadoTheme.colorScheme.surface, LegadoTheme.seedColor, 0.08f)
+                                .copy(alpha = 0.5f)
                         } else {
-                            Modifier.combinedClickable(
-                                onClick = onCoverClick,
-                                onLongClick = onCoverLongClick
+                            LegadoTheme.colorScheme.surface.copy(alpha = 0.5f)
+                        },
+                        LegadoTheme.colorScheme.surface,
+                    )
+                )
+            )
+            .padding(top = 16.dp, bottom = 8.dp),
+        verticalArrangement = Arrangement.spacedBy(12.dp)
+    ) {
+        Column(
+            modifier = Modifier.padding(horizontal = 16.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp)
+        ) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(16.dp),
+                verticalAlignment = Alignment.Top,
+            ) {
+                Box(
+                    modifier = Modifier
+                        .width(BOOK_INFO_COVER_WIDTH_DP.dp)
+                        .height(coverHeightDp.dp)
+                        .then(
+                            // 脱敏时封面不可点：点开大图等于直接泄漏
+                            if (locked) {
+                                Modifier
+                            } else {
+                                Modifier.combinedClickable(
+                                    onClick = onCoverClick,
+                                    onLongClick = onCoverLongClick
+                                )
+                            }
+                        )
+                        .semantics {
+                            role = Role.Button
+                            contentDescription = if (locked) hiddenDescription else coverDescription
+                        }
+                ) {
+                    if (locked) {
+                        PrivateLockedCover(
+                            name = null,
+                            author = null,
+                            path = coverPath,
+                            sourceOrigin = if (usesDefaultCover) null else book.origin,
+                            bookUrl = book.bookUrl,
+                            modifier = Modifier.fillMaxSize(),
+                            // 同一个 key + 同一个 scope：共享元素动画在脱敏态下依然连续
+                            sharedCoverKey = sharedCoverKey,
+                            sharedTransitionScope = sharedTransitionScope,
+                            animatedVisibilityScope = animatedVisibilityScope,
+                            onImageAspectRatio = onCoverImageAspectRatio,
+                        )
+                    } else {
+                        CoilBookCover(
+                            name = book.name,
+                            author = book.author,
+                            path = coverPath,
+                            sourceOrigin = if (usesDefaultCover) null else book.origin,
+                            // 传 bookUrl 供别名缓存键。详情页故意不设 preferCache：
+                            // 在线时仍走完整链路拉新链接并刷新别名，保证封面换图后书架也能更新；
+                            // 精确命中时同样不跑脚本。
+                            bookUrl = book.bookUrl,
+                            onError = onNetworkCoverLoadError,
+                            modifier = Modifier.fillMaxSize(),
+                            showLoadingPlaceholder = sharedCoverKey == null,
+                            sharedTransitionScope = sharedTransitionScope,
+                            animatedVisibilityScope = animatedVisibilityScope,
+                            sharedCoverKey = sharedCoverKey,
+                            onImageAspectRatio = onCoverImageAspectRatio,
+                        )
+                    }
+                }
+                Column(
+                    modifier = Modifier
+                        .weight(1f)
+                        .align(Alignment.CenterVertically)
+                        .padding(top = 8.dp, bottom = 8.dp),
+                    verticalArrangement = Arrangement.spacedBy(4.dp)
+                ) {
+                    if (locked) {
+                        // 书名 / 作者 / 来源全部换成占位条：不渲染任何真实字符串，也不响应点击
+                        PrivateMaskLine(widthFraction = 0.72f, thickness = 20.dp)
+                        PrivateMaskLine(
+                            modifier = Modifier.padding(top = 6.dp),
+                            widthFraction = 0.42f,
+                            thickness = 12.dp
+                        )
+                        PrivateMaskLine(
+                            modifier = Modifier.padding(top = 6.dp),
+                            widthFraction = 0.3f,
+                            thickness = 9.dp
+                        )
+                    } else {
+                        var showTitleMenu by remember { mutableStateOf(false) }
+                        var isTitleExpanded by rememberSaveable { mutableStateOf(false) }
+                        Box {
+                            AnimatedTextLine(
+                                text = book.name,
+                                style = LegadoTheme.typography.headlineSmall,
+                                fontWeight = FontWeight.Bold,
+                                maxLines = if (isTitleExpanded) Int.MAX_VALUE else 2,
+                                modifier = Modifier.combinedClickable(
+                                    onClick = { onBookNameClick(false) },
+                                    onLongClick = { showTitleMenu = true }
+                                )
+                            )
+                            // 长按节点在这层 Box 里由书名自己持有；受控弹层模式让入口只画菜单，
+                            // 不包可点节点，长按 / 单击语义与锚点矩形都保持原样。
+                            AppActionMenu(
+                                groups = bookInfoTitleMenuGroups(isTitleExpanded),
+                                onAction = { id ->
+                                    when (id) {
+                                        TITLE_MENU_SEARCH -> onBookNameClick(true)
+                                        TITLE_MENU_TOGGLE_EXPAND ->
+                                            isTitleExpanded = !isTitleExpanded
+                                    }
+                                },
+                                modifier = Modifier.matchParentSize(),
+                                embeddedExpanded = showTitleMenu,
+                                onDismissRequest = { showTitleMenu = false },
+                                trigger = {},
                             )
                         }
-                    )
-                    .semantics {
-                        role = Role.Button
-                        contentDescription = if (locked) hiddenDescription else coverDescription
-                    }
-            ) {
-                if (locked) {
-                    PrivateLockedCover(
-                        name = null,
-                        author = null,
-                        path = coverPath,
-                        sourceOrigin = if (usesDefaultCover) null else book.origin,
-                        bookUrl = book.bookUrl,
-                        modifier = Modifier.fillMaxSize(),
-                        // 同一个 key + 同一个 scope：共享元素动画在脱敏态下依然连续
-                        sharedCoverKey = sharedCoverKey,
-                        sharedTransitionScope = sharedTransitionScope,
-                        animatedVisibilityScope = animatedVisibilityScope,
-                        onImageAspectRatio = onCoverImageAspectRatio,
-                    )
-                } else {
-                    CoilBookCover(
-                        name = book.name,
-                        author = book.author,
-                        path = coverPath,
-                        sourceOrigin = if (usesDefaultCover) null else book.origin,
-                        // 传 bookUrl 供别名缓存键。详情页故意不设 preferCache：
-                        // 在线时仍走完整链路拉新链接并刷新别名，保证封面换图后书架也能更新；
-                        // 精确命中时同样不跑脚本。
-                        bookUrl = book.bookUrl,
-                        onError = onNetworkCoverLoadError,
-                        modifier = Modifier.fillMaxSize(),
-                        showLoadingPlaceholder = sharedCoverKey == null,
-                        sharedTransitionScope = sharedTransitionScope,
-                        animatedVisibilityScope = animatedVisibilityScope,
-                        sharedCoverKey = sharedCoverKey,
-                        onImageAspectRatio = onCoverImageAspectRatio,
-                    )
-                }
-            }
-        },
-        details = {
-            if (locked) {
-                // 书名 / 作者 / 来源全部换成占位条：不渲染任何真实字符串，也不响应点击
-                PrivateMaskLine(widthFraction = 0.72f, thickness = 20.dp)
-                PrivateMaskLine(
-                    modifier = Modifier.padding(top = 6.dp),
-                    widthFraction = 0.42f,
-                    thickness = 12.dp
-                )
-                PrivateMaskLine(
-                    modifier = Modifier.padding(top = 6.dp),
-                    widthFraction = 0.3f,
-                    thickness = 9.dp
-                )
-            } else {
-                var showTitleMenu by remember { mutableStateOf(false) }
-                var isTitleExpanded by rememberSaveable { mutableStateOf(false) }
-                Box {
-                    AnimatedTextLine(
-                        text = book.name,
-                        style = LegadoTheme.typography.headlineSmall,
-                        fontWeight = FontWeight.Bold,
-                        maxLines = if (isTitleExpanded) Int.MAX_VALUE else 2,
-                        modifier = Modifier.combinedClickable(
-                            onClick = { onBookNameClick(false) },
-                            onLongClick = { showTitleMenu = true }
-                        )
-                    )
-                    RoundDropdownMenu(
-                        expanded = showTitleMenu,
-                        onDismissRequest = { showTitleMenu = false }
-                    ) {
-                        RoundDropdownMenuItem(
-                            text = stringResource(R.string.search),
-                            onClick = {
-                                showTitleMenu = false
-                                onBookNameClick(true)
+                        val authorLabels = remember(book.realAuthor) {
+                            book.realAuthor.split(",", "，")
+                                .map { it.trim() }
+                                .filter { it.isNotBlank() }
+                        }
+                        if (authorLabels.size > 1) {
+                            FlowRow(
+                                horizontalArrangement = Arrangement.spacedBy(12.dp),
+                            ) {
+                                authorLabels.forEach { author ->
+                                    AnimatedTextLine(
+                                        text = author,
+                                        style = LegadoTheme.typography.bodyLarge,
+                                        color = LegadoTheme.colorScheme.onSurfaceVariant,
+                                        modifier = Modifier.combinedClickable(
+                                            onClick = { onAuthorClick(false, author) },
+                                            onLongClick = { onAuthorClick(true, author) }
+                                        )
+                                    )
+                                }
                             }
-                        )
-                        RoundDropdownMenuItem(
-                            text = stringResource(if (isTitleExpanded) R.string.collapse else R.string.expand),
-                            onClick = {
-                                showTitleMenu = false
-                                isTitleExpanded = !isTitleExpanded
-                            }
-                        )
-                    }
-                }
-                val authorLabels = remember(book.realAuthor) {
-                    book.realAuthor.split(",", "，")
-                        .map { it.trim() }
-                        .filter { it.isNotBlank() }
-                }
-                if (authorLabels.size > 1) {
-                    FlowRow(
-                        horizontalArrangement = Arrangement.spacedBy(12.dp),
-                    ) {
-                        authorLabels.forEach { author ->
+                        } else {
                             AnimatedTextLine(
-                                text = author,
+                                text = stringResource(R.string.author_show, book.realAuthor),
                                 style = LegadoTheme.typography.bodyLarge,
                                 color = LegadoTheme.colorScheme.onSurfaceVariant,
                                 modifier = Modifier.combinedClickable(
-                                    onClick = { onAuthorClick(false, author) },
-                                    onLongClick = { onAuthorClick(true, author) }
+                                    onClick = { onAuthorClick(false, null) },
+                                    onLongClick = { onAuthorClick(true, null) }
                                 )
                             )
                         }
-                    }
-                } else {
-                    AnimatedTextLine(
-                        text = stringResource(R.string.author_show, book.realAuthor),
-                        style = LegadoTheme.typography.bodyLarge,
-                        color = LegadoTheme.colorScheme.onSurfaceVariant,
-                        modifier = Modifier.combinedClickable(
-                            onClick = { onAuthorClick(false, null) },
-                            onLongClick = { onAuthorClick(true, null) }
+                        AnimatedTextLine(
+                            text = stringResource(R.string.origin_show, book.originName),
+                            style = LegadoTheme.typography.labelMedium,
+                            color = LegadoTheme.colorScheme.primary,
+                            modifier = Modifier.clickable(onClick = onOriginClick)
                         )
-                    )
+                    }
                 }
-                AnimatedTextLine(
-                    text = stringResource(R.string.origin_show, book.originName),
-                    style = LegadoTheme.typography.labelMedium,
-                    color = LegadoTheme.colorScheme.primary,
-                    modifier = Modifier.clickable(onClick = onOriginClick)
-                )
             }
-        },
-        labels = {
             if (locked) {
                 PrivateMaskLine(widthFraction = 0.5f, thickness = 24.dp)
             } else if (highlightedTags.isNotEmpty()) {
@@ -1352,8 +1514,8 @@ private fun BookInfoHeader(
                     }
                 }
             }
-        },
-    )
+        }
+    }
 }
 
 @Composable
@@ -1475,7 +1637,9 @@ private fun BookInfoActionCard(
     GlassCard(
         modifier = modifier.semantics(mergeDescendants = true) {
             role = Role.Button
-            this.contentDescription = contentDescription
+            // 描述与可见文案一致时交给文本节点朗读，避免同一名称念两遍；
+            // 仅冲突提示等补充信息才覆盖。
+            if (contentDescription != label) this.contentDescription = contentDescription
         },
         onLongClick = onLongClick,
         onClick = onClick,
@@ -1579,8 +1743,7 @@ private fun BookInfoSummary(
             }
         }
         Spacer(modifier = Modifier.height(4.dp))
-        // Comic archives do not have a text introduction. The old importer could expose
-        // ComicInfo.xml or the ZIP bytes as `intro`; never render that as novel content.
+        // Imported comic archives can contain legacy XML/ZIP metadata in intro.
         if ((book.type and BookType.image) == 0) BookInfoIntro(
             intro = book.intro,
             baseUrl = book.bookUrl

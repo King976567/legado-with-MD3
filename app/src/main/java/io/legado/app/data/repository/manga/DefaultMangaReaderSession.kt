@@ -1,6 +1,7 @@
 package io.legado.app.data.repository.manga
 
 import io.legado.app.R
+import io.legado.app.constant.AppLog
 import io.legado.app.domain.gateway.MangaReaderDataGateway
 import io.legado.app.domain.gateway.MangaReaderSession
 import io.legado.app.domain.model.manga.MangaChapterState
@@ -8,6 +9,8 @@ import io.legado.app.domain.model.manga.MangaSessionCommand
 import io.legado.app.domain.model.manga.MangaSessionEvent
 import io.legado.app.domain.model.manga.MangaSessionId
 import io.legado.app.domain.model.manga.MangaSessionState
+import io.legado.app.exception.LocalMangaDirectoryEmptyException
+import io.legado.app.exception.LocalMangaDirectoryUnavailableException
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.CoroutineScope
@@ -197,8 +200,13 @@ class DefaultMangaReaderSession(
             }
             loadWindow(opened.chapterIndex)
         }.onFailure { error ->
+            if (error is CancellationException) throw error
+            if (error is LocalMangaDirectoryUnavailableException) AppLog.put("本地漫画目录不可读", error)
             val message = error.localizedMessage.orEmpty()
-            _state.value = _state.value.copy(openError = message)
+            _state.value = _state.value.copy(
+                openError = message,
+                canReselectBookDirectory = error.canReselectBookDirectory(),
+            )
             _events.tryEmit(MangaSessionEvent.Message(message))
         }
     }
@@ -302,9 +310,11 @@ class DefaultMangaReaderSession(
         val chapterState = command.result.fold(
             onSuccess = { MangaChapterState.Ready(command.token, it) },
             onFailure = {
+                if (it is LocalMangaDirectoryUnavailableException) AppLog.put("本地漫画目录不可读", it)
                 MangaChapterState.Failed(
                     token = command.token,
                     message = it.localizedMessage.orEmpty(),
+                    canReselectBookDirectory = it.canReselectBookDirectory(),
                 )
             },
         )
@@ -318,6 +328,9 @@ class DefaultMangaReaderSession(
             )
         }
     }
+
+    private fun Throwable.canReselectBookDirectory(): Boolean =
+        this is LocalMangaDirectoryUnavailableException || this is LocalMangaDirectoryEmptyException
 
     private fun setChapterState(chapterIndex: Int, chapter: MangaChapterState) {
         val state = _state.value

@@ -60,6 +60,7 @@ jobs:
         with:
           ref: ${{ env.VERIFY_SHA }}
           fetch-depth: 0
+          submodules: true
           persist-credentials: false
       - name: Verify target baseline
         run: |
@@ -77,6 +78,8 @@ jobs:
         run: |
           python3 .github/scripts/prepare_gradle_distribution.py
           python3 .github/scripts/prepare_kotlin_compiler.py
+      - name: Prepare pinned UI forks
+        uses: ./.github/actions/prepare-ui-forks
       - name: Prepare verification
         run: |
           sed -i '/maven.aliyun.com/d' settings.gradle
@@ -84,6 +87,8 @@ jobs:
       # Keep cold compilation out of the test execution budget. Every test class
       # still runs in its own JVM, serially, with the existing 20-minute limit.
       # Instrumentation test compilation is part of the Comic verification gate.
+      # The enlarged test suite exceeds the 3 GiB Kotlin daemon heap. Compile in
+      # the 6 GiB Gradle process and serialize workers instead of adding JVM heaps.
       - name: Compile JVM and Android test sources
         timeout-minutes: 20
         run: |
@@ -91,7 +96,9 @@ jobs:
             --init-script .github/scripts/official-kotlin-compiler.gradle \
             :app:compileApp${{ matrix.product }}DebugAndroidTestKotlin \
             --project-prop ksp.incremental=false \
-            --max-workers=2 --no-parallel --info \
+            --project-prop kotlin.compiler.execution.strategy=in-process \
+            -Dorg.gradle.jvmargs="-Xmx6g -Xms512m -XX:MaxMetaspaceSize=1024m -XX:+HeapDumpOnOutOfMemoryError -Dfile.encoding=UTF-8 -XX:+UseG1GC" \
+            --max-workers=1 --no-parallel --info \
             --continue --no-daemon --no-configuration-cache
       - name: JVM tests
         id: tests
@@ -104,7 +111,9 @@ jobs:
             --project-prop ciTestShardCount=4 \
             --project-prop ciTestSourceSha="$VERIFY_SHA" \
             --project-prop ksp.incremental=false \
-            --max-workers=2 --no-parallel --info \
+            --project-prop kotlin.compiler.execution.strategy=in-process \
+            -Dorg.gradle.jvmargs="-Xmx6g -Xms512m -XX:MaxMetaspaceSize=1024m -XX:+HeapDumpOnOutOfMemoryError -Dfile.encoding=UTF-8 -XX:+UseG1GC" \
+            --max-workers=1 --no-parallel --info \
             --continue --no-daemon --no-configuration-cache
       - name: Lint and architecture
         if: ${{ !cancelled() && matrix.shard == 0 && steps.tests.outcome != 'skipped' }}
@@ -113,7 +122,9 @@ jobs:
           ./gradlew lintApp${{ matrix.product }}Debug verifyConfigArchitecture \
             --init-script .github/scripts/official-kotlin-compiler.gradle \
             --project-prop ksp.incremental=false \
-            --max-workers=2 --no-parallel --info \
+            --project-prop kotlin.compiler.execution.strategy=in-process \
+            -Dorg.gradle.jvmargs="-Xmx6g -Xms512m -XX:MaxMetaspaceSize=1024m -XX:+HeapDumpOnOutOfMemoryError -Dfile.encoding=UTF-8 -XX:+UseG1GC" \
+            --max-workers=1 --no-parallel --info \
             --continue --no-daemon --no-configuration-cache
       - name: Arm64 debug APK
         if: ${{ !cancelled() && matrix.shard == 0 && steps.tests.outcome != 'skipped' }}
@@ -123,7 +134,9 @@ jobs:
             --init-script .github/scripts/official-kotlin-compiler.gradle \
             --init-script .github/scripts/arm64-only.gradle \
             --project-prop ksp.incremental=false \
-            --max-workers=2 --no-parallel --info \
+            --project-prop kotlin.compiler.execution.strategy=in-process \
+            -Dorg.gradle.jvmargs="-Xmx6g -Xms512m -XX:MaxMetaspaceSize=1024m -XX:+HeapDumpOnOutOfMemoryError -Dfile.encoding=UTF-8 -XX:+UseG1GC" \
+            --max-workers=1 --no-parallel --info \
             --continue --no-daemon --no-configuration-cache
       - name: Upload arm64 trial APK
         if: ${{ success() && matrix.shard == 0 }}

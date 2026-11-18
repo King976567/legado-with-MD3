@@ -23,7 +23,6 @@ import org.junit.After
 import org.junit.Assert.assertArrayEquals
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
-import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
@@ -165,7 +164,7 @@ class NasComicUploadWorkerCacheTest {
                     assertTrue(oldPages.all(File::isFile))
                     assertFalse(newPages.any(File::exists))
                     listOf(first, second).forEach { chapter ->
-                        assertNull(BookHelp.deleteCacheEntryIfIdle(
+                        assertFalse(BookHelp.deleteChapterCacheEntryIfIdle(
                             BookHelp.getChapterContentFile(book, chapter).parentFile!!,
                         ))
                     }
@@ -281,13 +280,13 @@ class NasComicUploadWorkerCacheTest {
             current.writeBytes(body)
             legacy.writeBytes(body)
             assertFalse(File(directory, "images").exists())
-            assertNull(BookHelp.deleteCacheEntryIfIdle(directory))
-            assertNull(BookHelp.deleteCacheEntryIfIdle(legacy))
+            assertFalse(BookHelp.deleteChapterCacheEntryIfIdle(directory))
+            assertFalse(BookHelp.deleteChapterCacheEntryIfIdle(legacy))
             assertArrayEquals(body, current.readBytes())
             assertArrayEquals(body, legacy.readBytes())
         }
-        assertEquals(body.size.toLong(), requireNotNull(BookHelp.deleteCacheEntryIfIdle(directory)))
-        assertEquals(body.size.toLong(), requireNotNull(BookHelp.deleteCacheEntryIfIdle(legacy)))
+        assertTrue(BookHelp.deleteChapterCacheEntryIfIdle(directory))
+        assertTrue(BookHelp.deleteChapterCacheEntryIfIdle(legacy))
     }
 
     @Test
@@ -304,7 +303,7 @@ class NasComicUploadWorkerCacheTest {
         } catch (error: NasComicUploadException) {
             assertEquals(NasComicUploadFailure.EmptyChapter, error.reason)
         }
-        assertTrue(requireNotNull(BookHelp.deleteCacheEntryIfIdle(directory)) > 0L)
+        assertTrue(BookHelp.deleteChapterCacheEntryIfIdle(directory))
         assertFalse(directory.exists())
     }
 
@@ -323,7 +322,7 @@ class NasComicUploadWorkerCacheTest {
         } catch (_: CancellationException) {
             leases.close()
         }
-        assertTrue(requireNotNull(BookHelp.deleteCacheEntryIfIdle(directory)) > 0L)
+        assertTrue(BookHelp.deleteChapterCacheEntryIfIdle(directory))
         assertFalse(directory.exists())
     }
 

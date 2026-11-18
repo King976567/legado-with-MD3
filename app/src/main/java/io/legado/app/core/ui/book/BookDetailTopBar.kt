@@ -1,6 +1,7 @@
 package io.legado.app.core.ui.book
 
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.RowScope
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.ExperimentalMaterial3ExpressiveApi
@@ -13,20 +14,21 @@ import androidx.compose.ui.unit.dp
 import io.legado.app.ui.theme.ComposeEngine
 import io.legado.app.ui.theme.LegadoTheme
 import io.legado.app.ui.theme.LocalHazeState
+import io.legado.app.ui.theme.MiuixBlurredTopBar
 import io.legado.app.ui.theme.responsiveHazeEffectFixedStyle
+import io.legado.app.ui.widget.components.mochi.ProvideMochiScrollBlurProgress
 import io.legado.app.ui.widget.components.text.AppText
 import io.legado.app.ui.widget.components.topbar.GlassTopAppBarDefaults
 import io.legado.app.ui.widget.components.topbar.GlassTopAppBarScrollBehavior
 import io.legado.app.ui.widget.components.topbar.M3GlassScrollBehavior
 import io.legado.app.ui.widget.components.topbar.MiuixGlassScrollBehavior
+import io.legado.app.ui.widget.components.topbar.MiuixNativeTopBar
 import io.legado.app.ui.widget.components.topbar.TopBarActionsRow
 import io.legado.app.ui.widget.components.topbar.TopBarNavigationButton
-import io.legado.app.ui.widget.components.topbar.miuixTopBarActionsEndPadding
-import io.legado.app.ui.widget.components.topbar.miuixTopBarSlotPadding
 import ui.feice.mochi.basic.MochiButtonDefaults
 import top.yukonga.miuix.kmp.basic.TopAppBar as MiuixTopAppBar
 
-/** Transparent/collapsing toolbar shared by local and NAS book details. */
+/** NAS details follow the upstream book-info toolbar's theme and blur behavior. */
 @OptIn(ExperimentalMaterial3Api::class, ExperimentalMaterial3ExpressiveApi::class)
 @Composable
 fun BookDetailTopBar(
@@ -52,28 +54,28 @@ fun BookDetailTopBar(
     )
 
     if (isMiuix) {
-        MiuixTopAppBar(
-            modifier = hazeState?.let { Modifier.responsiveHazeEffectFixedStyle(it) } ?: Modifier,
+        val miuixBehavior = (scrollBehavior as? MiuixGlassScrollBehavior)?.miuixBehavior
+        val navigationIcon: @Composable () -> Unit = { TopBarNavigationButton(onClick = onBackPressed) }
+        val barActions: @Composable RowScope.() -> Unit = { actions() }
+        MiuixNativeTopBar(
             title = "",
-            subtitle = "",
-            navigationIcon = {
-                TopBarNavigationButton(onClick = onBackPressed)
-            },
-            actions = {
-                TopBarActionsRow(
-                    modifier = Modifier.padding(
-                        end = miuixTopBarActionsEndPadding()
-                    )
-                ) {
-                    actions()
-                }
-            },
-            color = resolvedColor,
-            navigationIconPadding = miuixTopBarSlotPadding(),
-            actionIconPadding = miuixTopBarSlotPadding(),
-            scrollBehavior = (scrollBehavior as? MiuixGlassScrollBehavior)?.miuixBehavior,
-        )
+            scrollBehavior = miuixBehavior,
+            defaultWindowInsetsPadding = true,
+            navigationIcon = navigationIcon,
+            actions = barActions,
+        ) {
+            MiuixBlurredTopBar(scrollBehavior = miuixBehavior, fixedStyle = true) {
+                MiuixTopAppBar(
+                    title = "",
+                    navigationIcon = navigationIcon,
+                    actions = barActions,
+                    color = resolvedColor,
+                    scrollBehavior = miuixBehavior,
+                )
+            }
+        }
     } else {
+        if (isMochi) ProvideMochiScrollBlurProgress { scrollBehavior.collapsedFraction }
         MediumFlexibleTopAppBar(
             modifier = hazeState?.let { Modifier.responsiveHazeEffectFixedStyle(it) } ?: Modifier,
             title = { AppText(text = "", maxLines = 1) },
