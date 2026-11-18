@@ -40,7 +40,8 @@ jobs:
       github.repository == 'King976567/legado-with-MD3' &&
       (github.event_name != 'pull_request' ||
       (github.event.pull_request.head.repo.full_name == github.repository &&
-      startsWith(github.head_ref, 'automation/sync-')))
+      ((github.base_ref == 'main' && startsWith(github.head_ref, 'automation/sync-upstream-')) ||
+      (github.base_ref == 'nas-md3' && github.head_ref == 'automation/sync-nas-main'))))
     strategy:
       fail-fast: false
       matrix:

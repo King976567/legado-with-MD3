@@ -18,6 +18,13 @@ permissions:
 jobs:
   # Fork 门禁只验证 Comic 完整版；上游 Core 源码仍随同步保留。
   verify:
+    # Sync PRs already run the complete Comic gate in verify-sync.yml.
+    if: >-
+      ${{ !(github.repository == 'King976567/legado-with-MD3' &&
+      github.event_name == 'pull_request' &&
+      github.event.pull_request.head.repo.full_name == github.repository &&
+      ((github.base_ref == 'main' && startsWith(github.head_ref, 'automation/sync-upstream-')) ||
+      (github.base_ref == 'nas-md3' && github.head_ref == 'automation/sync-nas-main'))) }}
     strategy:
       fail-fast: false
       matrix:
