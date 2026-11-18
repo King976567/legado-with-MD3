@@ -99,8 +99,14 @@ import io.legado.app.ui.widget.components.card.GlassCard
 import io.legado.app.ui.widget.components.card.ReorderableSelectionItem
 import io.legado.app.ui.widget.components.card.SelectionItemCard
 import io.legado.app.ui.widget.components.card.TextCard
-import io.legado.app.ui.widget.components.divider.PillDivider
+import io.legado.app.ui.widget.components.menu.AppAction
+import io.legado.app.ui.widget.components.menu.AppActionGroup
+import io.legado.app.ui.widget.components.menu.AppActionMenu
+import io.legado.app.ui.widget.components.menu.AppChoiceDropdown
+import io.legado.app.ui.widget.components.menu.AppChoiceOption
+import io.legado.app.ui.widget.components.menu.AppMenuAnchor
 import io.legado.app.ui.widget.components.filePicker.FilePickerSheet
+import io.legado.app.ui.widget.components.icon.AppIcon
 import io.legado.app.ui.widget.components.icon.AppIcons
 import io.legado.app.ui.widget.components.image.cover.CoilBookCover
 import io.legado.app.ui.widget.components.lazylist.FastScrollLazyColumn
@@ -116,7 +122,6 @@ import io.legado.app.ui.widget.components.settingItem.TinyClickableSettingItem
 import io.legado.app.ui.widget.components.settingItem.TinyDropdownSettingItem
 import io.legado.app.ui.widget.components.settingItem.TinySwitchSettingItem
 import io.legado.app.ui.widget.components.text.AppText
-import io.legado.app.ui.widget.components.topbar.TopBarActionButton
 import io.legado.app.utils.ACache
 import io.legado.app.utils.FileDoc
 import io.legado.app.utils.checkWrite
@@ -125,6 +130,8 @@ import io.legado.app.utils.move
 import io.legado.app.utils.startService
 import io.legado.app.utils.toastOnUi
 import io.legado.app.utils.verificationField
+import kotlinx.collections.immutable.persistentListOf
+import kotlinx.collections.immutable.toImmutableList
 import org.koin.androidx.compose.koinViewModel
 import sh.calvin.reorderable.ReorderableItem
 import sh.calvin.reorderable.rememberReorderableLazyListState
@@ -163,7 +170,7 @@ private fun BookshelfManageScreen(
 ) {
     val state by viewModel.uiState.collectAsStateWithLifecycle()
     val context = LocalContext.current
-    var showGroupMenu by remember { mutableStateOf(false) }
+
     var showFilePickerSheet by remember { mutableStateOf(false) }
     var showDownloadAllConfirmDialog by remember { mutableStateOf(false) }
     var showBatchDownloadConfirmDialog by remember { mutableStateOf(false) }
@@ -182,7 +189,6 @@ private fun BookshelfManageScreen(
     var otherSourcePreviewItem by remember { mutableStateOf<BatchChangeSourcePreviewItem?>(null) }
     var pendingMoveGroupBookUrl by remember { mutableStateOf<String?>(null) }
     var groupPickerCurrentGroupId by remember { mutableLongStateOf(0L) }
-    var moreMenuBookUrl by remember { mutableStateOf<String?>(null) }
     var pendingDeleteBookUrls by remember { mutableStateOf<Set<String>>(emptySet()) }
     var fabMenuExpanded by rememberSaveable { mutableStateOf(false) }
     // 下面两处待导出集合直接存实体而不是 url：跨分组选中的书不在当前列表里，按 url 回查会漏掉
@@ -472,52 +478,53 @@ private fun BookshelfManageScreen(
         searchPlaceholder = "筛选书名/作者/书源/分组",
         topBarActions = {
             if (state.groupList.isNotEmpty()) {
-                TopBarActionButton(
-                    onClick = { showGroupMenu = true },
-                    imageVector = AppIcons.Filter,
-                    contentDescription = stringResource(R.string.a11y_group_filter)
-                )
-                RoundDropdownMenu(
-                    expanded = showGroupMenu,
-                    onDismissRequest = { showGroupMenu = false }
-                ) { dismiss ->
-                    state.groupList.forEach { group ->
-                        RoundDropdownMenuItem(
-                            text = group.groupName,
-                            isSelected = group.groupId == state.groupId,
-                            onClick = {
-                                dismiss()
-                                viewModel.dispatch(BookshelfManageScreenIntent.ChangeGroup(group.groupId))
-                            }
+                // 分组 id 是 Long（位掩码），菜单入口用字符串稳定 ID，边界在这一层转换。
+                val groupChoices = remember(state.groupList) {
+                    state.groupList
+                        .map { AppChoiceOption(id = it.groupId.toString(), label = it.groupName) }
+                        .toImmutableList()
+                }
+                AppChoiceDropdown(
+                    options = groupChoices,
+                    selectedId = state.groupId.toString(),
+                    onSelect = { id ->
+                        viewModel.dispatch(
+                            BookshelfManageScreenIntent.ChangeGroup(id.toLong())
                         )
-                    }
+                    },
+                    title = stringResource(R.string.a11y_group_filter),
+                    anchor = AppMenuAnchor.Icon,
+                ) {
+                    AppIcon(
+                        imageVector = AppIcons.Filter,
+                        contentDescription = stringResource(R.string.a11y_group_filter),
+                    )
                 }
             }
         },
-        dropDownMenuContent = { dismiss ->
-            RoundDropdownMenuItem(
-                text = stringResource(R.string.download_all),
-                onClick = {
-                    dismiss()
-                    if (state.isDownloadRunning) {
-                        viewModel.dispatch(BookshelfManageScreenIntent.StopDownload)
-                    } else {
-                        showDownloadAllConfirmDialog = true
-                    }
+        menuGroups = persistentListOf(
+            AppActionGroup(
+                id = "manage_actions",
+                actions = persistentListOf(
+                    AppAction("download_all", stringResource(R.string.download_all)),
+                    AppAction("export_all", stringResource(R.string.export_all)),
+                ),
+            ),
+            AppActionGroup(
+                id = "manage_log",
+                actions = persistentListOf(AppAction("log", stringResource(R.string.log))),
+            ),
+        ),
+        onMenuAction = { id ->
+            when (id) {
+                "download_all" -> if (state.isDownloadRunning) {
+                    viewModel.dispatch(BookshelfManageScreenIntent.StopDownload)
+                } else {
+                    showDownloadAllConfirmDialog = true
                 }
-            )
-            RoundDropdownMenuItem(
-                text = stringResource(R.string.export_all),
-                onClick = { dismiss(); exportAll() }
-            )
-            PillDivider()
-            RoundDropdownMenuItem(
-                text = stringResource(R.string.log),
-                onClick = {
-                    dismiss()
-                    showLogSheet = true
-                }
-            )
+                "export_all" -> exportAll()
+                "log" -> showLogSheet = true
+            }
         },
         floatingActionButton = {
             AppFloatingActionButtonMenu(
@@ -712,47 +719,47 @@ private fun BookshelfManageScreen(
                                             .padding(horizontal = 4.dp),
                                         color = LegadoTheme.colorScheme.outlineVariant
                                     )
-                                    RoundDropdownMenu(
-                                        expanded = moreMenuBookUrl == book.bookUrl,
-                                        onDismissRequest = { moreMenuBookUrl = null }
-                                    ) { dismiss ->
-                                        RoundDropdownMenuItem(
-                                            text = "换源",
-                                            onClick = {
-                                                singleChangeSourceBook = book
-                                                dismiss()
-                                            }
-                                        )
-                                        RoundDropdownMenuItem(
-                                            text = "删除书籍",
-                                            onClick = {
-                                                pendingDeleteBookUrls = setOf(book.bookUrl)
-                                                deleteOriginalBookFile = state.deleteBookOriginal
-                                                showDeleteBookConfirmDialog = true
-                                                dismiss()
-                                            }
-                                        )
-                                        RoundDropdownMenuItem(
-                                            text = "删除缓存",
-                                            onClick = {
-                                                viewModel.dispatch(
+                                    AppActionMenu(
+                                        groups = persistentListOf(
+                                            AppActionGroup(
+                                                id = "bookshelf_book_actions",
+                                                actions = persistentListOf(
+                                                    AppAction(id = "change_source", label = "换源"),
+                                                    AppAction(id = "delete_book", label = "删除书籍"),
+                                                    AppAction(id = "clear_cache", label = "删除缓存"),
+                                                ),
+                                            ),
+                                        ),
+                                        onAction = { id ->
+                                            when (id) {
+                                                "change_source" -> singleChangeSourceBook = book
+                                                "delete_book" -> {
+                                                    pendingDeleteBookUrls = setOf(book.bookUrl)
+                                                    deleteOriginalBookFile = state.deleteBookOriginal
+                                                    showDeleteBookConfirmDialog = true
+                                                }
+
+                                                "clear_cache" -> viewModel.dispatch(
                                                     BookshelfManageScreenIntent.ClearCachesForBooks(
                                                         setOf(book.bookUrl)
                                                     )
                                                 )
-                                                dismiss()
                                             }
+                                        },
+                                        modifier = Modifier.weight(1f),
+                                        anchor = AppMenuAnchor.Row,
+                                        title = "更多",
+                                    ) {
+                                        SmallTonalButton(
+                                            onClick = null,
+                                            modifier = Modifier.fillMaxWidth(),
+                                            icon = Icons.Default.MoreVert,
+                                            text = "更多",
+                                            contentColor = LegadoTheme.colorScheme.onSurfaceVariant.copy(
+                                                alpha = 0.8f
+                                            )
                                         )
                                     }
-                                    SmallTonalButton(
-                                        onClick = { moreMenuBookUrl = book.bookUrl },
-                                        modifier = Modifier.weight(1f),
-                                        icon = Icons.Default.MoreVert,
-                                        text = "更多",
-                                        contentColor = LegadoTheme.colorScheme.onSurfaceVariant.copy(
-                                            alpha = 0.8f
-                                        )
-                                    )
                                 }
                                 if (downloadFailureText != null) {
                                     AppText(
@@ -1227,7 +1234,8 @@ private fun BookshelfManageScreen(
                     onValueChange = { exportFileNameInput = it },
                     modifier = Modifier.fillMaxWidth(),
                     label = exportFileNameText,
-                    placeholder = { AppText(exportFileNameHintText) }
+                    placeholder = { AppText(exportFileNameHintText) },
+                    placeholderText = exportFileNameHintText,
                 )
             }
         },
@@ -1318,6 +1326,7 @@ private fun BookshelfManageScreen(
                         modifier = Modifier.fillMaxWidth(),
                         label = exportChapterIndexText,
                         placeholder = { AppText("1-5,8,10-18") },
+                        placeholderText = "1-5,8,10-18",
                         supportingText = {
                             customEpubScopeError?.let { msg ->
                                 AppText(text = msg)
@@ -1336,7 +1345,8 @@ private fun BookshelfManageScreen(
                         onValueChange = { customEpisodeExportNameInput = it },
                         modifier = Modifier.fillMaxWidth(),
                         label = exportFileNameText,
-                        placeholder = { AppText(exportFileNameHintText) }
+                        placeholder = { AppText(exportFileNameHintText) },
+                    placeholderText = exportFileNameHintText,
                     )
                     if (episodeTemplateValid) {
                         AppText(

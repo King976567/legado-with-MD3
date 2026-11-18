@@ -20,6 +20,7 @@ import io.legado.app.domain.usecase.UploadReadingProgressUseCase
 import io.legado.app.exception.NoStackTraceException
 import io.legado.app.help.book.BookHelp
 import io.legado.app.help.book.isLocal
+import io.legado.app.help.book.isLocalManga
 import io.legado.app.help.book.isLocalModified
 import io.legado.app.help.book.isNotShelf
 import io.legado.app.help.book.readSimulating
@@ -30,6 +31,8 @@ import io.legado.app.model.cache.CacheDownloadRequest
 import io.legado.app.model.cache.CacheDownloadSource
 import io.legado.app.model.cache.ChapterSelection
 import io.legado.app.model.localBook.LocalBook
+import io.legado.app.model.localBook.LocalMangaFiles
+import io.legado.app.model.localBook.isLocalMangaArchive
 import io.legado.app.model.webBook.WebBook
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.map
@@ -65,11 +68,17 @@ class MangaReaderDataRepository(
         inBookshelf: Boolean,
         chapterChanged: Boolean,
     ): OpenedMangaBook {
-        val book = bookUrl?.takeIf(String::isNotEmpty)?.let(database.bookDao::getBook)
-            ?: database.bookDao.lastReadBook
-            ?: throw NoStackTraceException(application.getString(R.string.no_book))
-        if (book.isLocal && !localBookExists(book)) {
-            throw NoStackTraceException(application.getString(R.string.no_book))
+        val book = (if (bookUrl.isNullOrEmpty()) {
+            database.bookDao.lastReadBook
+        } else {
+            database.bookDao.getBook(bookUrl)
+        }) ?: throw NoStackTraceException(application.getString(R.string.no_book))
+        if (book.isLocal) {
+            if (book.isLocalManga && !book.isLocalMangaArchive) {
+                LocalMangaFiles.checkDirectory(book)
+            } else {
+                LocalBook.getBookInputStream(book).use { }
+            }
         }
         val source = database.bookSourceDao.getBookSource(book.origin)
         if (!book.isLocal && book.tocUrl.isEmpty()) {
@@ -85,21 +94,14 @@ class MangaReaderDataRepository(
             }
         }
         var chapterCount = database.bookChapterDao.getChapterCount(book.bookUrl)
-        // Rebuild local comic chapters from the archive layout on every open.
-        // Older imports may have stored one chapter per image; using that stale
-        // table would keep a repaired CBZ unreadable until it was re-imported.
-        val isLocalManga = book.isLocal && localMangaLoader.supports(book)
-        if (chapterCount == 0 || book.isLocalModified() || isLocalManga) {
+        if (chapterCount == 0 || book.isLocalModified()) {
             if (book.isLocal) {
-                val chapters = if (isLocalManga) {
-                    localMangaLoader.chapters(book).also {
-                        book.totalChapterNum = it.size
-                        book.latestChapterTitle = it.lastOrNull()?.title.orEmpty()
-                    }
-                } else LocalBook.getChapterList(book)
-                database.bookChapterDao.delByBook(book.bookUrl)
-                database.bookChapterDao.insert(*chapters.toTypedArray())
-                database.bookDao.update(book)
+                val chapters = LocalBook.getChapterList(book)
+                database.runInTransaction {
+                    database.bookChapterDao.delByBook(book.bookUrl)
+                    database.bookChapterDao.insert(*chapters.toTypedArray())
+                    database.bookDao.update(book)
+                }
                 chapterCount = chapters.size
             } else {
                 val activeSource = source ?: throw NoStackTraceException(
@@ -119,11 +121,8 @@ class MangaReaderDataRepository(
             }
         }
         if (chapterCount == 0) chapterCount = database.bookChapterDao.getChapterCount(book.bookUrl)
-        // Older CBZ imports only indexed pages and left the bookshelf with the
-        // generic placeholder cover. Reuse the same extracted image set to
-        // materialize a stable cover without downloading or re-importing the
-        // comic.
-        if (isLocalManga && localMangaLoader.ensureCover(book)) {
+        // Older imports may not have a separate cover. Do not replace an existing or custom cover.
+        if (book.isLocalManga && localMangaLoader.ensureCover(book)) {
             database.bookDao.update(book)
         }
         val simulatedCount = if (book.readSimulating()) {
@@ -159,7 +158,7 @@ class MangaReaderDataRepository(
             ?: throw NoStackTraceException(application.getString(R.string.no_book))
         val chapter = database.bookChapterDao.getChapter(bookUrl, chapterIndex)
             ?: throw NoStackTraceException(application.getString(R.string.error_load_toc))
-        return if (book.isLocal && localMangaLoader.supports(book)) {
+        return if (book.isLocalManga) {
             localMangaLoader.load(book, chapter)
         } else chapterPageLoader.load(book, chapter)
     }
@@ -274,8 +273,4 @@ class MangaReaderDataRepository(
         durChapterTime = durChapterTime,
         durChapterTitle = durChapterTitle,
     )
-
-    private fun localBookExists(book: Book): Boolean = runCatching {
-        LocalBook.getBookInputStream(book)
-    }.isSuccess
 }

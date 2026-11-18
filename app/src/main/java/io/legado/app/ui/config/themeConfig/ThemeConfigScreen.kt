@@ -4,6 +4,7 @@ import io.legado.app.feature.settings.search.SearchableSetting
 import io.legado.app.feature.settings.search.SearchableSettingsList
 import android.annotation.SuppressLint
 import android.content.Context
+import android.os.Build
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.animateDpAsState
 import androidx.compose.foundation.BorderStroke
@@ -22,7 +23,6 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
@@ -45,10 +45,9 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.ToggleButton
 import androidx.compose.material3.ToggleButtonDefaults
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -56,6 +55,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalResources
 import androidx.compose.ui.res.stringArrayResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.Role
@@ -78,7 +78,6 @@ import io.legado.app.ui.widget.components.AppScaffold
 import io.legado.app.ui.widget.components.FontFolderState
 import io.legado.app.ui.widget.components.FontSelectSheet
 import io.legado.app.ui.widget.components.SplicedColumnGroup
-import io.legado.app.ui.widget.components.SplicedColumnDivider
 import io.legado.app.ui.widget.components.alert.AppAlertDialog
 import io.legado.app.ui.widget.components.button.series.MediumTonalButton
 import io.legado.app.ui.widget.components.card.InfoCard
@@ -86,11 +85,9 @@ import io.legado.app.ui.widget.components.dialog.ColorPickerSheet
 import io.legado.app.ui.widget.components.dialog.TimePickerDialog
 import io.legado.app.ui.widget.components.settingItem.ClickableSettingItem
 import io.legado.app.ui.widget.components.settingItem.DropdownListSettingItem
-import io.legado.app.ui.widget.components.settingItem.SettingItem
 import io.legado.app.ui.widget.components.settingItem.SliderSettingItem
 import io.legado.app.ui.widget.components.settingItem.SwitchSettingItem
 import io.legado.app.ui.widget.components.text.AppText
-import io.legado.app.ui.widget.components.text.AnimatedTextLine
 import io.legado.app.ui.widget.components.topbar.GlassMediumFlexibleTopAppBar
 import io.legado.app.ui.widget.components.topbar.GlassTopAppBarDefaults
 import io.legado.app.ui.widget.components.topbar.TopBarNavigationButton
@@ -108,6 +105,7 @@ fun ThemeConfigScreen(
     val theme = state.theme
     val scrollBehavior = GlassTopAppBarDefaults.defaultScrollBehavior()
     val context = LocalContext.current
+    val resources = LocalResources.current
     fun updateTheme(transform: (ThemeSettings) -> ThemeSettings) =
         onIntent(ThemeConfigIntent.UpdateTheme(transform))
     val fontFolderState = remember(state.fontFolder) {
@@ -138,9 +136,15 @@ fun ThemeConfigScreen(
                 val isMiuixEngine = remember(composeEngine) {
                     composeEngine == ComposeEngine.Miuix
                 }
+                val isCouiEngine = remember(composeEngine) {
+                    composeEngine == ComposeEngine.Coui
+                }
+                // Miuix / COUI 未启用自定义主题色时配色由引擎内置方案决定，
+                // 不显示项目自绘色板预览卡，也不提供主题配色列表。
+                val useBuiltInPaletteEngine = isMiuixEngine || isCouiEngine
                 val isDarkTheme = LegadoTheme.isDark
 
-                if (!isMiuixEngine) {
+                if (!useBuiltInPaletteEngine) {
                     Column(
                         horizontalAlignment = Alignment.CenterHorizontally,
                         modifier = Modifier.fillMaxWidth()
@@ -176,7 +180,10 @@ fun ThemeConfigScreen(
 
 
                 SplicedColumnGroup(title = stringResource(R.string.theme)) {
-                    if (isMiuixEngine) {
+                    // 非 M3 主题风格（Miuix/Mochi/Coui）统一使用下拉组件，与 Miuix 开启时一致。
+                    val useDropdownItems = composeEngine != ComposeEngine.Material
+
+                    if (useDropdownItems) {
                         SearchableSetting("theme.theme_mode") {
                             DropdownListSettingItem(
                                 title = stringResource(R.string.theme_mode),
@@ -191,18 +198,24 @@ fun ThemeConfigScreen(
                             )
                         }
 
-                        SearchableSetting("theme.miuix_monet") {
-                            SwitchSettingItem(
-                                title = stringResource(R.string.miuix_monet),
-                                description = stringResource(R.string.miuix_monet_summary),
-                                checked = theme.useMiuixMonet,
-                                onCheckedChange = {
-                                    onIntent(ThemeConfigIntent.SetMiuixMonet(it))
-                                }
-                            )
+                        // Miuix / COUI 都提供「自定义主题色」：关闭时配色由引擎内置方案决定。
+                        if (useBuiltInPaletteEngine) {
+                            SearchableSetting("theme.miuix_monet") {
+                                SwitchSettingItem(
+                                    title = stringResource(R.string.miuix_monet),
+                                    description = stringResource(R.string.miuix_monet_summary),
+                                    checked = theme.useMiuixMonet,
+                                    onCheckedChange = {
+                                        onIntent(ThemeConfigIntent.SetMiuixMonet(it))
+                                    }
+                                )
+                            }
                         }
 
-                        if (theme.useMiuixMonet) {
+                        // 未启用自定义主题色时内置配色引擎不提供主题选择；开启后走统一 14 项。
+                        // 首项（appTheme == "0"）恒为「动态取色」：COUI 开启自定义主题色后
+                        // 也真正走系统动态取色，不再替换成引擎内置预设的别名。
+                        if (!useBuiltInPaletteEngine || theme.useMiuixMonet) {
                             val visibleThemes = themes.filter { (_, value) ->
                                 value != "4" || state.showEInkTheme
                             }
@@ -227,9 +240,7 @@ fun ThemeConfigScreen(
                                 }
                             )
                         }
-                    }
 
-                    if (!isMiuixEngine) {
                         Spacer(modifier = Modifier.height(16.dp))
 
                         val visibleThemes = themes.filter { (_, value) ->
@@ -271,7 +282,7 @@ fun ThemeConfigScreen(
                             onClick = { onIntent(ThemeConfigIntent.ShowSheet(ThemeConfigSheet.Font)) }
                         )
                     }
-                    if (theme.appTheme == "12" && (!isMiuixEngine || theme.useMiuixMonet)) {
+                    if (theme.appTheme == "12" && (!useBuiltInPaletteEngine || theme.useMiuixMonet)) {
                         SearchableSetting("theme.custom_theme_colors") {
                             ClickableSettingItem(
                                 title = stringResource(R.string.custom_theme_colors),
@@ -280,17 +291,46 @@ fun ThemeConfigScreen(
                         }
                     }
                     SearchableSetting("theme.compose_engine") {
+                        val couiSupported = ThemeResolver.isCouiSupported()
+                        val coui = ThemeResolver.COMPOSE_ENGINE_COUI
+                        val selectedValue = if (appShell.composeEngine.equals(coui, ignoreCase = true)) {
+                            if (couiSupported) coui else "material"
+                        } else {
+                            appShell.composeEngine
+                        }
+                        val entries = stringArrayResource(R.array.composeEngine) +
+                            (if (couiSupported) "COUI" else stringResource(R.string.coui_theme_requires_android_14))
+                        val values = stringArrayResource(R.array.composeEngine_value) + coui
                         DropdownListSettingItem(
                             title = stringResource(R.string.compose_engine),
-                            selectedValue = appShell.composeEngine,
-                            displayEntries = stringArrayResource(R.array.composeEngine),
-                            entryValues = stringArrayResource(R.array.composeEngine_value),
-                            onValueChange = {
-                                onIntent(
-                                    ThemeConfigIntent.SetComposeEngine(it)
-                                )
-                            }
+                            selectedValue = selectedValue,
+                            displayEntries = entries,
+                            entryValues = values,
+                            unavailableValues = if (couiSupported) emptySet() else setOf(coui),
+                            // 切换根主题会立刻重建 composition。Mochi 的浮层挂在 DecorView 上，
+                            // 必须等它收起并摘掉再提交，否则会在测量期间移除 DecorView 子视图。
+                            commitAfterDismiss = true,
+                            onValueChange = { onIntent(ThemeConfigIntent.SetComposeEngine(it)) },
                         )
+                    }
+                    if (isMiuixEngine) {
+                        SearchableSetting("theme.hyper_os4_components") {
+                            SwitchSettingItem(
+                                title = stringResource(R.string.hyper_os4_components),
+                                description = stringResource(R.string.hyper_os4_components_summary),
+                                // 没有模糊就没有这套外观：不支持时既不能打开，也不显示为已开启。
+                                checked = theme.useHyperOs4Components && ThemeResolver.isBlurSupported(),
+                                enabled = ThemeResolver.isBlurSupported(),
+                                onCheckedChange = { enabled ->
+                                    updateTheme {
+                                        it.copy(
+                                            useHyperOs4Components = enabled,
+                                            miuixTopBarLiquidGlass = enabled,
+                                        )
+                                    }
+                                },
+                            )
+                        }
                     }
                     SearchableSetting("theme.change_icon") {
                         ClickableSettingItem(
@@ -350,7 +390,7 @@ fun ThemeConfigScreen(
                         SliderSettingItem(
                             title = stringResource(R.string.font_scale),
                             valueLabel = {
-                                context.getString(R.string.font_scale_summary, it / 10f)
+                                resources.getString(R.string.font_scale_summary, it / 10f)
                             },
                             value = appShell.fontScale.toFloat(),
                             defaultValue = 10f,
@@ -590,23 +630,37 @@ fun ThemeConfigScreen(
                     }
                 }
 
-                SplicedColumnGroup(title = stringResource(R.string.blur_effects)) {
-                    SearchableSetting("theme.is_blur_enable") {
-                        SwitchSettingItem(
-                            title = stringResource(R.string.is_blur_enable),
-                            checked = theme.enableBlur,
-                            onCheckedChange = { onIntent(ThemeConfigIntent.SetBlurEnabled(it)) }
-                        )
-                    }
-                    AnimatedVisibility(visible = theme.enableBlur) {
-                        SearchableSetting("theme.is_blur_progressive_enable") {
+                // COUI / Miuix 的模糊是外观本身，不能关闭；只有 Material / Mochi 保留开关。
+                if (composeEngine == ComposeEngine.Material || composeEngine == ComposeEngine.Mochi) {
+                    SplicedColumnGroup(title = stringResource(R.string.blur_effects)) {
+                        val isMochi = composeEngine == ComposeEngine.Mochi
+                        val blurSupported = if (isMochi) {
+                            Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU
+                        } else {
+                            true
+                        }
+                        val blurEnabled = if (isMochi) theme.mochiScrollEdgeBlurEnabled else theme.enableBlur
+                        SearchableSetting("theme.is_blur_enable") {
                             SwitchSettingItem(
-                                title = stringResource(R.string.is_blur_progressive_enable),
-                                checked = theme.enableProgressiveBlur,
-                                onCheckedChange = { value ->
-                                    updateTheme { it.copy(enableProgressiveBlur = value) }
+                                title = stringResource(R.string.is_blur_enable),
+                                checked = blurSupported && blurEnabled,
+                                enabled = blurSupported,
+                                onCheckedChange = { enabled ->
+                                    if (isMochi) updateTheme { it.copy(mochiScrollEdgeBlurEnabled = enabled) }
+                                    else onIntent(ThemeConfigIntent.SetBlurEnabled(enabled))
                                 }
                             )
+                        }
+                        AnimatedVisibility(visible = !isMochi && blurSupported && theme.enableBlur) {
+                            SearchableSetting("theme.is_blur_progressive_enable") {
+                                SwitchSettingItem(
+                                    title = stringResource(R.string.is_blur_progressive_enable),
+                                    checked = theme.enableProgressiveBlur,
+                                    onCheckedChange = { value ->
+                                        updateTheme { it.copy(enableProgressiveBlur = value) }
+                                    }
+                                )
+                            }
                         }
                     }
                 }
@@ -1114,28 +1168,6 @@ private fun TextAnimationSettings(
             onValueChange = { onLevelChange(TextAnimationLevel.fromStoredValue(it)) },
         )
     }
-
-    var finished by rememberSaveable { mutableStateOf(false) }
-    SplicedColumnDivider()
-    SettingItem(
-        title = stringResource(R.string.text_animation_preview),
-        description = stringResource(R.string.text_animation_preview_summary),
-        trailingContent = {
-            AnimatedTextLine(
-                text = stringResource(
-                    if (finished) R.string.text_animation_example_finished
-                    else R.string.text_animation_example_reading
-                ),
-                modifier = Modifier.widthIn(max = 128.dp),
-                color = LegadoTheme.colorScheme.primary,
-                style = LegadoTheme.typography.labelLarge,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-            )
-        },
-        semanticRole = Role.Button,
-        onClick = { finished = !finished },
-    )
 }
 
 @Composable
@@ -1255,8 +1287,9 @@ fun ThemeColorButton(
     onClick: () -> Unit
 ) {
     // 配色方案由种子色实时生成，开销不小，缓存避免无关重组时重复计算
+    val composeEngine = LegadoTheme.composeEngine
     val colors = remember(
-        value, isDark, isAmoled, paletteStyle, customLightSeedColor, customNightSeedColor
+        value, isDark, isAmoled, paletteStyle, customLightSeedColor, customNightSeedColor, composeEngine
     ) {
         getThemeColorPalette(
             context = context,
@@ -1265,7 +1298,8 @@ fun ThemeColorButton(
             isAmoled = isAmoled,
             paletteStyle = paletteStyle,
             customLightSeedColor = customLightSeedColor,
-            customNightSeedColor = customNightSeedColor
+            customNightSeedColor = customNightSeedColor,
+            composeEngine = composeEngine,
         )
     }
     val borderWidth by animateDpAsState(
@@ -1360,8 +1394,9 @@ fun ThemeCard(
     customLightSeedColor: Int,
     customNightSeedColor: Int
 ) {
+    val composeEngine = LegadoTheme.composeEngine
     val colors = remember(
-        value, isDark, isAmoled, paletteStyle, customLightSeedColor, customNightSeedColor
+        value, isDark, isAmoled, paletteStyle, customLightSeedColor, customNightSeedColor, composeEngine
     ) {
         getThemeColors(
             context = context,
@@ -1370,7 +1405,8 @@ fun ThemeCard(
             isAmoled = isAmoled,
             paletteStyle = paletteStyle,
             customLightSeedColor = customLightSeedColor,
-            customNightSeedColor = customNightSeedColor
+            customNightSeedColor = customNightSeedColor,
+            composeEngine = composeEngine,
         )
     }
 
@@ -1472,7 +1508,8 @@ private fun getThemeColorPalette(
     paletteStyle: String?,
     materialVersion: String? = null,
     customLightSeedColor: Int = 0,
-    customNightSeedColor: Int = 0
+    customNightSeedColor: Int = 0,
+    composeEngine: ComposeEngine,
 ): ThemeColorPalette {
     val appThemeMode = ThemeResolver.resolveThemeMode(value)
     val customSeedColor = if (isDark) customNightSeedColor else customLightSeedColor
@@ -1483,7 +1520,8 @@ private fun getThemeColorPalette(
         isAmoled = isAmoled,
         paletteStyle = paletteStyle,
         materialVersion = materialVersion,
-        customSeedColor = customSeedColor
+        customSeedColor = customSeedColor,
+        composeEngine = composeEngine,
     )
 
     return ThemeColorPalette(
@@ -1503,7 +1541,8 @@ private fun getThemeColors(
     paletteStyle: String?,
     materialVersion: String? = null,
     customLightSeedColor: Int = 0,
-    customNightSeedColor: Int = 0
+    customNightSeedColor: Int = 0,
+    composeEngine: ComposeEngine,
 ): ThemeColors {
     val appThemeMode = ThemeResolver.resolveThemeMode(value)
     val customSeedColor = if (isDark) customNightSeedColor else customLightSeedColor
@@ -1514,7 +1553,8 @@ private fun getThemeColors(
         isAmoled = isAmoled,
         paletteStyle = paletteStyle,
         materialVersion = materialVersion,
-        customSeedColor = customSeedColor
+        customSeedColor = customSeedColor,
+        composeEngine = composeEngine,
     )
 
     return ThemeColors(

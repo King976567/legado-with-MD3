@@ -1,5 +1,6 @@
 package io.legado.app.feature.settings.search
 
+import android.os.Build
 import androidx.compose.foundation.layout.consumeWindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.imePadding
@@ -26,9 +27,12 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.compose.dropUnlessResumed
 import io.legado.app.R
 import io.legado.app.feature.settings.reading.ReadSetting
+import io.legado.app.ui.theme.ComposeEngine
+import io.legado.app.ui.theme.LegadoTheme
 import io.legado.app.ui.theme.adaptiveContentPadding
 import io.legado.app.ui.theme.adaptiveHorizontalPadding
 import io.legado.app.ui.widget.components.AppScaffold
+import io.legado.app.ui.widget.components.coui.rememberAppVerticalOverscrollEffect
 import io.legado.app.ui.widget.components.SearchBar
 import io.legado.app.ui.widget.components.SplicedColumnGroup
 import io.legado.app.ui.widget.components.icon.AppIcons
@@ -48,8 +52,13 @@ fun SettingsSearchRouteScreen(
 ) {
     val resources = LocalResources.current
     val configuration = LocalConfiguration.current
-    // Resources may keep their identity across language changes; key the index by configuration too.
-    val index = remember(resources, configuration) {
+    val hasProgressiveBlurSetting = when (LegadoTheme.composeEngine) {
+        ComposeEngine.Material -> true
+        ComposeEngine.Miuix -> Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU
+        ComposeEngine.Mochi, ComposeEngine.Coui -> false
+    }
+    // 按当前配置解析文案，并在主题能力变化时更新可搜索条目。
+    val index = remember(resources, configuration, hasProgressiveBlurSetting) {
         val reading = ReadSetting.entries.map { setting ->
             SettingsSearchEntry(
                 id = setting.id,
@@ -64,7 +73,10 @@ fun SettingsSearchRouteScreen(
                 keywords = setting.keywordsRes?.let(resources::getString).orEmpty(),
             )
         }
-        val fixed = (SettingsSearchCatalog.categories + SettingsSearchCatalog.items).map { item ->
+        val availableItems = SettingsSearchCatalog.items.filterNot {
+            !hasProgressiveBlurSetting && it.id == "theme.is_blur_progressive_enable"
+        }
+        val fixed = (SettingsSearchCatalog.categories + availableItems).map { item ->
             val pageTitle = resources.getString(item.page.titleRes)
             val parent = item.parentId?.let(SettingsSearchCatalog::find)
             val description = listOfNotNull(
@@ -128,6 +140,7 @@ fun SettingsSearchScreen(
         )
     }) { padding ->
         LazyColumn(
+            overscrollEffect = rememberAppVerticalOverscrollEffect(),
             modifier = Modifier.fillMaxSize().consumeWindowInsets(padding).imePadding(),
             contentPadding = adaptiveContentPadding(
                 top = padding.calculateTopPadding(), bottom = padding.calculateBottomPadding() + 24.dp,

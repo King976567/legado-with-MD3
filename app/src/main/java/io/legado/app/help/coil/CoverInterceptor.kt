@@ -155,7 +155,24 @@ class CoverInterceptor(
             } else result
         }
 
-        if (data is String && data.isNotBlank() && request.extras[CoverExtras.SkipAnalysis] != true) {
+        if (data is String && data.isNotBlank()) {
+            // 图集图片 / 编辑页本地选图得到的文件路径不是网络地址：交给平台加载器，
+            // 不走 AnalyzeUrl 与持久封面缓存。否则 preferCache 的书架请求会被本书别名
+            // 命中，把上次的网络封面错误地盖在刚选定的本地封面上。
+            if (isLocalCoverPath(data)) {
+                val localData: Any = if (
+                    data.startsWith("content:", true) || data.startsWith("file:", true)
+                ) {
+                    data.toUri()
+                } else {
+                    File(data)
+                }
+                return boundedChain.withRequest(
+                    request.newBuilder().data(localData).build()
+                ).proceed()
+            }
+            // NAS supplies a final URL and transport headers; do not run source rules or aliases.
+            if (request.extras[CoverExtras.SkipAnalysis] == true) return boundedChain.proceed()
             // 本地封面缓存快速路径：命中就改写为本地文件，跳过 AnalyzeUrl 的书源规则调用
             // （部分书源的 headerRule/coverUrl 会执行 JS/Java 检查脚本，冷启动或重载封面时
             // 会弹“未登录/版本检测”提示）与网络请求。
@@ -236,4 +253,12 @@ class CoverInterceptor(
         }
         return boundedChain.proceed()
     }
+}
+
+/** 本地封面（图集图片 / 编辑页本地选图 / content URI）走平台加载器，不经过 AnalyzeUrl 与持久封面缓存。 */
+internal fun isLocalCoverPath(data: String): Boolean {
+    if (data.startsWith("content:", true) || data.startsWith("file:", true)) return true
+    if (data.isAbsUrl() || data.startsWith("data:", true)) return false
+    val file = File(data)
+    return file.isAbsolute && file.isFile
 }

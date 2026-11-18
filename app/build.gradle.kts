@@ -70,7 +70,7 @@ android {
         targetSdk = 37
         // Increment this NAS delivery baseline for each release. Upstream CI's commit
         // counter can be lower than the user's installed version and must not downgrade it.
-        val nasReleaseVersionCode = 32642
+        val nasReleaseVersionCode = 32643
         versionCode = maxOf(
             nasReleaseVersionCode,
             System.getenv("COMMIT_NUMBER")?.toInt()?.let { 10000 + it } ?: 0,
@@ -383,15 +383,18 @@ dependencies {
     implementation(libs.material.kolor)
     implementation(libs.haze.core)
     implementation(libs.haze.blur)
-    implementation(libs.miuix.ui.android)
-    implementation(libs.miuix.preference.android)
-    implementation(libs.miuix.icons.android)
-    implementation(libs.miuix.blur.android)
+    implementation(libs.miuix.ui)
+    implementation(libs.miuix.preference)
+    implementation(libs.miuix.icons)
+    implementation(libs.miuix.blur)
+    implementation(libs.miuix.glass)
     implementation(libs.miuix.core)
     implementation(libs.capsule)
     implementation(libs.backdrop)
     implementation(libs.mochi.compose)
     implementation(libs.mochi.ios)
+    implementation(libs.coui.material3)
+    implementation(libs.coui.icons)
     implementation(libs.lyricViewx)
     implementation(libs.timber)
 }
