@@ -16,6 +16,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalInspectionMode
 import androidx.compose.ui.unit.Density
+import com.itos.coui.menu.ProvideCouiMenuBackdrop
 import com.materialkolor.PaletteStyle
 import io.legado.app.domain.model.settings.AppUiConfiguration
 import io.legado.app.domain.model.settings.customColors
@@ -90,6 +91,10 @@ private fun AppThemeActual(
     val materialVersion = themeSettings.materialVersion
     val customContrast = themeSettings.customContrast
     val composeEngine = ThemeResolver.resolveComposeEngine(appShellSettings.composeEngine)
+    // COUI 关闭「自定义主题色」时由引擎内置 CouiPresets 决定配色；开启后首项
+    // （AppThemeMode.Dynamic）恢复真正的系统动态取色，其余档位仍按 appTheme 正常解析。
+    val useBuiltInPalette = composeEngine == ComposeEngine.Coui &&
+        !themeSettings.useMiuixMonet && appThemeMode == AppThemeMode.Dynamic
     val customPrimary = themeSettings.customPrimary
     val customNightPrimary = themeSettings.customNightPrimary
     val appFontPath = themeSettings.appFontPath
@@ -110,7 +115,7 @@ private fun AppThemeActual(
     val colorScheme = remember(
         context, appThemeMode, effectiveDarkTheme, isPureBlack, customPrimary, customNightPrimary,
         enableDeepPersonalization, customColors,
-        paletteStyleValue, materialVersion, customContrast,
+        paletteStyleValue, materialVersion, customContrast, composeEngine, useBuiltInPalette,
     ) {
         if (appThemeMode == AppThemeMode.Custom &&
             enableDeepPersonalization &&
@@ -136,6 +141,8 @@ private fun AppThemeActual(
                 materialVersion = materialVersion,
                 customSeedColor = customSeedColor,
                 customContrast = customContrast,
+                composeEngine = composeEngine,
+                useBuiltInPalette = useBuiltInPalette,
             )
         }
     }
@@ -158,7 +165,7 @@ private fun AppThemeActual(
     // staticCompositionLocalOf 不会触发全树重组
     val themeColors = remember(
         colorScheme, effectiveDarkTheme, themeSeedColor, paletteStyleValue, composeEngine,
-        appThemeMode
+        appThemeMode, useBuiltInPalette
     ) {
         val paletteStyle = ThemeResolver.resolvePaletteStyle(paletteStyleValue)
         val colorSchemeMode =
@@ -169,7 +176,7 @@ private fun AppThemeActual(
             seedColor = themeSeedColor,
             paletteStyle = paletteStyle,
             themeMode = colorSchemeMode,
-            useDynamicColor = appThemeMode == AppThemeMode.Dynamic,
+            useDynamicColor = appThemeMode == AppThemeMode.Dynamic && !useBuiltInPalette,
             composeEngine = composeEngine
         )
     }
@@ -205,13 +212,26 @@ private fun AppThemeActual(
                     }
                 }
             }
-            ComposeEngine.Material -> {
+            ComposeEngine.Material, ComposeEngine.Coui -> {
                 MaterialThemeWrapper(
                     themeColors = themeColors,
                     customFontFamily = customFontFamily,
                     applyBackground = applyBackground,
-                    content = content
-                )
+                ) {
+                    if (themeColors.composeEngine == ComposeEngine.Coui && ThemeResolver.isCouiSupported()) {
+                        ProvideCouiTheme(themeColors.isDark, useBuiltInPalette) {
+                            // COUI 菜单的玻璃材质要采样所属窗口的内容根；单参数版保留隔离，
+                            // 与 Mochi 分支一样用 propagateMinConstraints 保持内容测量不变。
+                            ProvideCouiMenuBackdrop { backdropModifier ->
+                                Box(backdropModifier, propagateMinConstraints = true) {
+                                    content()
+                                }
+                            }
+                        }
+                    } else {
+                        content()
+                    }
+                }
             }
         }
     }

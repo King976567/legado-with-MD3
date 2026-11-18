@@ -43,9 +43,14 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.LayoutDirection
 import io.legado.app.ui.theme.ComposeEngine
 import io.legado.app.ui.theme.LegadoTheme
+import io.legado.app.ui.theme.LocalMiuixBarBackdrop
+import io.legado.app.ui.theme.ThemeResolver
+import io.legado.app.ui.theme.isMiuixHyperOs4Enabled
 import io.legado.app.ui.widget.components.card.NormalCard
 import io.legado.app.ui.widget.components.text.AppText
 import kotlinx.collections.immutable.toImmutableList
+import top.yukonga.miuix.kmp.blur.rememberLayerBackdrop
+import top.yukonga.miuix.kmp.glass.GlassSegmentedTabRow
 import ui.feice.mochi.basic.MochiSegmentedControl
 import ui.feice.mochi.effect.elastic.mochiPressDeform
 
@@ -59,8 +64,33 @@ fun CardTabRow(
     tabEndContent: (@Composable (Int) -> Unit)? = null,
     scrollable: Boolean = false,
 ) {
+    if (LegadoTheme.composeEngine == ComposeEngine.Coui && ThemeResolver.isCouiSupported() &&
+        onTabLongClick == null && tabEndContent == null
+    ) {
+        AppCouiTabRow(tabTitles, selectedTabIndex, onTabSelected, modifier, scrollable)
+        return
+    }
+
+    val simpleTabs = !scrollable && onTabLongClick == null && tabEndContent == null
+    if (simpleTabs && isMiuixHyperOs4Enabled() &&
+        tabTitles.distinct().size == tabTitles.size
+    ) {
+        val backdrop = LocalMiuixBarBackdrop.current
+        GlassSegmentedTabRow(
+            tabs = tabTitles,
+            selectedIndex = selectedTabIndex,
+            onSelect = onTabSelected,
+            // The library requires a backdrop even for its static resting track. Without a
+            // host recording, surfaceAlpha = 0 disables sampling, glass effects and shadow.
+            backdrop = backdrop ?: rememberLayerBackdrop(),
+            surfaceAlpha = if (backdrop != null) 1f else 0f,
+            modifier = modifier.fillMaxWidth(),
+        )
+        return
+    }
+
     val useMochi = LegadoTheme.composeEngine == ComposeEngine.Mochi
-    if (useMochi && !scrollable && onTabLongClick == null && tabEndContent == null) {
+    if (useMochi && simpleTabs) {
         if (tabTitles.isEmpty()) return
         val rtl = LocalLayoutDirection.current == LayoutDirection.Rtl
         val lastIndex = tabTitles.lastIndex

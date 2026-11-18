@@ -22,13 +22,17 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.lerp
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import com.itos.coui.topappbar.CouiTopAppBarDefaults
 import io.legado.app.ui.theme.ComposeEngine
 import io.legado.app.ui.theme.ThemeResolver
 import io.legado.app.ui.theme.LegadoTheme
 import io.legado.app.ui.theme.LocalAppUiConfiguration
 import io.legado.app.ui.theme.LocalHazeState
+import io.legado.app.ui.theme.MiuixBlurredTopBar
 import io.legado.app.ui.theme.responsiveHazeEffect
 import io.legado.app.ui.widget.components.GlassDefaults
+import io.legado.app.ui.widget.components.coui.AppCouiTopBar
+import io.legado.app.ui.widget.components.coui.CouiGlassScrollBehavior
 import io.legado.app.ui.widget.components.mochi.AppMochiTitleBar
 import io.legado.app.ui.widget.components.text.AdaptiveAnimatedText
 import io.legado.app.ui.widget.components.text.AnimatedTextLine
@@ -50,12 +54,28 @@ fun GlassMediumFlexibleTopAppBar(
     scrollBehavior: GlassTopAppBarScrollBehavior? = null,
     navigationIcon: @Composable () -> Unit = {},
     actions: @Composable RowScope.() -> Unit = {},
+    isContentScrolled: Boolean? = null,
+    compactMiuixActions: Boolean = false,
     bottomContent: @Composable (ColumnScope.() -> Unit)? = null
 ) {
 
     val hazeState = LocalHazeState.current
     val themeSettings = LocalAppUiConfiguration.current.theme
     val composeEngine = LegadoTheme.composeEngine
+    if (composeEngine == ComposeEngine.Coui) {
+        AppCouiTopBar(
+            title = title,
+            modifier = modifier,
+            navigationIcon = navigationIcon,
+            actions = actions,
+            subtitle = subtitle,
+            useCharMode = useCharMode,
+            expanded = themeSettings.useFlexibleTopAppBar,
+            scrollBehavior = scrollBehavior,
+            bottomContent = bottomContent,
+        )
+        return
+    }
     if (composeEngine == ComposeEngine.Mochi) {
         Column(modifier) {
             AppMochiTitleBar(
@@ -66,135 +86,112 @@ fun GlassMediumFlexibleTopAppBar(
         }
         return
     }
-    val isMiuix = composeEngine == ComposeEngine.Miuix
-
-    val containerColor = when (LegadoTheme.composeEngine) {
-        ComposeEngine.Material, ComposeEngine.Mochi -> {
-            GlassDefaults.secondaryColorOr { GlassTopAppBarDefaults.containerColor() }
+    val subtitleText = subtitle?.takeIf { it.isNotBlank() }
+    if (composeEngine == ComposeEngine.Miuix) {
+        val miuixBehavior = (scrollBehavior as? MiuixGlassScrollBehavior)?.miuixBehavior
+        val contentModifier = Modifier.windowInsetsPadding(TopAppBarDefaults.windowInsets)
+        MiuixNativeTopBar(
+            title = title,
+            modifier = modifier,
+            contentModifier = contentModifier,
+            subtitle = subtitleText.orEmpty(),
+            scrollBehavior = miuixBehavior,
+            navigationIcon = navigationIcon,
+            actions = actions,
+            bottomContent = { if (bottomContent != null) Column(content = bottomContent) },
+            isContentScrolled = isContentScrolled,
+            compactActions = compactMiuixActions,
+        ) {
+            MiuixBlurredTopBar(modifier.background(GlassTopAppBarDefaults.getMiuixAppBarColor()), miuixBehavior) {
+                Column {
+                    MiuixTopAppBar(
+                        modifier = contentModifier,
+                        title = title,
+                        subtitle = subtitleText.orEmpty(),
+                        navigationIcon = navigationIcon,
+                        actions = actions,
+                        color = Color.Transparent,
+                        defaultWindowInsetsPadding = false,
+                        scrollBehavior = miuixBehavior,
+                    )
+                    bottomContent?.invoke(this)
+                }
+            }
         }
-        ComposeEngine.Miuix -> {
-            GlassDefaults.secondaryColorOr { GlassTopAppBarDefaults.getMiuixAppBarColor() }
-        }
+        return
     }
 
-    val scrolledColor = when (LegadoTheme.composeEngine) {
-        ComposeEngine.Material, ComposeEngine.Mochi -> {
-            GlassDefaults.secondaryColorOr { GlassTopAppBarDefaults.scrolledContainerColor() }
-        }
-        ComposeEngine.Miuix -> {
-            GlassDefaults.secondaryColorOr { GlassTopAppBarDefaults.getMiuixAppBarColor() }
-        }
-    }
-
-    val animatedColor = when (LegadoTheme.composeEngine) {
-        ComposeEngine.Material, ComposeEngine.Mochi -> {
-            val fraction = scrollBehavior?.collapsedFraction ?: 0f
-            lerp(containerColor, scrolledColor, fraction)
-        }
-        ComposeEngine.Miuix -> {
-            containerColor
-        }
-    }
-
-    val finalModifier = if (hazeState != null) {
-        modifier
-            .background(color = animatedColor)
-            .responsiveHazeEffect(state = hazeState)
-    } else {
-        modifier.background(color = animatedColor)
-    }
+    val containerColor = GlassDefaults.secondaryColorOr { GlassTopAppBarDefaults.containerColor() }
+    val scrolledColor = GlassDefaults.secondaryColorOr { GlassTopAppBarDefaults.scrolledContainerColor() }
+    val fraction = scrollBehavior?.collapsedFraction ?: 0f
+    val animatedColor = lerp(containerColor, scrolledColor, fraction)
+    val background = modifier.background(color = animatedColor)
+    val finalModifier = hazeState?.let { background.responsiveHazeEffect(state = it) } ?: background
 
     val transparentColors = TopAppBarDefaults.topAppBarColors(
         containerColor = Color.Transparent,
         scrolledContainerColor = Color.Transparent
     )
-    val subtitleText = subtitle?.takeIf { it.isNotBlank() }
-
     Column(
         modifier = finalModifier
     ) {
-        when {
-            isMiuix -> {
-                // Match M3's visible system bars and cutout insets, including parent consumption.
-                MiuixTopAppBar(
-                    modifier = Modifier.windowInsetsPadding(TopAppBarDefaults.windowInsets),
-                    title = title,
-                    subtitle = subtitleText.orEmpty(),
-                    navigationIcon = navigationIcon,
-                    actions = {
-                        TopBarActionsRow(
-                            modifier = Modifier.padding(end = miuixTopBarActionsEndPadding())
-                        ) { actions() }
-                    },
-                    color = Color.Transparent,
-                    defaultWindowInsetsPadding = false,
-                    navigationIconPadding = miuixTopBarSlotPadding(),
-                    actionIconPadding = miuixTopBarSlotPadding(),
-                    scrollBehavior = (scrollBehavior as? MiuixGlassScrollBehavior)?.miuixBehavior
-                )
-            }
-
-            else -> {
-                if (themeSettings.useFlexibleTopAppBar) {
-                    MediumFlexibleTopAppBar(
-                        modifier = Modifier,
-                        title = {
-                            AdaptiveAnimatedText(
-                                text = title,
-                                useCharMode = useCharMode,
-                                maxLines = 2,
+        if (themeSettings.useFlexibleTopAppBar) {
+            MediumFlexibleTopAppBar(
+                modifier = Modifier,
+                title = {
+                    AdaptiveAnimatedText(
+                        text = title,
+                        useCharMode = useCharMode,
+                        maxLines = 2,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                },
+                subtitle = subtitleText?.let { text ->
+                    {
+                        AnimatedTextLine(text = text)
+                    }
+                },
+                navigationIcon = navigationIcon,
+                actions = {
+                    Box(modifier = Modifier.padding(end = 12.dp)) {
+                        TopBarActionsRow { actions() }
+                    }
+                },
+                scrollBehavior = (scrollBehavior as? M3GlassScrollBehavior)?.m3Behavior,
+                colors = transparentColors
+            )
+        } else {
+            TopAppBar(
+                modifier = Modifier,
+                title = {
+                    Column {
+                        AdaptiveAnimatedText(
+                            text = title,
+                            useCharMode = useCharMode,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                        subtitleText?.let { text ->
+                            AnimatedTextLine(
+                                text = text,
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                maxLines = 1,
                                 overflow = TextOverflow.Ellipsis
                             )
-                        },
-                        subtitle = subtitleText?.let { text ->
-                            {
-                                AnimatedTextLine(text = text)
-                            }
-                        },
-                        navigationIcon = navigationIcon,
-                        actions = {
-                            Box(modifier = Modifier.padding(end = 12.dp)) {
-                                TopBarActionsRow { actions() }
-                            }
-                        },
-                        scrollBehavior = (scrollBehavior as? M3GlassScrollBehavior)?.m3Behavior,
-                        colors = transparentColors
-                    )
-                } else {
-                    TopAppBar(
-                        modifier = Modifier,
-                        title = {
-                            Column {
-                                AdaptiveAnimatedText(
-                                    text = title,
-                                    useCharMode = useCharMode,
-                                    maxLines = 1,
-                                    overflow = TextOverflow.Ellipsis
-                                )
-                                subtitleText?.let { text ->
-                                    AnimatedTextLine(
-                                        text = text,
-                                        style = MaterialTheme.typography.labelSmall,
-                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                        maxLines = 1,
-                                        overflow = TextOverflow.Ellipsis
-                                    )
-                                }
-                            }
-                        },
-                        navigationIcon = navigationIcon,
-                        actions = {
-                            Box(modifier = Modifier.padding(end = 12.dp)) {
-                                TopBarActionsRow { actions() }
-                            }
-                        },
-                        scrollBehavior = (scrollBehavior as? M3GlassScrollBehavior)?.m3Behavior,
-                        colors = transparentColors
-                    )
-                }
-            }
+                        }
+                    }
+                },
+                navigationIcon = navigationIcon,
+                actions = {
+                    Box(modifier = Modifier.padding(end = 12.dp)) {
+                        TopBarActionsRow { actions() }
+                    }
+                },
+                scrollBehavior = (scrollBehavior as? M3GlassScrollBehavior)?.m3Behavior,
+                colors = transparentColors
+            )
         }
-
         bottomContent?.invoke(this)
     }
 }
@@ -219,6 +216,10 @@ object GlassTopAppBarDefaults {
         return if (composeEngine == ComposeEngine.Miuix) {
             val miuixBehavior = MiuixScrollBehavior()
             remember(miuixBehavior) { MiuixGlassScrollBehavior(miuixBehavior) }
+        } else if (composeEngine == ComposeEngine.Coui && configuration.theme.useFlexibleTopAppBar) {
+            // COUI 顶栏恒为玻璃材质，enableBlur 不再影响滚动行为。
+            val behavior = CouiTopAppBarDefaults.exitUntilCollapsedScrollBehavior()
+            remember(behavior) { CouiGlassScrollBehavior(behavior) }
         } else if (configuration.theme.useFlexibleTopAppBar) {
             val m3Behavior = TopAppBarDefaults.exitUntilCollapsedScrollBehavior()
             remember(m3Behavior) { M3GlassScrollBehavior(m3Behavior) }

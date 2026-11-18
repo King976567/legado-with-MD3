@@ -7,6 +7,8 @@ import org.gradle.api.tasks.testing.Test
 // CI-only class-file partitioning. Keep Gradle's JUnit discovery, resource setup,
 // classpath and per-class JVM isolation exactly as configured by the app.
 gradle.projectsEvaluated {
+    // Init scripts also reach included UI builds. Only shard the host's Comic tests.
+    if (!new File(gradle.rootProject.projectDir, '.github/scripts/shard-tests.gradle').isFile()) return
     def properties = gradle.startParameter.projectProperties
     def required = ['ciTestShardIndex', 'ciTestShardCount', 'ciTestSourceSha']
     if (required.any { !properties.containsKey(it) }) {

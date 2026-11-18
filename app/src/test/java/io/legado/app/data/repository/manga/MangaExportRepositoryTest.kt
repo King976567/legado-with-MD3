@@ -6,9 +6,12 @@ import io.legado.app.constant.BookType
 import io.legado.app.data.AppDatabase
 import io.legado.app.data.entities.Book
 import io.legado.app.data.entities.BookChapter
+import io.legado.app.domain.gateway.ReadSettingsGateway
 import io.legado.app.domain.model.manga.MangaExportFormat
+import io.legado.app.domain.model.settings.ReadSettings
 import io.legado.app.help.book.BookHelp
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.runBlocking
 import org.junit.After
 import org.junit.Assert.assertArrayEquals
@@ -17,6 +20,9 @@ import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
 import org.junit.runner.RunWith
+import org.koin.core.context.startKoin
+import org.koin.core.context.stopKoin
+import org.koin.dsl.module
 import org.robolectric.RobolectricTestRunner
 import org.robolectric.RuntimeEnvironment
 import org.robolectric.annotation.Config
@@ -43,6 +49,8 @@ class MangaExportRepositoryTest {
     fun setup() {
         val app = RuntimeEnvironment.getApplication()
         app.injectAsAppCtx()
+        stopKoin()
+        startKoin { modules(module { single<ReadSettingsGateway> { ReadingSettings() } }) }
         database = Room.inMemoryDatabaseBuilder(app, AppDatabase::class.java).allowMainThreadQueries().build()
         repository = MangaExportRepository(app, database)
         root = Files.createTempDirectory("manga-export-source").toFile()
@@ -58,6 +66,15 @@ class MangaExportRepositoryTest {
         database.close()
         root.deleteRecursively()
         destination.deleteRecursively()
+        stopKoin()
+    }
+
+    private class ReadingSettings : ReadSettingsGateway {
+        override val settings = MutableStateFlow(ReadSettings(tocCountWords = false))
+        override val currentSettings get() = settings.value
+        override suspend fun update(transform: (ReadSettings) -> ReadSettings) {
+            settings.value = transform(settings.value)
+        }
     }
 
     @Test
