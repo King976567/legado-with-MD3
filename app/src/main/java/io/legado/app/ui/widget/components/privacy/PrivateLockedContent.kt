@@ -134,7 +134,7 @@ fun PrivateLockedCover(
                 BookCoverMorphAnchors.report(
                     key = sharedCoverKey,
                     bounds = coordinates.boundsInRoot(),
-                    cornerRadiusPx = with(density) { transitionRadius.toPx() },
+                    cornerRadiusPx = with(density) { radius.toPx() },
                     isRedacted = true,
                 )
             }
