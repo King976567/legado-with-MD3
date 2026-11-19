@@ -3907,7 +3907,14 @@
     <string name="cache_nas_retry">重试 NAS 任务</string>
     <string name="cache_nas_delete_history">删除这条任务历史</string>
     <string name="cache_nas_clear_history">清空 NAS 历史</string>
-    <string name="cache_nas_clear_history_message">确定删除全部本地 NAS 任务历史吗？不会删除 NAS 文件或已导入书籍。</string>
+    <string name="cache_nas_clear_history_message">确定清空已结束的 NAS 任务历史吗？不会影响进行中的任务，也不会删除 NAS 文件或已导入的书籍。</string>
+    <string name="cache_nas_upload_already_queued">这本书已经有上传任务。</string>
+    <string name="cache_nas_upload_destination_changed">NAS 设置已变更，请确认目标后从书籍详情重新提交。</string>
+    <string name="cache_nas_upload_remote_changed">NAS 上的副本已变化，请从书籍详情重新检查并确认上传。</string>
+    <string name="cache_nas_upload_waiting_retry">等待重试</string>
+    <string name="cache_nas_upload_existing">NAS 上已存在该文件，本次未替换文件或封面。</string>
+    <string name="cache_nas_upload_cover_failed">书籍已上传，但封面未能上传。</string>
+    <string name="cache_nas_upload_result_unknown">未收到 NAS 的上传确认，请先检查 NAS 书库，再决定是否重试。</string>
     <string name="cache_nas_retry_started">NAS 任务已重新提交</string>
     <string name="cache_nas_retry_unavailable">这条任务无法重试</string>
     <string name="cache_nas_retry_failed">NAS 任务重试失败：%1$s</string>

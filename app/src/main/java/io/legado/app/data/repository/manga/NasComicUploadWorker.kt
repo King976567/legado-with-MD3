@@ -26,6 +26,7 @@ import io.legado.app.data.repository.NasUploadTaskRepository
 import io.legado.app.help.book.BookHelp
 import io.legado.app.model.webBook.WebBook
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.TimeoutCancellationException
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.flow.distinctUntilChanged
@@ -34,6 +35,8 @@ import org.koin.core.context.GlobalContext
 import java.io.Closeable
 import java.io.File
 import java.io.IOException
+import java.nio.file.Files
+import java.util.UUID
 
 class NasComicUploadWorker(
     appContext: Context,
@@ -44,40 +47,64 @@ class NasComicUploadWorker(
 
     override suspend fun doWork(): Result {
         if (sourceKey.isBlank()) return Result.failure(failureData(NasComicUploadFailure.Unknown, "Missing source key"))
+        val isolated = inputData.getBoolean(NasComicUploadRepository.KEY_ISOLATED_SNAPSHOT, false)
+        val snapshotId = id.takeIf { isolated }
+        var scratch: File? = null
         return try {
-            execute()
+            val directory = repository.taskDirectory(sourceKey, snapshotId).apply { mkdirs() }
+            val attemptDirectory = Files.createTempDirectory(directory.toPath(), "attempt-").toFile()
+            scratch = attemptDirectory
+            execute(snapshotId, attemptDirectory)
+        } catch (timeout: TimeoutCancellationException) {
+            currentCoroutineContext().ensureActive()
+            if (runAttemptCount < MAX_RETRIES) Result.retry()
+            else Result.failure(failureData(NasComicUploadFailure.Network, timeout.message))
         } catch (cancelled: CancellationException) {
-            repository.cleanupForRetry(sourceKey)
             throw cancelled
         } catch (error: NasComicUploadException) {
             if (error.retryable && runAttemptCount < MAX_RETRIES) {
-                setProgress(failureData(error.reason, error.message))
                 Result.retry()
             } else {
-                repository.cleanupForRetry(sourceKey)
                 Result.failure(failureData(error.reason, error.message))
             }
+        } catch (error: NasHttpException) {
+            val reason = if (error.isUnauthorized || error.isForbidden) {
+                NasComicUploadFailure.Unauthorized
+            } else NasComicUploadFailure.Network
+            if ((error.statusCode == 408 || error.statusCode == 429 || error.statusCode in 500..599) &&
+                runAttemptCount < MAX_RETRIES
+            ) Result.retry() else Result.failure(failureData(reason, error.message))
         } catch (error: IOException) {
-            if (runAttemptCount < MAX_RETRIES) Result.retry() else {
-                repository.cleanupForRetry(sourceKey)
-                Result.failure(failureData(NasComicUploadFailure.Network, error.message))
-            }
-        } catch (error: Throwable) {
-            repository.cleanupForRetry(sourceKey)
+            if (runAttemptCount < MAX_RETRIES) Result.retry()
+            else Result.failure(failureData(NasComicUploadFailure.Network, error.message))
+        } catch (error: Exception) {
             Result.failure(failureData(NasComicUploadFailure.Unknown, error.message))
+        } finally {
+            scratch?.deleteRecursively()
         }
     }
 
-    private suspend fun execute(): Result {
-        val snapshot = repository.loadSnapshot(sourceKey)
+    private suspend fun execute(snapshotId: UUID?, attemptDirectory: File): Result {
+        val snapshot = repository.loadSnapshot(sourceKey, snapshotId)
             ?: throw NasComicUploadException(NasComicUploadFailure.RefreshFailed)
+        val settings = repository.currentSettings()
+        val fingerprint = repository.configurationFingerprint(settings)
+        val replaceBookId = inputData.getString(NasComicUploadRepository.KEY_REPLACE_BOOK_ID)
+            ?.takeIf(String::isNotBlank)
         if (snapshot.bookUrl != inputData.getString(NasComicUploadRepository.KEY_BOOK_URL) ||
             snapshot.configurationFingerprint != inputData.getString(NasComicUploadRepository.KEY_CONFIG_FINGERPRINT) ||
-            snapshot.configurationFingerprint != repository.configurationFingerprint()
+            snapshot.configurationFingerprint != fingerprint || snapshot.replaceBookId != replaceBookId
         ) {
             throw NasComicUploadException(NasComicUploadFailure.ConfigurationChanged)
         }
-        val settings = repository.currentSettings()
+        val workContext = currentCoroutineContext()
+        fun ensureDestinationUnchanged() {
+            workContext.ensureActive()
+            val current = repository.currentSettings()
+            if (fingerprint != repository.configurationFingerprint(current) || !current.isBookUploadEnabled()) {
+                throw NasComicUploadException(NasComicUploadFailure.ConfigurationChanged)
+            }
+        }
         if (!settings.isBookUploadEnabled()) throw NasComicUploadException(NasComicUploadFailure.NotConfigured)
         update(NasComicUploadStage.Checking, chapterCount = snapshot.chapters.size)
         val connection = try {
@@ -94,8 +121,6 @@ class NasComicUploadWorker(
         if (!connection.capabilities.supportsComicCbzUpload) {
             throw NasComicUploadException(NasComicUploadFailure.UnsupportedBackend)
         }
-        val replaceBookId = inputData.getString(NasComicUploadRepository.KEY_REPLACE_BOOK_ID)
-            ?.takeIf(String::isNotBlank)
         val remote = repository.gateway().findByClientSourceKey(sourceKey, settings)
         if ((replaceBookId == null && remote != null) || (replaceBookId != null && remote?.id != replaceBookId)) {
             throw NasComicUploadException(NasComicUploadFailure.RemoteChanged)
@@ -194,7 +219,7 @@ class NasComicUploadWorker(
             val fileName = sanitizeCbzPathSegment(snapshot.book.name, "comic") + ".cbz"
             try {
                 NasComicCbzBuilder.build(
-                    output = File(repository.taskDirectory(sourceKey), fileName),
+                    output = File(attemptDirectory, fileName),
                     title = snapshot.book.name,
                     author = snapshot.book.author,
                     summary = snapshot.book.getDisplayIntro().orEmpty(),
@@ -229,54 +254,73 @@ class NasComicUploadWorker(
             overallCurrent = totalPages,
             overallTotal = totalPages,
         )
-        val upload = repository.gateway().uploadBook(
-            source = NasUploadSource { sink ->
-                archive.file.inputStream().use { input ->
-                    val buffer = ByteArray(64 * 1024)
-                    while (true) {
-                        if (isStopped) throw CancellationException("NAS comic upload cancelled")
-                        val count = input.read(buffer)
-                        if (count < 0) break
-                        sink.write(buffer, 0, count)
+        ensureDestinationUnchanged()
+        val upload = try {
+            repository.gateway().uploadBook(
+                source = NasUploadSource { sink ->
+                    archive.file.inputStream().use { input ->
+                        val buffer = ByteArray(64 * 1024)
+                        while (true) {
+                            workContext.ensureActive()
+                            if (isStopped) throw CancellationException("NAS comic upload cancelled")
+                            val count = input.read(buffer)
+                            if (count < 0) break
+                            sink.write(buffer, 0, count)
+                        }
                     }
-                }
-            },
-            fileName = archive.file.name,
-            contentLength = archive.size,
-            duplicatePolicy = if (replaceBookId == null) "skip" else "overwrite",
-            title = snapshot.book.name,
-            author = snapshot.book.author,
-            intro = snapshot.book.getDisplayIntro().orEmpty(),
-            directoryPath = connection.capabilities.defaultUploadDirectory.trim('/'),
-            settings = settings,
-            clientSourceKey = sourceKey,
-            chapterCount = snapshot.chapters.size,
-            replaceBookId = replaceBookId,
-        )
+                },
+                fileName = archive.file.name,
+                contentLength = archive.size,
+                duplicatePolicy = if (replaceBookId == null) "skip" else "overwrite",
+                title = snapshot.book.name,
+                author = snapshot.book.author,
+                intro = snapshot.book.getDisplayIntro().orEmpty(),
+                directoryPath = connection.capabilities.defaultUploadDirectory.trim('/'),
+                settings = settings,
+                clientSourceKey = sourceKey,
+                chapterCount = snapshot.chapters.size,
+                replaceBookId = replaceBookId,
+            )
+        } catch (error: Exception) {
+            workContext.ensureActive()
+            if (error is CancellationException && error !is TimeoutCancellationException) throw error
+            if (error is NasHttpException && (error.isUnauthorized || error.isForbidden)) throw error
+            if (error is NasComicUploadException) throw error
+            // Without an idempotency receipt, a lost response is not proof that NAS rejected it.
+            throw NasComicUploadException(
+                NasComicUploadFailure.Network,
+                applicationContext.getString(R.string.cache_nas_upload_result_unknown),
+                cause = error,
+            )
+        }
         if (upload.failed.isNotEmpty()) {
             throw NasComicUploadException(NasComicUploadFailure.Unknown, upload.failed.joinToString())
         }
         val uploaded = upload.primaryBook ?: upload.duplicates.firstOrNull()
             ?: throw NasComicUploadException(NasComicUploadFailure.Unknown)
         var warning: String? = null
-        if (connection.capabilities.supports("coverUpload")) {
-            update(
-                NasComicUploadStage.UploadingCover,
-                chapterCount = snapshot.chapters.size,
-                overallCurrent = totalPages,
-                overallTotal = totalPages,
-            )
-            val coverFile = runCatching {
-                repository.prepareCoverFile(snapshot.book, sourceKey)
-            }.getOrNull()
-            if (coverFile != null) {
-                runCatching {
+        // A duplicate/skipped result did not write this manga; never modify that item's cover.
+        if (connection.capabilities.supports("coverUpload") &&
+            upload.wroteBook(uploaded.id)
+        ) {
+            try {
+                ensureDestinationUnchanged()
+                update(
+                    NasComicUploadStage.UploadingCover,
+                    chapterCount = snapshot.chapters.size,
+                    overallCurrent = totalPages,
+                    overallTotal = totalPages,
+                )
+                val coverFile = repository.prepareCoverFile(snapshot.book, attemptDirectory)
+                if (coverFile != null) {
+                    ensureDestinationUnchanged()
                     repository.gateway().uploadCover(
                         id = uploaded.id,
                         source = NasUploadSource { sink ->
                             coverFile.inputStream().use { input ->
                                 val buffer = ByteArray(DEFAULT_BUFFER_SIZE)
                                 while (true) {
+                                    workContext.ensureActive()
                                     val count = input.read(buffer)
                                     if (count < 0) break
                                     sink.write(buffer, 0, count)
@@ -287,11 +331,14 @@ class NasComicUploadWorker(
                         contentLength = coverFile.length(),
                         settings = settings,
                     )
-                }.onFailure { warning = it.message ?: "Cover upload failed" }
+                }
+            } catch (error: Exception) {
+                workContext.ensureActive()
+                if (error is CancellationException && error !is TimeoutCancellationException) throw error
+                warning = applicationContext.getString(R.string.cache_nas_upload_cover_failed)
             }
         }
         val path = uploaded.relativePath.ifBlank { uploaded.fileName }
-        repository.cleanup(sourceKey)
         return Result.success(
             Data.Builder()
                 .putAll(
@@ -304,6 +351,11 @@ class NasComicUploadWorker(
                 )
                 .putString(NasComicUploadRepository.KEY_REMOTE_PATH, path)
                 .putString(NasComicUploadRepository.KEY_WARNING, warning)
+                .putString(NasUploadTaskRepository.KEY_MESSAGE, when {
+                    !upload.wroteBook(uploaded.id) -> applicationContext.getString(R.string.cache_nas_upload_existing)
+                    warning != null -> applicationContext.getString(R.string.cache_nas_upload_cover_failed)
+                    else -> null
+                })
                 .build(),
         )
     }
@@ -409,13 +461,20 @@ class NasComicUploadWorker(
 
     private fun notificationId(): Int = 0x4e410000 or (sourceKey.hashCode() and 0xffff)
 
-    private fun failureData(reason: NasComicUploadFailure, message: String?): Data = Data.Builder()
-        .putString(NasComicUploadRepository.KEY_FAILURE, reason.name)
-        .putString(NasComicUploadRepository.KEY_MESSAGE, message)
-        .putString(NasUploadTaskRepository.KEY_MESSAGE, message)
-        .putString(NasUploadTaskRepository.KEY_TITLE, inputData.getString(NasUploadTaskRepository.KEY_TITLE).orEmpty())
-        .putString(NasUploadTaskRepository.KEY_KIND, "comic")
-        .build()
+    private fun failureData(reason: NasComicUploadFailure, message: String?): Data {
+        val detail = when (reason) {
+            NasComicUploadFailure.ConfigurationChanged ->
+                applicationContext.getString(R.string.cache_nas_upload_destination_changed)
+            NasComicUploadFailure.RemoteChanged -> applicationContext.getString(R.string.cache_nas_upload_remote_changed)
+            else -> message ?: reason.name
+        }
+        return Data.Builder()
+            .putString(NasComicUploadRepository.KEY_FAILURE, reason.name)
+            .putString(NasUploadTaskRepository.KEY_MESSAGE, detail.take(1_000))
+            .putString(NasUploadTaskRepository.KEY_TITLE, inputData.getString(NasUploadTaskRepository.KEY_TITLE).orEmpty().take(180))
+            .putString(NasUploadTaskRepository.KEY_KIND, "comic")
+            .build()
+    }
 
     private fun progressData(
         stage: NasComicUploadStage,

@@ -20,6 +20,8 @@ data class NasUploadTask(
     val retryKey: String? = null,
     val replaceBookId: String? = null,
     val createdAt: Long = 0L,
+    val destinationFingerprint: String? = null,
+    val runAttemptCount: Int = 0,
 ) {
     val isRunning: Boolean
         get() = state == "ENQUEUED" || state == "BLOCKED" || state == "RUNNING"

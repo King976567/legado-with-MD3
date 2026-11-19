@@ -4,7 +4,6 @@ import android.app.Application
 import androidx.work.BackoffPolicy
 import androidx.work.Constraints
 import androidx.work.Data
-import androidx.work.ExistingWorkPolicy
 import androidx.work.NetworkType
 import androidx.work.OneTimeWorkRequestBuilder
 import androidx.work.WorkInfo
@@ -22,12 +21,17 @@ import io.legado.app.domain.model.NasComicUploadStage
 import io.legado.app.domain.model.NasComicUploadState
 import io.legado.app.domain.model.NasHttpException
 import io.legado.app.domain.model.NasWriteAccess
+import io.legado.app.domain.model.settings.NasSettings
 import io.legado.app.domain.usecase.isBookUploadEnabled
 import io.legado.app.help.book.isImage
 import io.legado.app.help.book.isLocal
 import io.legado.app.help.coil.CoverExtras
 import io.legado.app.model.webBook.WebBook
 import io.legado.app.utils.GSON
+import io.legado.app.utils.FileUtils
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import coil3.ImageLoader
 import coil3.request.ImageRequest
 import coil3.request.SuccessResult
@@ -43,6 +47,7 @@ import java.util.UUID
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.TimeUnit
 import io.legado.app.data.repository.NasUploadTaskRepository
+import io.legado.app.data.repository.enqueueNasUpload
 
 class NasComicUploadRepository(
     private val application: Application,
@@ -51,7 +56,7 @@ class NasComicUploadRepository(
     private val settingsGateway: NasSettingsGateway,
     private val imageLoader: ImageLoader,
 ) {
-    private val workManager by lazy(LazyThreadSafetyMode.NONE) {
+    private val workManager by lazy {
         WorkManager.getInstance(application)
     }
     private val pending = ConcurrentHashMap<String, ComicSnapshot>()
@@ -86,7 +91,9 @@ class NasComicUploadRepository(
             WebBook.getBookInfoAwait(source, refreshed, canReName = false)
             WebBook.getChapterListAwait(source, refreshed, runPerJs = true).getOrThrow()
                 .filterNot(BookChapter::isVolume)
-        } catch (error: Throwable) {
+        } catch (cancelled: CancellationException) {
+            throw cancelled
+        } catch (error: Exception) {
             throw NasComicUploadException(NasComicUploadFailure.RefreshFailed, error.message, cause = error)
         }
         if (chapters.isEmpty()) {
@@ -94,45 +101,45 @@ class NasComicUploadRepository(
         }
         val key = nasComicSourceKey(book.origin, originalBookUrl)
         val remote = nasGateway.findByClientSourceKey(key, settings)
-        pending[key] = ComicSnapshot(
+        val snapshot = ComicSnapshot(
             bookUrl = originalBookUrl,
             book = refreshed,
             cacheBook = book,
             chapters = chapters,
             clientSourceKey = key,
-            configurationFingerprint = configurationFingerprint(),
+            configurationFingerprint = configurationFingerprint(settings),
             maxUploadBytes = connection.capabilities.maxUploadBytes,
         )
         return NasComicUploadPreparation(
+            preparationId = UUID.randomUUID().toString(),
             clientSourceKey = key,
             title = refreshed.name,
             chapterCount = chapters.size,
             remoteBook = remote,
             maxUploadBytes = connection.capabilities.maxUploadBytes,
-        )
+        ).also { pending[it.preparationId] = snapshot }
     }
 
-    fun enqueue(
+    suspend fun enqueue(
         preparation: NasComicUploadPreparation,
         replaceBookId: String?,
-    ) {
-        val snapshot = pending.remove(preparation.clientSourceKey)
+    ): UUID = withContext(Dispatchers.IO) {
+        val snapshot = pending.remove(preparation.preparationId)
             ?: throw NasComicUploadException(NasComicUploadFailure.RefreshFailed)
-        val queuedSnapshot = snapshot.copy(
-            configurationFingerprint = configurationFingerprint(),
-            replaceBookId = replaceBookId,
-        )
-        snapshotFile(queuedSnapshot.clientSourceKey).apply {
-            parentFile?.mkdirs()
-            writeText(GSON.toJson(queuedSnapshot))
+        if (snapshot.configurationFingerprint != configurationFingerprint(currentSettings())) {
+            throw NasComicUploadException(NasComicUploadFailure.ConfigurationChanged)
         }
+        if (preparation.remoteBook?.id != replaceBookId) {
+            throw NasComicUploadException(NasComicUploadFailure.RemoteChanged)
+        }
+        val queuedSnapshot = snapshot.copy(replaceBookId = replaceBookId)
         val createdAt = System.currentTimeMillis()
         val request = OneTimeWorkRequestBuilder<NasComicUploadWorker>()
             .setInputData(
                 Data.Builder()
                     .putString(KEY_BOOK_URL, queuedSnapshot.bookUrl)
                     .putString(KEY_SOURCE_KEY, queuedSnapshot.clientSourceKey)
-                    .putString(KEY_TASK_ID, UUID.randomUUID().toString())
+                    .putBoolean(KEY_ISOLATED_SNAPSHOT, true)
                     .putString(KEY_CONFIG_FINGERPRINT, queuedSnapshot.configurationFingerprint)
                     .putString(KEY_REPLACE_BOOK_ID, replaceBookId)
                     .putString(NasUploadTaskRepository.KEY_TITLE, queuedSnapshot.book.name)
@@ -147,11 +154,12 @@ class NasComicUploadRepository(
                     .build(),
             )
             .setBackoffCriteria(BackoffPolicy.EXPONENTIAL, 10, TimeUnit.SECONDS)
+            .keepResultsForAtLeast(7, TimeUnit.DAYS)
             .addTag(NasUploadTaskRepository.TAG)
             .addTag(NasUploadTaskRepository.COMIC_TAG)
             .addTag(NasUploadTaskRepository.TITLE_TAG_PREFIX + queuedSnapshot.book.name.take(180))
             .addTag(NasUploadTaskRepository.CREATED_TAG_PREFIX + createdAt)
-            .addTag(NasUploadTaskRepository.RETRY_KEY_TAG_PREFIX + queuedSnapshot.clientSourceKey)
+            .addTag(NasUploadTaskRepository.RETRY_KEY_TAG_PREFIX + SCOPED_RETRY_PREFIX + queuedSnapshot.clientSourceKey)
             .addTag(workName(queuedSnapshot.clientSourceKey))
             .apply {
                 replaceBookId?.takeIf(String::isNotBlank)?.let {
@@ -159,88 +167,74 @@ class NasComicUploadRepository(
                 }
             }
             .build()
-        workManager.enqueueUniqueWork(
-            workName(queuedSnapshot.clientSourceKey),
-            ExistingWorkPolicy.KEEP,
-            request,
-        )
+        val file = snapshotFile(queuedSnapshot.clientSourceKey, request.id)
+        try {
+            FileUtils.writeTextAtomic(file.absolutePath, GSON.toJson(queuedSnapshot))
+            workManager.enqueueNasUpload(workName(queuedSnapshot.clientSourceKey), request, application)
+        } catch (error: Exception) {
+            // Do not remove a snapshot if enqueue may have committed despite the error.
+            val queued = runCatching { workManager.getWorkInfoById(request.id).get() != null }.getOrDefault(true)
+            if (!queued) file.parentFile?.deleteRecursively()
+            throw error
+        }
+        request.id
     }
 
-    suspend fun retry(sourceKey: String) {
-        val previous = loadSnapshot(sourceKey)
+    suspend fun retry(retryKey: String, taskId: UUID, replaceBookId: String?) {
+        val sourceKey = retryKey.removePrefix(SCOPED_RETRY_PREFIX)
+        // Legacy tasks used one shared snapshot. Never fall back to it for a scoped request.
+        val snapshotId = taskId.takeIf { retryKey.startsWith(SCOPED_RETRY_PREFIX) }
+        val previous = loadSnapshot(sourceKey, snapshotId)
             ?: throw NasComicUploadException(NasComicUploadFailure.RefreshFailed)
-        val preparation = prepare(previous.book)
-        if (preparation.clientSourceKey != sourceKey) {
-            discardPreparation(preparation.clientSourceKey)
-            throw NasComicUploadException(NasComicUploadFailure.RefreshFailed)
+        if (previous.configurationFingerprint != configurationFingerprint(currentSettings())) {
+            throw NasComicUploadException(NasComicUploadFailure.ConfigurationChanged)
         }
-        val remoteId = preparation.remoteBook?.id
-        if (remoteId != previous.replaceBookId &&
-            (remoteId != null || previous.replaceBookId != null)
-        ) {
-            discardPreparation(sourceKey)
+        if (previous.replaceBookId != replaceBookId) {
             throw NasComicUploadException(NasComicUploadFailure.RemoteChanged)
         }
-        enqueue(preparation, previous.replaceBookId)
-    }
-
-    fun discardPreparation(clientSourceKey: String) {
-        pending.remove(clientSourceKey)
-    }
-
-    fun cancel(clientSourceKey: String) {
-        pending.remove(clientSourceKey)
-        workManager.cancelUniqueWork(workName(clientSourceKey))
-    }
-
-    fun observe(clientSourceKey: String): Flow<NasComicUploadState> = workManager
-        .getWorkInfosForUniqueWorkFlow(workName(clientSourceKey))
-        .map { infos ->
-            infos.maxByOrNull { it.runAttemptCount }?.toComicState() ?: NasComicUploadState()
+        val preparation = prepare(previous.cacheBook ?: previous.book)
+        try {
+            if (preparation.clientSourceKey != sourceKey || preparation.remoteBook?.id != replaceBookId) {
+                throw NasComicUploadException(NasComicUploadFailure.RemoteChanged)
+            }
+            // Check again after the network calls, in case the NAS was switched during prepare().
+            if (pending[preparation.preparationId]?.configurationFingerprint != previous.configurationFingerprint) {
+                throw NasComicUploadException(NasComicUploadFailure.ConfigurationChanged)
+            }
+            enqueue(preparation, replaceBookId)
+        } finally {
+            discardPreparation(preparation)
         }
+    }
+
+    fun discardPreparation(preparation: NasComicUploadPreparation) {
+        pending.remove(preparation.preparationId)
+    }
+
+    fun cancel(taskId: UUID) {
+        workManager.cancelWorkById(taskId)
+    }
+
+    fun observe(taskId: UUID): Flow<NasComicUploadState> = workManager.getWorkInfoByIdFlow(taskId)
+        .map { it?.toComicState() ?: NasComicUploadState() }
         .distinctUntilChanged()
 
-    internal fun loadSnapshot(sourceKey: String): ComicSnapshot? = snapshotFile(sourceKey)
-        .takeIf(File::isFile)
-        ?.readText()
-        ?.let { runCatching { GSON.fromJson(it, ComicSnapshot::class.java) }.getOrNull() }
+    internal fun loadSnapshot(sourceKey: String, taskId: UUID?): ComicSnapshot? = runCatching {
+        GSON.fromJson(snapshotFile(sourceKey, taskId).readText(), ComicSnapshot::class.java)
+            ?.takeIf { it.clientSourceKey == sourceKey }
+    }.getOrNull()
 
-    internal fun taskDirectory(sourceKey: String): File =
-        File(application.noBackupFilesDir, "nas-comic/$sourceKey").apply { mkdirs() }
-
-    internal fun cleanup(sourceKey: String) {
-        taskDirectory(sourceKey).deleteRecursively()
+    internal fun taskDirectory(sourceKey: String, taskId: UUID?): File {
+        require(sourceKey.matches(Regex("[0-9a-f]{64}")))
+        val sourceDirectory = File(application.noBackupFilesDir, "nas-comic/$sourceKey")
+        return if (taskId == null) sourceDirectory else File(sourceDirectory, taskId.toString())
     }
 
-    internal fun cleanupForRetry(sourceKey: String) {
-        taskDirectory(sourceKey).listFiles().orEmpty()
-            .filterNot { it.name == SNAPSHOT_FILE }
-            .forEach(File::deleteRecursively)
-    }
-
-    internal fun cleanupRetryDataIfIdle(sourceKey: String): Boolean {
-        if (sourceKey.isBlank() || hasActiveWork(sourceKey)) return false
-        val root = File(application.noBackupFilesDir, "nas-comic")
-        File(root, sourceKey).deleteRecursively()
-        if (root.list().isNullOrEmpty()) root.delete()
-        return true
-    }
-
-    internal fun cleanupAllRetryData() {
-        val root = File(application.noBackupFilesDir, "nas-comic")
-        root.listFiles().orEmpty()
-            .filter(File::isDirectory)
-            .filterNot { hasActiveWork(it.name) }
-            .forEach(File::deleteRecursively)
-        if (root.list().isNullOrEmpty()) root.delete()
-    }
-
-    private fun hasActiveWork(sourceKey: String): Boolean = runCatching {
-        workManager.getWorkInfosForUniqueWork(workName(sourceKey)).get()
-            .any { !it.state.isFinished }
-    }.getOrElse {
-        // Query failures must preserve task data rather than risking a live upload.
-        true
+    internal fun cleanupHistoryArtifacts(retryKey: String, taskId: UUID) {
+        // Never remove the shared snapshot used by legacy tasks or any other task's files.
+        if (retryKey.startsWith(SCOPED_RETRY_PREFIX)) {
+            taskDirectory(retryKey.removePrefix(SCOPED_RETRY_PREFIX), taskId).deleteRecursively()
+        }
     }
 
     internal fun currentSettings() = settingsGateway.currentSettings
@@ -255,7 +249,7 @@ class NasComicUploadRepository(
      * a fallback: it is content, not the cover, and uploading it would leave a
      * misleading NAS thumbnail.
      */
-    internal suspend fun prepareCoverFile(book: Book, sourceKey: String): File? {
+    internal suspend fun prepareCoverFile(book: Book, directory: File): File? {
         val coverUrl = book.getDisplayCover()?.trim()?.takeIf(String::isNotEmpty) ?: return null
         val result = imageLoader.execute(
             ImageRequest.Builder(application)
@@ -268,7 +262,7 @@ class NasComicUploadRepository(
                 .build(),
         )
         val bitmap = (result as? SuccessResult)?.image?.toBitmap() ?: return null
-        val file = File(taskDirectory(sourceKey), "cover.jpg")
+        val file = File(directory, "cover.jpg")
         file.parentFile?.mkdirs()
         ByteArrayOutputStream().use { bytes ->
             check(bitmap.compress(android.graphics.Bitmap.CompressFormat.JPEG, 95, bytes)) {
@@ -279,15 +273,14 @@ class NasComicUploadRepository(
         return file.takeIf(File::isFile)
     }
 
-    internal fun configurationFingerprint(): String {
-        val settings = settingsGateway.currentSettings
+    internal fun configurationFingerprint(settings: NasSettings): String {
         val normalized = nasGateway.normalizeUrl(settings.apiUrl).orEmpty()
         return MessageDigest.getInstance("SHA-256")
             .digest("$normalized\u0000${settings.apiToken.trim()}".toByteArray(Charsets.UTF_8))
             .joinToString("") { "%02x".format(it) }
     }
 
-    private fun snapshotFile(sourceKey: String) = File(taskDirectory(sourceKey), SNAPSHOT_FILE)
+    private fun snapshotFile(sourceKey: String, taskId: UUID?) = File(taskDirectory(sourceKey, taskId), SNAPSHOT_FILE)
 
     /** Persistent WorkManager snapshot; fixed JSON keys keep pending uploads readable after upgrades. */
     internal data class ComicSnapshot(
@@ -305,7 +298,7 @@ class NasComicUploadRepository(
     companion object {
         internal const val KEY_BOOK_URL = "book_url"
         internal const val KEY_SOURCE_KEY = "client_source_key"
-        internal const val KEY_TASK_ID = "task_id"
+        internal const val KEY_ISOLATED_SNAPSHOT = "isolated_snapshot"
         internal const val KEY_CONFIG_FINGERPRINT = "configuration_fingerprint"
         internal const val KEY_REPLACE_BOOK_ID = "replace_book_id"
         internal const val KEY_STAGE = "stage"
@@ -317,14 +310,15 @@ class NasComicUploadRepository(
         internal const val KEY_MESSAGE = "message"
         internal const val KEY_REMOTE_PATH = "remote_path"
         internal const val KEY_WARNING = "warning"
-        internal const val SNAPSHOT_FILE = "snapshot.json"
+        private const val SNAPSHOT_FILE = "snapshot.json"
+        private const val SCOPED_RETRY_PREFIX = "scoped:"
 
         internal fun workName(sourceKey: String) = "nas-comic:$sourceKey"
     }
 }
 
 private fun WorkInfo.toComicState(): NasComicUploadState {
-    val values = if (state == WorkInfo.State.SUCCEEDED || state == WorkInfo.State.FAILED) outputData else progress
+    val values = if (state.isFinished) outputData else progress
     val stage = values.getString(NasComicUploadRepository.KEY_STAGE)
         ?.let { runCatching { NasComicUploadStage.valueOf(it) }.getOrNull() }
     val failure = values.getString(NasComicUploadRepository.KEY_FAILURE)

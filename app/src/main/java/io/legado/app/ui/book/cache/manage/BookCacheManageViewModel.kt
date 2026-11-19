@@ -212,18 +212,21 @@ class BookCacheManageViewModel(
             is BookCacheManageIntent.DeleteNasHistory -> {
                 val historyItem = uiState.value.nasHistory.firstOrNull { it.id == intent.id }
                 viewModelScope.launch(Dispatchers.IO) {
-                    historyItem?.let(nasTransferRetryRepository::deleteHistoryArtifacts)
-                    nasTransferHistoryRepository.delete(intent.id)
+                    if (nasTransferHistoryRepository.delete(intent.id)) {
+                        historyItem?.let(nasTransferRetryRepository::deleteHistoryArtifacts)
+                    }
                 }
             }
             BookCacheManageIntent.ClearNasHistory -> {
                 viewModelScope.launch(Dispatchers.IO) {
-                    nasTransferRetryRepository.clearHistoryArtifacts()
                     nasTransferHistoryRepository.clear()
+                        .forEach(nasTransferRetryRepository::deleteHistoryArtifacts)
                 }
             }
         }
     }
+
+    private val retryingNasHistory = hashSetOf<String>()
 
     private fun retryNasHistory(id: String) {
         val item = uiState.value.nasHistory.firstOrNull { it.id == id }
@@ -238,25 +241,23 @@ class BookCacheManageViewModel(
             )
             return
         }
-        viewModelScope.launch(Dispatchers.IO) {
-            runCatching { nasTransferRetryRepository.retry(item) }
-                .onSuccess {
-                    _effects.emit(
-                        BookCacheManageEffect.ShowMessage(
-                            context.getString(R.string.cache_nas_retry_started),
-                        ),
-                    )
-                }
-                .onFailure { error ->
-                    _effects.emit(
-                        BookCacheManageEffect.ShowMessage(
-                            context.getString(
-                                R.string.cache_nas_retry_failed,
-                                error.localizedMessage.orEmpty(),
-                            ),
-                        ),
-                    )
-                }
+        if (!retryingNasHistory.add(id)) return
+        viewModelScope.launch {
+            try {
+                withContext(Dispatchers.IO) { nasTransferRetryRepository.retry(item) }
+                _effects.emit(
+                    BookCacheManageEffect.ShowMessage(context.getString(R.string.cache_nas_retry_started)),
+                )
+            } catch (error: Exception) {
+                currentCoroutineContext().ensureActive()
+                _effects.emit(
+                    BookCacheManageEffect.ShowMessage(
+                        context.getString(R.string.cache_nas_retry_failed, error.localizedMessage.orEmpty()),
+                    ),
+                )
+            } finally {
+                retryingNasHistory.remove(id)
+            }
         }
     }
 
@@ -269,7 +270,6 @@ class BookCacheManageViewModel(
         }
         viewModelScope.launch(Dispatchers.IO) {
             nasUploadTaskRepository.observe().collect { uploads ->
-                uploads.filter(NasUploadTask::isFinished).forEach(nasTransferHistoryRepository::recordUpload)
                 _uiState.update {
                     it.copy(
                         nasUploads = uploads.filterNot(NasUploadTask::isFinished),

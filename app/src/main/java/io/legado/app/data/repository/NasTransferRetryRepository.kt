@@ -1,17 +1,24 @@
 package io.legado.app.data.repository
 
 import android.app.Application
+import android.util.Log
+import io.legado.app.R
 import io.legado.app.data.repository.manga.NasComicUploadRepository
 import io.legado.app.domain.gateway.NasDownloadSink
 import io.legado.app.domain.model.NasBook
+import io.legado.app.domain.model.NasComicUploadException
+import io.legado.app.domain.model.NasComicUploadFailure
 import io.legado.app.domain.model.NasTransferHistory
+import io.legado.app.domain.model.NasUploadTask
 import io.legado.app.domain.usecase.NasLibraryUseCase
 import io.legado.app.model.localBook.LocalBook
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.TimeoutCancellationException
 import java.io.File
 import java.io.FileInputStream
 import java.io.FileOutputStream
 import java.io.IOException
+import java.util.UUID
 
 /** Recreates failed or cancelled NAS transfers without persisting credentials. */
 class NasTransferRetryRepository(
@@ -29,9 +36,22 @@ class NasTransferRetryRepository(
             ?: error("This transfer has no retry information")
         when {
             item.direction == "upload" && item.kind == "comic" ->
-                comicUploadRepository.retry(retryKey)
+                try {
+                    comicUploadRepository.retry(retryKey, UUID.fromString(item.id), item.replaceBookId)
+                } catch (error: NasComicUploadException) {
+                    val text = when (error.reason) {
+                        NasComicUploadFailure.ConfigurationChanged ->
+                            R.string.cache_nas_upload_destination_changed
+                        NasComicUploadFailure.RemoteChanged ->
+                            R.string.cache_nas_upload_remote_changed
+                        NasComicUploadFailure.RefreshFailed ->
+                            R.string.feature_book_info_nas_comic_refresh_failed
+                        else -> throw error
+                    }
+                    throw IllegalStateException(application.getString(text), error)
+                }
             item.direction == "upload" ->
-                localBookUploadRepository.retry(retryKey, item.title)
+                localBookUploadRepository.retry(retryKey, item.title, item.destinationFingerprint)
             item.direction == "download" ->
                 retryDownload(item, retryKey)
             else -> error("Unsupported NAS transfer type")
@@ -41,16 +61,25 @@ class NasTransferRetryRepository(
     fun deleteHistoryArtifacts(item: NasTransferHistory) {
         if (item.direction != "upload" || item.kind != "comic") return
         item.retryKey?.takeIf(String::isNotBlank)?.let { sourceKey ->
-            comicUploadRepository.cleanupRetryDataIfIdle(sourceKey)
+            cleanupComicArtifacts(sourceKey, item.id)
         }
     }
 
-    fun clearHistoryArtifacts() {
-        comicUploadRepository.cleanupAllRetryData()
+    internal fun pruneUploadArtifacts(finished: List<NasUploadTask>, retained: List<NasTransferHistory>) {
+        val retryable = retained.asSequence().filter { it.state != NasTransferHistoryRepository.SUCCEEDED }
+            .map { it.id }.toHashSet()
+        finished.filter { it.kind == "comic" && it.id !in retryable }.forEach { task ->
+            task.retryKey?.let { cleanupComicArtifacts(it, task.id) }
+        }
+    }
+
+    private fun cleanupComicArtifacts(retryKey: String, id: String) {
+        runCatching { comicUploadRepository.cleanupHistoryArtifacts(retryKey, UUID.fromString(id)) }
+            .onFailure { Log.w("NasTransferHistory", "Could not clear local comic upload artifacts", it) }
     }
 
     private suspend fun retryDownload(item: NasTransferHistory, bookId: String) {
-        val historyId = "nas-download:" + bookId + ":" + System.currentTimeMillis()
+        val historyId = "nas-download:" + UUID.randomUUID()
         historyRepository.recordStarted(
             id = historyId,
             direction = "download",
@@ -98,7 +127,7 @@ class NasTransferRetryRepository(
         } catch (error: Throwable) {
             historyRepository.recordFinished(
                 id = historyId,
-                state = if (error is CancellationException) {
+                state = if (error is CancellationException && error !is TimeoutCancellationException) {
                     NasTransferHistoryRepository.CANCELLED
                 } else {
                     NasTransferHistoryRepository.FAILED

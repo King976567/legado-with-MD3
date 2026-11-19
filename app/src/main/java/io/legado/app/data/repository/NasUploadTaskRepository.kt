@@ -1,9 +1,11 @@
 package io.legado.app.data.repository
 
 import android.app.Application
+import android.content.Context
+import androidx.work.OneTimeWorkRequest
+import io.legado.app.R
 import androidx.work.WorkInfo
 import androidx.work.WorkManager
-import io.legado.app.data.repository.manga.NasComicUploadRepository
 import io.legado.app.domain.model.NasUploadTask
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.distinctUntilChanged
@@ -11,31 +13,20 @@ import kotlinx.coroutines.flow.map
 import java.util.UUID
 
 class NasUploadTaskRepository(application: Application) {
-    private val application = application
-    private val workManager by lazy(LazyThreadSafetyMode.NONE) {
+    private val workManager by lazy {
         WorkManager.getInstance(application)
     }
 
     fun observe(): Flow<List<NasUploadTask>> = workManager.getWorkInfosByTagFlow(TAG)
         .map { infos ->
-            infos.map(WorkInfo::toNasUploadTask).sortedByDescending { it.id }
+            infos.map(WorkInfo::toNasUploadTask).sortedByDescending { it.createdAt }
         }
         .distinctUntilChanged()
 
-    fun cancel(id: String) {
-        runCatching {
-            val workId = UUID.fromString(id)
-            val work = workManager.getWorkInfoById(workId).get()
-            work?.tags?.firstOrNull { it.startsWith(COMIC_WORK_PREFIX) }
-                ?.removePrefix(COMIC_WORK_PREFIX)
-                ?.let { sourceKey ->
-                    java.io.File(application.noBackupFilesDir, "nas-comic/$sourceKey")
-                        .listFiles().orEmpty()
-                        .filterNot { it.name == NasComicUploadRepository.SNAPSHOT_FILE }
-                        .forEach(java.io.File::deleteRecursively)
-                }
-            workManager.cancelWorkById(workId)
-        }
+    fun cancel(id: String) = cancel(UUID.fromString(id))
+
+    fun cancel(id: UUID) {
+        workManager.cancelWorkById(id)
     }
 
     companion object {
@@ -43,9 +34,10 @@ class NasUploadTaskRepository(application: Application) {
         const val COMIC_TAG = "nas-upload-comic"
         const val TITLE_TAG_PREFIX = "nas-upload-title:"
         const val CREATED_TAG_PREFIX = "nas-upload-created:"
+        const val DESTINATION_TAG_PREFIX = "nas-upload-destination:"
+        const val KEY_DESTINATION = "nas_upload_destination"
         const val RETRY_KEY_TAG_PREFIX = "nas-upload-retry-key:"
         const val REPLACE_BOOK_ID_TAG_PREFIX = "nas-upload-replace-id:"
-        const val COMIC_WORK_PREFIX = "nas-comic:"
         const val KEY_TITLE = "nas_upload_title"
         const val KEY_KIND = "nas_upload_kind"
         const val KEY_STAGE = "stage"
@@ -97,9 +89,33 @@ private fun WorkInfo.toNasUploadTask(): NasUploadTask {
             ?.removePrefix(NasUploadTaskRepository.RETRY_KEY_TAG_PREFIX),
         replaceBookId = tags.firstOrNull { it.startsWith(NasUploadTaskRepository.REPLACE_BOOK_ID_TAG_PREFIX) }
             ?.removePrefix(NasUploadTaskRepository.REPLACE_BOOK_ID_TAG_PREFIX),
+        destinationFingerprint = tags.firstOrNull { it.startsWith(NasUploadTaskRepository.DESTINATION_TAG_PREFIX) }
+            ?.removePrefix(NasUploadTaskRepository.DESTINATION_TAG_PREFIX),
+        runAttemptCount = runAttemptCount,
         createdAt = tags.firstOrNull { it.startsWith(NasUploadTaskRepository.CREATED_TAG_PREFIX) }
             ?.removePrefix(NasUploadTaskRepository.CREATED_TAG_PREFIX)
             ?.toLongOrNull()
             ?: 0L,
     )
+}
+
+private val nasUploadEnqueueLock = Any()
+
+/**
+ * NAS enqueue calls live in the app process. Keep the check and insert together, and keep
+ * finished WorkSpecs independent: a replacement unique chain can remove them before history
+ * has had a chance to persist the result. The old unique name still detects pre-upgrade work.
+ */
+internal fun WorkManager.enqueueNasUpload(
+    sourceTag: String,
+    request: OneTimeWorkRequest,
+    context: Context,
+    legacyName: String = sourceTag,
+) {
+    synchronized(nasUploadEnqueueLock) {
+        val busy = getWorkInfosByTag(sourceTag).get().any { !it.state.isFinished } ||
+            getWorkInfosForUniqueWork(legacyName).get().any { !it.state.isFinished }
+        check(!busy) { context.getString(R.string.cache_nas_upload_already_queued) }
+        enqueue(request).result.get()
+    }
 }

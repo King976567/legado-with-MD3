@@ -28,6 +28,7 @@ enum class NasComicUploadFailure {
 }
 
 data class NasComicUploadPreparation(
+    val preparationId: String,
     val clientSourceKey: String,
     val title: String,
     val chapterCount: Int,

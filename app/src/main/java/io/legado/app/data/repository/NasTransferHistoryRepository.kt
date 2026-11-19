@@ -1,6 +1,9 @@
 package io.legado.app.data.repository
 
 import android.app.Application
+import android.util.Log
+import com.google.gson.JsonParser
+import com.google.gson.annotations.SerializedName
 import io.legado.app.domain.model.NasTransferHistory
 import io.legado.app.domain.model.NasUploadTask
 import io.legado.app.utils.FileUtils
@@ -17,7 +20,8 @@ import java.io.File
 class NasTransferHistoryRepository(application: Application) {
     private val file = File(application.noBackupFilesDir, FILE_NAME)
     private val lock = Any()
-    private val _history = MutableStateFlow(load())
+    private var stored = load()
+    private val _history = MutableStateFlow(stored.items)
 
     val history: StateFlow<List<NasTransferHistory>> = _history.asStateFlow()
 
@@ -67,57 +71,87 @@ class NasTransferHistoryRepository(application: Application) {
         }
     }
 
-    fun recordUpload(task: NasUploadTask) {
-        if (!task.isFinished) return
-        update { current ->
-            val existing = current.firstOrNull { it.id == task.id }
-            val item = NasTransferHistory(
-                id = task.id,
-                direction = "upload",
-                title = task.title,
-                kind = task.kind,
-                state = task.state,
-                message = task.message,
-                remotePath = task.remotePath,
-                retryKey = task.retryKey,
-                replaceBookId = task.replaceBookId,
-                createdAt = task.createdAt.takeIf { it > 0 } ?: existing?.createdAt ?: System.currentTimeMillis(),
-                finishedAt = existing?.finishedAt ?: System.currentTimeMillis(),
-            )
-            listOf(item) + current.filterNot { it.id == task.id }
-        }
+    /** Reconcile the complete WorkManager snapshot once, independently of the cache screen. */
+    internal fun reconcileUploads(tasks: List<NasUploadTask>): Boolean = synchronized(lock) {
+        val terminal = tasks.filter(NasUploadTask::isFinished)
+        val known = stored.observedUploads + stored.items.filter { it.direction == "upload" }.map { it.id }
+        val now = System.currentTimeMillis()
+        val newItems = terminal.filterNot { it.id in known }
+            .sortedByDescending { it.createdAt }
+            .map { task ->
+                NasTransferHistory(
+                    id = task.id,
+                    direction = "upload",
+                    title = task.title,
+                    kind = task.kind,
+                    state = task.state,
+                    message = task.message,
+                    remotePath = task.remotePath,
+                    retryKey = task.retryKey,
+                    replaceBookId = task.replaceBookId,
+                    destinationFingerprint = task.destinationFingerprint,
+                    createdAt = task.createdAt.takeIf { it > 0 } ?: now,
+                    finishedAt = now,
+                )
+            }
+        // Keep receipts even for deleted/evicted rows, until WorkManager prunes those jobs.
+        save(newItems + stored.items, terminal.mapTo(hashSetOf()) { it.id })
     }
 
-    fun delete(id: String) {
-        update { current -> current.filterNot { it.id == id } }
+    fun delete(id: String): Boolean = synchronized(lock) {
+        val item = stored.items.find { it.id == id && it.state != RUNNING } ?: return@synchronized false
+        save(stored.items.filterNot { it.id == id }, stored.observedUploads.withReceipt(item))
     }
 
-    fun clear() {
-        update { emptyList() }
+    /** Only clear completed history; an in-process download still needs its row to finish. */
+    fun clear(): List<NasTransferHistory> = synchronized(lock) {
+        val (running, removed) = stored.items.partition { it.state == RUNNING }
+        val receipts = stored.observedUploads + removed.filter { it.direction == "upload" }.map { it.id }
+        if (save(running, receipts)) removed else emptyList()
     }
+
+    private fun Set<String>.withReceipt(item: NasTransferHistory) =
+        if (item.direction == "upload") this + item.id else this
 
     private fun update(transform: (List<NasTransferHistory>) -> List<NasTransferHistory>) {
-        synchronized(lock) {
-            val next = transform(_history.value).take(MAX_ITEMS)
-            _history.value = next
-            runCatching { FileUtils.writeTextAtomic(file.absolutePath, GSON.toJson(next)) }
-        }
+        synchronized(lock) { save(transform(stored.items), stored.observedUploads) }
     }
 
-    private fun load(): List<NasTransferHistory> = runCatching {
-        if (!file.isFile) return@runCatching emptyList()
-        val array = GSON.fromJson(file.readText(), Array<NasTransferHistory>::class.java)
+    private fun save(items: List<NasTransferHistory>, observedUploads: Set<String>): Boolean {
+        val ordered = items.sortedWith(compareByDescending<NasTransferHistory> { it.state == RUNNING }
+            .thenByDescending { it.finishedAt ?: it.createdAt }.thenByDescending { it.createdAt })
+        val runningCount = ordered.count { it.state == RUNNING }
+        val next = StoredHistory(ordered.take(runningCount + MAX_ITEMS), observedUploads)
+        if (stored == next) return true
+        return runCatching { FileUtils.writeTextAtomic(file.absolutePath, GSON.toJson(next)) }
+            .onSuccess {
+                stored = next
+                _history.value = next.items
+            }
+            .onFailure { Log.w("NasTransferHistory", "Could not save local NAS history", it) }
+            .isSuccess
+    }
+
+    private fun load(): StoredHistory = runCatching {
+        if (!file.isFile) return@runCatching StoredHistory()
+        val json = JsonParser.parseString(file.readText())
+        val data = if (json.isJsonArray) {
+            StoredHistory(GSON.fromJson(json, Array<NasTransferHistory>::class.java).orEmpty().toList())
+        } else {
+            GSON.fromJson(json, StoredHistory::class.java)
+        }
         val now = System.currentTimeMillis()
-        array?.toList().orEmpty().map { item ->
-            // Downloads currently run in the app process. If the process was
-            // restarted, a persisted RUNNING record can no longer be active.
+        data.copy(items = data.items.map { item ->
             if (item.direction == "download" && item.state == RUNNING) {
                 item.copy(state = CANCELLED, finishedAt = now)
-            } else {
-                item
-            }
-        }.take(MAX_ITEMS)
-    }.getOrDefault(emptyList())
+            } else item
+        })
+    }.getOrDefault(StoredHistory())
+
+    private data class StoredHistory(
+        @SerializedName("items") val items: List<NasTransferHistory> = emptyList(),
+        @SerializedName("observedUploads") val observedUploads: Set<String> = emptySet(),
+    )
 
     companion object {
         private const val FILE_NAME = "nas-transfer-history.json"

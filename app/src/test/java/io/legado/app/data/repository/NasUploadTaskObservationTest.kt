@@ -6,6 +6,7 @@ import androidx.work.Configuration
 import androidx.work.Constraints
 import androidx.work.OneTimeWorkRequestBuilder
 import androidx.work.WorkManager
+import androidx.work.WorkInfo
 import androidx.work.Worker
 import androidx.work.WorkerParameters
 import androidx.work.testing.SynchronousExecutor
@@ -102,6 +103,28 @@ class NasUploadTaskObservationTest {
                 withTimeout(5_000) { job.cancelAndJoin() }
                 received.close()
             }
+        }
+    }
+
+    @Test fun newUploadRejectsConcurrentDuplicateAndRetainsTerminalWorkForHistory() = runBlocking {
+        val application: Application = RuntimeEnvironment.getApplication()
+        val source = "nas-test-book"
+        fun request() = OneTimeWorkRequestBuilder<ObservationWorker>()
+            .addTag(source)
+            .setConstraints(Constraints.Builder().setRequiresCharging(true).build()).build()
+        val first = request()
+        val duplicate = request()
+        withContext(Dispatchers.IO) {
+            workManager.enqueueNasUpload(source, first, application)
+            val error = runCatching { workManager.enqueueNasUpload(source, duplicate, application) }
+                .exceptionOrNull()
+            assertTrue(error is IllegalStateException)
+            assertEquals(null, workManager.getWorkInfoById(duplicate.id).get())
+            assertEquals(WorkInfo.State.ENQUEUED, workManager.getWorkInfoById(first.id).get()?.state)
+            workManager.cancelWorkById(first.id).result.get()
+            workManager.enqueueNasUpload(source, duplicate, application)
+            assertEquals(WorkInfo.State.CANCELLED, workManager.getWorkInfoById(first.id).get()?.state)
+            assertEquals(WorkInfo.State.ENQUEUED, workManager.getWorkInfoById(duplicate.id).get()?.state)
         }
     }
 

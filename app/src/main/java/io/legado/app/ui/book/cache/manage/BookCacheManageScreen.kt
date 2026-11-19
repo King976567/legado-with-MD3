@@ -448,11 +448,13 @@ private fun LazyListScope.nasHistorySection(
             expanded = expanded,
             onToggle = onToggleSection,
         ) {
-            SmallTonalButton(
-                onClick = onClear,
-                icon = Icons.Default.Delete,
-                contentDescription = stringResource(R.string.cache_nas_clear_history),
-            )
+            if (history.any { it.state != "RUNNING" }) {
+                SmallTonalButton(
+                    onClick = onClear,
+                    icon = Icons.Default.Delete,
+                    contentDescription = stringResource(R.string.cache_nas_clear_history),
+                )
+            }
         }
     }
     if (!expanded) return
@@ -608,11 +610,13 @@ private fun NasTransferHistoryCard(
                         contentDescription = stringResource(R.string.cache_nas_retry),
                     )
                 }
-                SmallTonalButton(
-                    onClick = onDelete,
-                    icon = Icons.Default.Delete,
-                    contentDescription = stringResource(R.string.cache_nas_delete_history),
-                )
+                if (item.state != "RUNNING") {
+                    SmallTonalButton(
+                        onClick = onDelete,
+                        icon = Icons.Default.Delete,
+                        contentDescription = stringResource(R.string.cache_nas_delete_history),
+                    )
+                }
             }
         }
     }
@@ -627,7 +631,9 @@ private fun NasUploadTaskCard(
         if (task.kind == "comic") R.string.cache_nas_comic else R.string.cache_nas_book,
     )
     val stateText = when (task.state) {
-        "ENQUEUED" -> stringResource(R.string.cache_nas_waiting_wifi)
+        "ENQUEUED" -> stringResource(
+            if (task.runAttemptCount > 0) R.string.cache_nas_upload_waiting_retry else R.string.cache_nas_waiting_wifi,
+        )
         "BLOCKED" -> stringResource(R.string.cache_nas_waiting)
         "RUNNING" -> task.stage.orEmpty().ifBlank { stringResource(R.string.cache_nas_uploading) }
         "SUCCEEDED" -> stringResource(R.string.cache_nas_completed)

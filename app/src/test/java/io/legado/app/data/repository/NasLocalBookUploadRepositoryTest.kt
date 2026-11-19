@@ -76,6 +76,16 @@ class NasLocalBookUploadRepositoryTest {
         assertEquals("book.txt", safeNasBookFileName("..\\book.txt"))
         assertEquals("a_b.txt", safeNasBookFileName("a:b.txt"))
     }
+    @Test fun queuedUploadDoesNotFollowAChangedNasAddressOrToken() {
+        val useCase = UploadNasBookUseCase(api, gateway)
+        val repository = NasLocalBookUploadRepository(RuntimeEnvironment.getApplication(), useCase)
+        val destination = useCase.destinationFingerprint(settings)
+        assertTrue(repository.matchesDestination(settings, destination))
+        assertFalse(repository.matchesDestination(settings.copy(apiUrl = "https://other.example"), destination))
+        assertFalse(repository.matchesDestination(settings.copy(apiToken = "new-token"), destination))
+        assertFalse(repository.matchesDestination(settings.copy(connectionVerified = false), destination))
+    }
+
     private class Library : NasLibraryGateway by unsupportedGateway() {
         var knownHash = ""
         var failUpload = false

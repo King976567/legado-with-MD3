@@ -7,6 +7,7 @@ import io.legado.app.domain.model.NasWriteAccess
 import io.legado.app.domain.model.settings.NasSettings
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.ensureActive
+import java.security.MessageDigest
 
 enum class NasBookUploadStage { Preparing, Checking, Uploading }
 enum class NasBookUploadError { Unavailable, ReadOnly, Unsupported, CheckIncomplete, UploadFailed, InvalidFile }
@@ -21,6 +22,12 @@ class UploadNasBookUseCase(
     private val gateway: NasLibraryGateway,
     private val settingsGateway: NasSettingsGateway,
 ) {
+    internal fun currentSettings(): NasSettings = settingsGateway.currentSettings
+
+    internal fun destinationFingerprint(settings: NasSettings): String = MessageDigest.getInstance("SHA-256")
+        .digest("${gateway.normalizeUrl(settings.apiUrl).orEmpty()}\u0000${settings.apiToken.trim()}".toByteArray())
+        .joinToString("") { "%02x".format(it) }
+
     suspend fun execute(
         settings: NasSettings,
         source: NasUploadSource,

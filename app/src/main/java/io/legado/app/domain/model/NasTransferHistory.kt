@@ -13,6 +13,7 @@ data class NasTransferHistory(
     @SerializedName("remotePath") val remotePath: String? = null,
     @SerializedName("retryKey") val retryKey: String? = null,
     @SerializedName("replaceBookId") val replaceBookId: String? = null,
+    @SerializedName("destinationFingerprint") val destinationFingerprint: String? = null,
     @SerializedName("createdAt") val createdAt: Long = 0L,
     @SerializedName("finishedAt") val finishedAt: Long? = null,
 )

@@ -117,6 +117,7 @@ import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.io.ByteArrayOutputStream
+import java.util.UUID
 
 class BookInfoViewModel(
     application: Application,
@@ -203,9 +204,10 @@ class BookInfoViewModel(
     private val _effects = MutableSharedFlow<BookInfoEffect>(extraBufferCapacity = 8)
     val effects = _effects.asSharedFlow()
     private var nasUploadJob: Job? = null
-    @Volatile private var nasUploadGeneration = 0L
     private var nasComicUploadJob: Job? = null
-    private var nasComicSourceKey: String? = null
+    private var nasComicPreparationJob: Job? = null
+    private var nasComicSubmissionJob: Job? = null
+    private var nasComicTaskId: UUID? = null
 
     init {
         collectEventBus()
@@ -214,14 +216,17 @@ class BookInfoViewModel(
             nasSettingsGateway.settings.collect { current ->
                 if (current.apiUrl != previous.apiUrl || current.apiToken != previous.apiToken ||
                     current.isBookUploadEnabled() != previous.isBookUploadEnabled()) {
-                    nasUploadGeneration++
                     nasUploadJob?.cancel()
+                    nasComicPreparationJob?.cancel()
                     nasComicUploadJob?.cancel()
-                    nasComicSourceKey?.let(nasComicUploadRepository::cancel)
-                    nasComicSourceKey = null
+                    nasComicTaskId?.let(nasComicUploadRepository::cancel)
+                    nasComicTaskId = null
+                    (_screenState.value.dialog as? BookInfoDialog.NasComicUploadConfirm)
+                        ?.preparation?.let(nasComicUploadRepository::discardPreparation)
                     _screenState.update { it.copy(nasUploadStage = null, nasUploadDenied = false,
                         nasComicPreparing = false, nasComicUpload = NasComicUploadState(),
-                        dialog = if (it.dialog is BookInfoDialog.NasUploadResult) null else it.dialog) }
+                        dialog = if (it.dialog is BookInfoDialog.NasUploadResult || it.dialog is BookInfoDialog.NasComicUploadConfirm)
+                            null else it.dialog) }
                 }
                 previous = current
             }
@@ -260,6 +265,8 @@ class BookInfoViewModel(
         }
 
     override fun onCleared() {
+        (_screenState.value.dialog as? BookInfoDialog.NasComicUploadConfirm)
+            ?.preparation?.let(nasComicUploadRepository::discardPreparation)
         // "每次验证"频率下离开详情页即撤销授权，下次进来要重新验证
         currentBook?.bookUrl?.let {
             privateAccessGateway.revoke(PrivateUnlockTarget.Book(it))
@@ -444,7 +451,6 @@ class BookInfoViewModel(
     fun onIntent(intent: BookInfoIntent) {
         when (intent) {
             BookInfoIntent.CancelNasUpload -> {
-                nasUploadGeneration++
                 nasUploadJob?.cancel()
                 currentBook?.bookUrl?.let(nasLocalBookUploadRepository::cancel)
                 _screenState.update { it.copy(nasUploadStage = null) }
@@ -877,8 +883,16 @@ class BookInfoViewModel(
         if (!book.isLocal || !settings.isBookUploadEnabled() || uiState.value.privateLocked ||
             _screenState.value.isBusy || _screenState.value.nasUploadStage != null ||
             _screenState.value.nasUploadDenied || nasUploadJob?.isActive == true) return
-        nasLocalBookUploadRepository.enqueue(book)
-        showMessage(R.string.feature_book_info_nas_upload_enqueued)
+        nasUploadJob = viewModelScope.launch {
+            try {
+                nasLocalBookUploadRepository.enqueue(book)
+                showMessage(R.string.feature_book_info_nas_upload_enqueued)
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (error: Exception) {
+                showMessage(error.localizedMessage ?: context.getString(R.string.cache_nas_failed))
+            }
+        }
     }
 
     private fun prepareNasComicUpload() {
@@ -886,17 +900,17 @@ class BookInfoViewModel(
         val settings = nasSettingsGateway.currentSettings
         if (book.isLocal || !book.isImage || !settings.isBookUploadEnabled() ||
             _screenState.value.isBusy || _screenState.value.nasComicPreparing ||
-            _screenState.value.nasComicUpload.running
+            _screenState.value.nasComicUpload.running || nasComicSubmissionJob?.isActive == true
         ) return
 
         _screenState.update { it.copy(nasComicPreparing = true) }
-        viewModelScope.launch {
+        nasComicPreparationJob = viewModelScope.launch {
             try {
                 val preparation = nasComicUploadRepository.prepare(book)
                 if (currentBook?.bookUrl == book.bookUrl) {
                     showDialog(BookInfoDialog.NasComicUploadConfirm(preparation))
                 } else {
-                    nasComicUploadRepository.discardPreparation(preparation.clientSourceKey)
+                    nasComicUploadRepository.discardPreparation(preparation)
                 }
             } catch (error: NasComicUploadException) {
                 showDialog(BookInfoDialog.NasUploadResult(nasComicErrorMessage(error)))
@@ -912,58 +926,65 @@ class BookInfoViewModel(
     private fun confirmNasComicUpload() {
         val dialog = _screenState.value.dialog as? BookInfoDialog.NasComicUploadConfirm ?: return
         val bookUrl = currentBook?.bookUrl ?: return
-        val replaceBookId = dialog.preparation.remoteBook?.id
-        try {
-            nasComicUploadRepository.enqueue(
-                preparation = dialog.preparation,
-                replaceBookId = replaceBookId,
-            )
-            showDialog(null)
-            showMessage(R.string.feature_book_info_nas_comic_enqueued)
-            observeNasComicUpload(dialog.preparation.clientSourceKey, bookUrl)
-        } catch (error: NasComicUploadException) {
-            showDialog(BookInfoDialog.NasUploadResult(nasComicErrorMessage(error)))
+        if (nasComicSubmissionJob?.isActive == true) return
+        showDialog(null)
+        nasComicSubmissionJob = viewModelScope.launch {
+            try {
+                val taskId = nasComicUploadRepository.enqueue(dialog.preparation, dialog.preparation.remoteBook?.id)
+                showMessage(R.string.feature_book_info_nas_comic_enqueued)
+                observeNasComicUpload(taskId, bookUrl)
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (error: Exception) {
+                val message = if (error is NasComicUploadException) nasComicErrorMessage(error) else error.localizedMessage
+                showDialog(BookInfoDialog.NasUploadResult(message ?: context.getString(R.string.cache_nas_failed)))
+            }
         }
     }
 
     private fun cancelNasComicUpload() {
+        nasComicPreparationJob?.cancel()
         val preparation = (_screenState.value.dialog as? BookInfoDialog.NasComicUploadConfirm)?.preparation
-        preparation?.let { nasComicUploadRepository.discardPreparation(it.clientSourceKey) }
-        nasComicSourceKey?.let(nasComicUploadRepository::cancel)
-        nasComicSourceKey = null
+        preparation?.let(nasComicUploadRepository::discardPreparation)
+        nasComicTaskId?.let(nasComicUploadRepository::cancel)
+        nasComicTaskId = null
         nasComicUploadJob?.cancel()
         nasComicUploadJob = null
         _screenState.update { it.copy(nasComicPreparing = false, nasComicUpload = NasComicUploadState()) }
         showDialog(null)
     }
 
-    private fun observeNasComicUpload(sourceKey: String, bookUrl: String) {
+    private fun observeNasComicUpload(taskId: UUID, bookUrl: String) {
         nasComicUploadJob?.cancel()
-        nasComicSourceKey = sourceKey
+        nasComicTaskId = taskId
         nasComicUploadJob = viewModelScope.launch {
-            nasComicUploadRepository.observe(sourceKey).collect { uploadState ->
+            nasComicUploadRepository.observe(taskId).collect { uploadState ->
                 _screenState.update { it.copy(nasComicUpload = uploadState) }
                 if (uploadState.failure != null && !uploadState.running) {
                     if (currentBook?.bookUrl == bookUrl) {
                         showMessage(
                             context.getString(
                                 R.string.feature_book_info_nas_comic_failed,
-                                nasComicFailureText(uploadState.failure),
+                                uploadState.message ?: nasComicFailureText(uploadState.failure),
                             )
                         )
                     }
+                    nasComicTaskId = null
                     nasComicUploadJob?.cancel()
                 } else if (uploadState.stage == io.legado.app.domain.model.NasComicUploadStage.Complete &&
                     !uploadState.running
                 ) {
                     if (currentBook?.bookUrl == bookUrl) {
                         showMessage(
-                            context.getString(
-                                R.string.feature_book_info_nas_comic_complete,
-                                uploadState.remotePath.orEmpty(),
-                            )
+                            uploadState.message ?: context.getString(
+                                R.string.feature_book_info_nas_comic_complete, uploadState.remotePath.orEmpty(),
+                            ),
                         )
                     }
+                    nasComicTaskId = null
+                    nasComicUploadJob?.cancel()
+                } else if (!uploadState.running) {
+                    nasComicTaskId = null
                     nasComicUploadJob?.cancel()
                 }
             }
@@ -975,11 +996,13 @@ class BookInfoViewModel(
         NasComicUploadFailure.RefreshFailed -> context.getString(R.string.feature_book_info_nas_comic_refresh_failed)
         NasComicUploadFailure.NotConfigured -> context.getString(R.string.feature_book_info_nas_unavailable)
         NasComicUploadFailure.ReadOnly -> context.getString(R.string.feature_book_info_nas_read_only)
+        NasComicUploadFailure.ConfigurationChanged -> context.getString(R.string.cache_nas_upload_destination_changed)
+        NasComicUploadFailure.RemoteChanged -> context.getString(R.string.cache_nas_upload_remote_changed)
         else -> failure.name
     }
 
     private fun nasComicErrorMessage(error: NasComicUploadException): String =
-        error.message?.takeIf { it.isNotBlank() } ?: nasComicFailureText(error.reason)
+        error.message?.takeIf { it.isNotBlank() && it != error.reason.name } ?: nasComicFailureText(error.reason)
 
     fun clearCache() {
         currentBook?.let { book ->

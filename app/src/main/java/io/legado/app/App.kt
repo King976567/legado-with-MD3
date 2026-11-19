@@ -58,6 +58,10 @@ import io.legado.app.help.config.LocalConfig
 import io.legado.app.help.config.ReadBookConfig
 import io.legado.app.help.config.ThemeConfigStore
 import io.legado.app.help.config.ThemeConfigStore.applyDayNightInit
+import io.legado.app.data.repository.NasTransferHistoryRepository
+import io.legado.app.data.repository.NasUploadTaskRepository
+import io.legado.app.data.repository.NasTransferRetryRepository
+import io.legado.app.domain.model.NasUploadTask
 import io.legado.app.help.coroutine.Coroutine
 import io.legado.app.help.http.Cronet
 import io.legado.app.help.http.ObsoleteUrlFactory
@@ -189,6 +193,17 @@ class App : Application(), SingletonImageLoader.Factory {
         // 并发、先后不确定；现在 DefaultData 自己判断是否有待迁移项，不再依赖
         // LocalConfig.versionCode，这里只做只读判断，数据导入仍在内部异步执行。
         DefaultData.upVersion()
+        Coroutine.async {
+            val history = get<NasTransferHistoryRepository>()
+            get<NasUploadTaskRepository>().observe()
+                .map { it.filter(NasUploadTask::isFinished) }
+                .distinctUntilChanged()
+                .collect { finished ->
+                    if (history.reconcileUploads(finished) && finished.isNotEmpty()) {
+                        get<NasTransferRetryRepository>().pruneUploadArtifacts(finished, history.history.value)
+                    }
+                }
+        }
         Coroutine.async {
             get<BackupSettingsGateway>().settings
                 .map {

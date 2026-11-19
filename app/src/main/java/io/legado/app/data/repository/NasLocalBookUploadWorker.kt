@@ -5,26 +5,24 @@ import android.content.Context
 import android.content.pm.ServiceInfo
 import android.os.Build
 import androidx.core.app.NotificationCompat
-import androidx.work.BackoffPolicy
-import androidx.work.Constraints
 import androidx.work.CoroutineWorker
 import androidx.work.Data
-import androidx.work.ExistingWorkPolicy
 import androidx.work.ForegroundInfo
-import androidx.work.NetworkType
-import androidx.work.OneTimeWorkRequestBuilder
 import androidx.work.WorkManager
 import androidx.work.WorkerParameters
 import io.legado.app.R
 import io.legado.app.constant.AppConst
 import io.legado.app.data.AppDatabase
 import io.legado.app.domain.gateway.NasSettingsGateway
-import io.legado.app.domain.usecase.NasBookUploadError
+import io.legado.app.domain.model.NasHttpException
 import io.legado.app.domain.usecase.NasBookUploadException
 import io.legado.app.domain.usecase.NasBookUploadStage
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.TimeoutCancellationException
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.ensureActive
+import java.io.IOException
 import org.koin.core.context.GlobalContext
-import java.util.concurrent.TimeUnit
 
 class NasLocalBookUploadWorker(
     appContext: Context,
@@ -39,6 +37,9 @@ class NasLocalBookUploadWorker(
         val book = database.bookDao.getBook(bookUrl) ?: return Result.failure(messageData("Book not found"))
         val repository = GlobalContext.get().get<NasLocalBookUploadRepository>()
         val settings = GlobalContext.get().get<NasSettingsGateway>().currentSettings
+        if (!repository.matchesDestination(settings, inputData.getString(NasUploadTaskRepository.KEY_DESTINATION))) {
+            return Result.failure(messageData(applicationContext.getString(R.string.cache_nas_upload_destination_changed)))
+        }
         return try {
             update(NasBookUploadStage.Preparing)
             val outcome = repository.upload(book, settings) { stage ->
@@ -48,24 +49,29 @@ class NasLocalBookUploadWorker(
                 Data.Builder()
                     .putString(NasUploadTaskRepository.KEY_STAGE, "Complete")
                     .putString(NasUploadTaskRepository.KEY_REMOTE_PATH, outcome.path)
+                    .putString(NasUploadTaskRepository.KEY_MESSAGE,
+                        if (outcome.alreadyExists) applicationContext.getString(R.string.cache_nas_upload_existing) else null)
                     .build(),
             )
+        } catch (timeout: TimeoutCancellationException) {
+            currentCoroutineContext().ensureActive()
+            if (runAttemptCount < MAX_RETRIES) Result.retry() else Result.failure(messageData(timeout.message.orEmpty()))
         } catch (error: CancellationException) {
             throw error
         } catch (error: NasBookUploadException) {
-            val retryable = error.reason == NasBookUploadError.Unavailable ||
-                error.reason == NasBookUploadError.UploadFailed
-            if (retryable && runAttemptCount < MAX_RETRIES) {
-                Result.retry()
-            } else {
-                Result.failure(messageData(error.message ?: error.reason.name))
-            }
-        } catch (error: Throwable) {
+            Result.failure(messageData(error.message ?: error.reason.name))
+        } catch (error: NasHttpException) {
+            if ((error.statusCode == 408 || error.statusCode == 429 || error.statusCode in 500..599) &&
+                runAttemptCount < MAX_RETRIES
+            ) Result.retry() else Result.failure(messageData(error.message.orEmpty()))
+        } catch (error: IOException) {
             if (runAttemptCount < MAX_RETRIES) {
                 Result.retry()
             } else {
                 Result.failure(messageData(error.message ?: error.javaClass.simpleName))
             }
+        } catch (error: Exception) {
+            Result.failure(messageData(error.message ?: error.javaClass.simpleName))
         }
     }
 
@@ -107,7 +113,7 @@ class NasLocalBookUploadWorker(
     }
 
     private fun messageData(message: String) =
-        Data.Builder().putString(NasUploadTaskRepository.KEY_MESSAGE, message).build()
+        Data.Builder().putString(NasUploadTaskRepository.KEY_MESSAGE, message.take(1_000)).build()
 
     private fun notificationId() = 0x4e420000 or (bookUrl.hashCode() and 0xffff)
 

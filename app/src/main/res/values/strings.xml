@@ -3917,7 +3917,14 @@
     <string name="cache_nas_retry">Retry NAS transfer</string>
     <string name="cache_nas_delete_history">Delete transfer history item</string>
     <string name="cache_nas_clear_history">Clear NAS history</string>
-    <string name="cache_nas_clear_history_message">Delete all local NAS transfer history? This does not delete NAS files or imported books.</string>
+    <string name="cache_nas_clear_history_message">Clear completed NAS transfer history? Active tasks, NAS files and imported books will not be deleted.</string>
+    <string name="cache_nas_upload_already_queued">This book already has an upload task.</string>
+    <string name="cache_nas_upload_destination_changed">NAS settings changed. Check the destination and submit the upload again from the book page.</string>
+    <string name="cache_nas_upload_remote_changed">The NAS copy changed. Open the book page to check it and confirm the upload again.</string>
+    <string name="cache_nas_upload_waiting_retry">Waiting to retry</string>
+    <string name="cache_nas_upload_existing">The file already exists on NAS. No existing file or cover was replaced.</string>
+    <string name="cache_nas_upload_cover_failed">The file was uploaded, but its cover could not be uploaded.</string>
+    <string name="cache_nas_upload_result_unknown">NAS did not confirm the upload. Check the NAS library before trying again.</string>
     <string name="cache_nas_retry_started">NAS transfer retry submitted</string>
     <string name="cache_nas_retry_unavailable">This transfer cannot be retried</string>
     <string name="cache_nas_retry_failed">Could not retry NAS transfer: %1$s</string>

@@ -212,6 +212,7 @@ data class NasUploadResult(
     val failed: List<String> = emptyList(),
 ) {
     val hasDuplicate: Boolean get() = duplicates.isNotEmpty()
+    fun wroteBook(id: String): Boolean = (uploaded + overwritten).any { it.id == id }
     val primaryBook: NasBook?
         get() = uploaded.firstOrNull() ?: overwritten.firstOrNull() ?: skipped.firstOrNull()
 }
