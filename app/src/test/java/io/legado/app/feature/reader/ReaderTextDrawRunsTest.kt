@@ -1,6 +1,5 @@
 package io.legado.app.feature.reader
 
-import io.legado.app.feature.reader.core.layout.clusterGlyphs
 import io.legado.app.feature.reader.core.model.ReaderElement
 import io.legado.app.feature.reader.core.model.ReaderRect
 import io.legado.app.feature.reader.core.model.ReaderTextStyle
@@ -11,93 +10,121 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class ReaderTextDrawRunsTest {
-    private val style = ReaderTextStyle(0, 10f)
-    private val glyphWidthPx = 10f
-
-    /** 与排版一致：bounds.right = left + 字宽，下一个 bounds.left = 上一个 right + gap。 */
-    private fun row(values: List<String>, gapPx: Float): List<ReaderElement.Text> {
+    private fun row(values: List<String>, gap: Float, widthOf: (Int) -> Float = { 10f }): List<ReaderElement.Text> {
         var left = 0f
+        val style = ReaderTextStyle(0, 10f)
         return values.mapIndexed { index, value ->
-            val element = ReaderElement.Text(
-                bounds = ReaderRect(left, 0f, left + glyphWidthPx, 12f),
+            val width = widthOf(index)
+            ReaderElement.Text(
+                bounds = ReaderRect(left, 0f, left + width, 12f),
                 baselinePx = 10f,
                 value = value,
                 style = style,
                 selected = false,
                 emphasized = false,
                 chapterPosition = index,
-            )
-            left += glyphWidthPx + gapPx
-            element
+            ).also { left += width + gap }
         }
     }
 
-    @Test
-    fun mergedRunStartsAtFirstBoundsLeftAndKeepsEveryGlyphOnItsLayoutX() {
-        val elements = row(listOf("甲", "乙", "丙"), gapPx = 2f)
-        val runs = buildMergedTextRuns(elements)
-
-        assertEquals(3, runs.size)
-        val run = runs.getValue(elements[0])
-        assertSame(elements[0], run.first)
-        assertEquals("甲乙丙", run.text)
-        assertEquals(2f, run.gapExtraPx, 0f)
-        assertEquals(elements[0].bounds.left, run.mergedDrawStartLeftPx(), 0f)
-
-        // 一次 drawText：画笔在每个字符后插入 gapExtraPx，字形宽度等于排版宽度。
-        var x = run.mergedDrawStartLeftPx()
-        elements.forEachIndexed { index, element ->
-            assertEquals("第 $index 个字", element.bounds.left, x, 0.001f)
-            x += element.bounds.width + run.gapExtraPx
+    private fun runs(elements: List<ReaderElement>, sdk: Int = 30) =
+        buildMergedTextRuns(elements, sdk) { run, members ->
+            val spacing = minikinLetterSpacingPx(run.gapExtraPx, run.style.linearText, sdk)
+            run.matchesLayout(members, FloatArray(members.size) { 10f + spacing })
         }
-    }
 
     @Test
-    fun zeroAndNegativeGapsDoNotShiftTheRunEither() {
-        for (gap in listOf(0f, -1f)) {
-            val elements = row(listOf("甲", "乙", "丙"), gapPx = gap)
-            val runs = buildMergedTextRuns(elements)
-            val run = runs.getValue(elements[0])
-            assertEquals(gap, run.gapExtraPx, 0f)
-            assertEquals("gap=$gap", elements[0].bounds.left, run.mergedDrawStartLeftPx(), 0f)
-            var x = run.mergedDrawStartLeftPx()
-            elements.forEachIndexed { index, element ->
-                assertEquals("gap=$gap 第 $index 个字", element.bounds.left, x, 0.001f)
-                x += element.bounds.width + run.gapExtraPx
+    fun modernAndroidRetainsFractionalPositiveAndNegativeGaps() {
+        for (sdk in listOf(30, 35, 37)) {
+            for (gap in listOf(0f, .6f, 1f, 2.4f, -1f, -2.4f)) {
+                val elements = row(listOf("甲", "乙", "丙"), gap)
+                val run = runs(elements, sdk).getValue(elements[0])
+                assertSame(elements[0], run.first)
+                assertEquals("甲乙丙", run.text)
+                assertEquals(-run.gapExtraPx / 2f, run.mergedDrawStartLeftPx(sdk), .001f)
             }
         }
     }
 
     @Test
-    fun combiningMarksAndSurrogatePairsFallBackToPerElementDrawing() {
-        // 排版把零宽后续字符并入同一个元素，这些 value 会含多个 UTF-16 code unit。
-        assertEquals(listOf("e\u0301"), clusterGlyphs("e\u0301", floatArrayOf(10f, 0f)).text)
-        assertEquals(listOf("\uD83D\uDE00"), clusterGlyphs("\uD83D\uDE00", floatArrayOf(10f, 0f)).text)
+    fun oldAndroidRejectsUnrepresentableSpacingAndKeepsIntegerSpacing() {
+        for (sdk in listOf(26, 28, 29)) {
+            for (gap in listOf(.6f, 1.6f, -2.4f)) {
+                assertTrue(runs(row(listOf("甲", "乙", "丙"), gap), sdk).isEmpty())
+            }
+            val elements = row(listOf("甲", "乙", "丙"), -1f)
+            val run = runs(elements, sdk).getValue(elements[0])
+            assertEquals(1f, run.mergedDrawStartLeftPx(sdk), 0f)
+        }
+        assertEquals(3f, minikinLetterSpacingPx(2.5f, false, 29), 0f)
+        assertEquals(-3f, minikinLetterSpacingPx(-2.5f, false, 29), 0f)
+        assertEquals(2.5f, minikinLetterSpacingPx(2.5f, true, 29), 0f)
+        assertEquals(.5f, minikinLeadingHalfSpacingPx(1f, false, 30), 0f)
+        assertEquals(0f, minikinLeadingHalfSpacingPx(1f, false, 29), 0f)
+    }
 
-        val combining = "e\u0301"
-        val variation = "字\uFE0F"
-        val emoji = "\uD83D\uDE00"
-        val elements = row(
-            listOf("甲", "乙", combining, variation, emoji, "丙", "丁"),
-            gapPx = 2f,
-        )
-        val runs = buildMergedTextRuns(elements)
+    @Test
+    fun mergedRunsAreGatedToApi29WhereGetTextRunAdvancesExists() {
+        for (sdk in listOf(26, 27, 28)) {
+            assertFalse("sdk=$sdk", supportsMergedTextRuns(sdk))
+        }
+        for (sdk in listOf(29, 30, 35, 37)) {
+            assertTrue("sdk=$sdk", supportsMergedTextRuns(sdk))
+        }
+    }
 
-        assertFalse(runs.containsKey(elements[2]))
-        assertFalse(runs.containsKey(elements[3]))
-        assertFalse(runs.containsKey(elements[4]))
-        assertEquals("甲乙", runs.getValue(elements[0]).text)
-        assertEquals("丙丁", runs.getValue(elements[5]).text)
-        assertEquals(
-            elements[0].bounds.left,
-            runs.getValue(elements[0]).mergedDrawStartLeftPx(),
-            0f,
-        )
-        assertEquals(
-            elements[5].bounds.left,
-            runs.getValue(elements[5]).mergedDrawStartLeftPx(),
-            0f,
-        )
-        assertTrue(runs.values.all { run -> run.text.all { it.code !in 0xD800..0xDFFF } })
+    @Test
+    fun actualAdvancesMustMatchEveryPositionIncludingTheLastRightEdge() {
+        val elements = row(listOf("甲", "乙", "丙"), 2f)
+        val run = runs(elements).getValue(elements[0])
+        assertTrue(run.matchesLayout(elements, floatArrayOf(12f, 12f, 12f)))
+        assertFalse(run.matchesLayout(elements, floatArrayOf(12f, 12f, 13f)))
+        assertFalse(run.matchesLayout(elements, floatArrayOf(13f, 11f, 12f)))
+        assertFalse(run.matchesLayout(elements, floatArrayOf(12f, Float.NaN, 12f)))
+        assertTrue(buildMergedTextRuns(elements, 30) { _, _ -> false }.isEmpty())
+    }
+
+    @Test
+    fun smallPerGapErrorsCannotAccumulateAcrossALongLine() {
+        val elements = row(List(100) { "甲" }, .009f)
+        assertTrue(buildMergedTextRuns(elements, 30) { run, members ->
+            run.matchesLayout(members, FloatArray(members.size) { 10f })
+        }.isEmpty())
+    }
+
+    @Test
+    fun complexClustersZeroWidthPlaceholdersAndWordSpacesSplitRuns() {
+        for (separator in listOf("e\u0301", "字\uFE0F", "\uD83D\uDE00", " ", "\u200D", "س")) {
+            val elements = row(listOf("甲", "乙", separator, "丙", "丁"), 2f)
+            val runs = runs(elements)
+            assertFalse("separator=$separator", runs.containsKey(elements[2]))
+            assertEquals("甲乙", runs.getValue(elements[0]).text)
+            assertEquals("丙丁", runs.getValue(elements[3]).text)
+        }
+        val elements = row(listOf("甲", "乙", "　", "丙"), 2f) { if (it == 2) 0f else 10f }
+        assertEquals("甲乙", runs(elements).getValue(elements[0]).text)
+        assertFalse(runs(elements).containsKey(elements[2]))
+    }
+
+    @Test
+    fun nonuniformGapsRowsAndRubyGroupsAreNotMerged() {
+        val elements = row(listOf("甲", "乙"), 2f)
+        assertTrue(runs(listOf(elements[0], elements[1].copy(baselinePx = 20f))).isEmpty())
+        assertTrue(runs(listOf(elements[0], elements[1].copy(style = elements[1].style.copy(italic = true)))).isEmpty())
+        val row = row(listOf("甲", "乙", "丙"), 2f)
+        val shifted = row.take(2) + row[2].copy(bounds = row[2].bounds.copy(left = 25f, right = 35f))
+        val runs = runs(shifted)
+        assertEquals("甲乙", runs.getValue(shifted[0]).text)
+        assertFalse(runs.containsKey(shifted[2]))
+
+        val ruby = row(listOf("甲", "東", "京", "文"), 2f).mapIndexed { index, element ->
+            when (index) {
+                1 -> element.copy(rubyGroupId = 1, rubyText = "とうきょう", glyphOffsetX = 5f)
+                2 -> element.copy(rubyGroupId = 1)
+                else -> element
+            }
+        }
+        assertTrue(buildMergedTextRuns(ruby, 30) { _, _ -> true }
+            .keys.none { it.rubyGroupId != 0 })
     }
 }
