@@ -371,6 +371,7 @@ private fun BookCacheManageScreen(
     )
     DeleteChapterCacheDialog(
         item = pendingDeleteChapter,
+        enabled = !state.isDeletingChapterCache,
         onConfirm = { book, chapter ->
             onIntent(
                 BookCacheManageIntent.DeleteChapterCache(
@@ -384,6 +385,17 @@ private fun BookCacheManageScreen(
         },
         onDismiss = { pendingDeleteChapter = null }
     )
+    state.chapterCacheDeleteResult?.let { result ->
+        val dismiss = { onIntent(BookCacheManageIntent.DismissChapterCacheDeleteResult) }
+        AppAlertDialog(
+            show = true,
+            onDismissRequest = dismiss,
+            title = stringResource(R.string.cache_chapter_delete_result),
+            text = stringResource(result),
+            confirmText = stringResource(android.R.string.ok),
+            onConfirm = dismiss,
+        )
+    }
     AppAlertDialog(
         show = pendingClearNasHistory,
         onDismissRequest = { pendingClearNasHistory = false },
@@ -1114,6 +1126,7 @@ private fun DeleteBookCacheDialog(
 @Composable
 private fun DeleteChapterCacheDialog(
     item: Pair<BookCacheBookItem, BookCacheChapterItem>?,
+    enabled: Boolean,
     onConfirm: (BookCacheBookItem, BookCacheChapterItem) -> Unit,
     onDismiss: () -> Unit,
 ) {
@@ -1122,6 +1135,7 @@ private fun DeleteChapterCacheDialog(
         onDismissRequest = onDismiss,
         title = stringResource(R.string.delete),
         text = stringResource(R.string.delete_chapter_cache_message, item?.second?.title.orEmpty()),
+        confirmEnabled = enabled,
         confirmText = stringResource(android.R.string.ok),
         onConfirm = { item?.let { onConfirm(it.first, it.second) } },
         dismissText = stringResource(android.R.string.cancel),

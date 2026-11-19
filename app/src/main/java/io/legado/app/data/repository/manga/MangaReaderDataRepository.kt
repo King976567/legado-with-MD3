@@ -22,6 +22,7 @@ import io.legado.app.domain.usecase.GetReadingProgressUseCase
 import io.legado.app.domain.usecase.UploadReadingProgressUseCase
 import io.legado.app.exception.NoStackTraceException
 import io.legado.app.help.book.BookHelp
+import io.legado.app.help.book.ChapterCacheUse
 import io.legado.app.help.book.isLocal
 import io.legado.app.help.book.isLocalManga
 import io.legado.app.help.book.isLocalModified
@@ -56,6 +57,7 @@ class MangaReaderDataRepository(
 ) : MangaReaderDataGateway {
 
     private var readingStartedAt: Long? = null
+    private val visibleChapterCache = ChapterCacheUse()
     private val chapterPageLoader = MangaChapterPageLoader(application, database)
     private val localMangaLoader =
         LocalMangaLoader(java.io.File(application.cacheDir, "local-manga"))
@@ -212,6 +214,10 @@ class MangaReaderDataRepository(
                 source = CacheDownloadSource.ReadPreload,
             )
         )
+    }
+
+    override fun setVisibleChapterCache(bookUrl: String?, chapterIndexes: Set<Int>) {
+        visibleChapterCache.retain(bookUrl, chapterIndexes)
     }
 
     override suspend fun retainChapterResources(bookUrl: String, chapterIndexes: Set<Int>) {

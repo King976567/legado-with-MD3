@@ -1,6 +1,7 @@
 package io.legado.app.ui.book.cache.manage
 
 import android.app.Application
+import androidx.annotation.StringRes
 import androidx.lifecycle.viewModelScope
 import io.legado.app.R
 import io.legado.app.base.BaseViewModel
@@ -18,6 +19,7 @@ import io.legado.app.domain.usecase.ClearBookCacheUseCase
 import io.legado.app.domain.model.NasUploadTask
 import io.legado.app.domain.model.NasTransferHistory
 import io.legado.app.help.book.BookHelp
+import io.legado.app.help.book.ChapterCacheDeleteResult
 import io.legado.app.help.book.isAudio
 import io.legado.app.help.book.isLocal
 import io.legado.app.help.book.isNotShelf
@@ -58,6 +60,8 @@ data class BookCacheManageUiState(
     val version: Long = 0,
     val storageOrder: BookCacheStorageOrder? = null,
     val isMeasuringStorage: Boolean = false,
+    val isDeletingChapterCache: Boolean = false,
+    @StringRes val chapterCacheDeleteResult: Int? = null,
 )
 
 data class BookCacheBookItem(
@@ -114,6 +118,7 @@ sealed interface BookCacheManageIntent {
     data class RetryNasHistory(val id: String) : BookCacheManageIntent
     data class DeleteNasHistory(val id: String) : BookCacheManageIntent
     data object ClearNasHistory : BookCacheManageIntent
+    data object DismissChapterCacheDeleteResult : BookCacheManageIntent
     data class DeleteChapterCache(
         val bookUrl: String,
         val chapterUrl: String,
@@ -158,6 +163,7 @@ class BookCacheManageViewModel(
     // not publish older counts or restore a deleted cache entry.
     private val cacheMutationVersions = hashMapOf<String, Long>()
     private val cacheDeletionVersions = hashMapOf<String, Long>()
+    private val chaptersWithDeleteAttempts = hashMapOf<String, MutableSet<Int>>()
     private val inFlightCacheScans = hashMapOf<String, MutableSet<BookCacheScanChanges>>()
     private val progressUpdateJobs = hashMapOf<String, Job>()
     private val pendingDownloadRefreshBookUrls = ConcurrentHashMap.newKeySet<String>()
@@ -189,6 +195,8 @@ class BookCacheManageViewModel(
                 intent.bookUrl,
                 intent.chapterIndex,
             )
+            BookCacheManageIntent.DismissChapterCacheDeleteResult ->
+                _uiState.update { it.copy(chapterCacheDeleteResult = null) }
             is BookCacheManageIntent.DeleteChapterCache -> deleteChapterCache(
                 intent.bookUrl,
                 intent.chapterUrl,
@@ -287,7 +295,12 @@ class BookCacheManageViewModel(
         viewModelScope.launch {
             CacheBook.cacheSuccessFlow.collect { chapter ->
                 // 增量标记已缓存，避免每成功一章就重新扫描全部章节缓存
-                if (!chapter.isVolume) markChapterCachedInUi(chapter)
+                if (chapter.isVolume) return@collect
+                // A completion emitted just before deletion can still be buffered in this flow.
+                // Only chapters touched by this action need an extra verification before accepting it.
+                if (chaptersWithDeleteAttempts[chapter.bookUrl]?.contains(chapter.index) == true) {
+                    scheduleBookReload(chapter.bookUrl)
+                } else markChapterCachedInUi(chapter)
             }
         }
         viewModelScope.launch {
@@ -1021,23 +1034,36 @@ class BookCacheManageViewModel(
         chapterTitle: String,
         chapterIndex: Int,
     ) {
-        execute {
-            val book = repository.getBook(bookUrl) ?: return@execute false
-            val chapter = BookChapter(
-                url = chapterUrl,
-                title = chapterTitle,
-                bookUrl = bookUrl,
-                index = chapterIndex,
-            )
-            BookHelp.delContent(book, chapter)
-            true
-        }.onSuccess { deleted ->
-            if (!deleted) return@onSuccess
-            _effects.tryEmit(BookCacheManageEffect.ShowMessage("章节缓存已删除"))
-        }.onError {
-            _effects.tryEmit(BookCacheManageEffect.ShowMessage("删除章节缓存失败\n${it.localizedMessage}"))
-        }.onFinally {
-            invalidateAfterCacheDeletion(bookUrl)
+        if (uiState.value.isDeletingChapterCache || uiState.value.chapterCacheDeleteResult != null) return
+        _uiState.update { it.copy(isDeletingChapterCache = true) }
+        viewModelScope.launch {
+            try {
+                val result = try {
+                    repository.deleteChapterCache(bookUrl, chapterIndex, chapterUrl, chapterTitle)
+                } catch (error: CancellationException) {
+                    throw error
+                } catch (_: Exception) {
+                    ChapterCacheDeleteResult.Failed
+                }
+                if (result.refreshBook) {
+                    chaptersWithDeleteAttempts.getOrPut(bookUrl) { hashSetOf() }.add(chapterIndex)
+                    invalidateAfterCacheDeletion(bookUrl)
+                }
+                val message = when (result) {
+                    ChapterCacheDeleteResult.Cleared -> R.string.cache_chapter_delete_cleared
+                    ChapterCacheDeleteResult.TextClearedImagesKept -> R.string.cache_chapter_delete_text_images_kept
+                    ChapterCacheDeleteResult.ImagesPartlyCleared -> R.string.cache_chapter_delete_images_partial
+                    ChapterCacheDeleteResult.ImagesKept -> R.string.cache_chapter_delete_images_kept
+                    ChapterCacheDeleteResult.Busy -> R.string.cache_chapter_delete_busy
+                    ChapterCacheDeleteResult.Absent -> R.string.cache_chapter_delete_absent
+                    ChapterCacheDeleteResult.PartlyCleared -> R.string.cache_chapter_delete_incomplete
+                    ChapterCacheDeleteResult.Failed -> R.string.cache_chapter_delete_failed
+                    ChapterCacheDeleteResult.ChapterChanged -> R.string.cache_chapter_delete_changed
+                }
+                _uiState.update { it.copy(chapterCacheDeleteResult = message) }
+            } finally {
+                _uiState.update { it.copy(isDeletingChapterCache = false) }
+            }
         }
     }
 

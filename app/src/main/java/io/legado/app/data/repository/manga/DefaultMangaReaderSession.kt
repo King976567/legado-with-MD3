@@ -143,6 +143,7 @@ class DefaultMangaReaderSession(
                     chapterCount = catalog?.readableCount ?: state.chapterCount,
                 )
                 if (catalog != null && catalog.readableCount > state.chapterCount) {
+                    protectVisibleChapters(book.bookUrl, state.chapterIndex, catalog.readableCount)
                     prefetch(state.chapterIndex)
                 }
             }
@@ -188,6 +189,7 @@ class DefaultMangaReaderSession(
                 dataGateway.pause(old.book.bookUrl, old.book.inBookshelf)
             }
         }
+        dataGateway.setVisibleChapterCache(null, emptySet())
         _state.value = MangaSessionState(
             sessionId = old.sessionId,
             revision = old.revision + 1,
@@ -199,6 +201,7 @@ class DefaultMangaReaderSession(
                 dataGateway.openBook(command.bookUrl, command.inBookshelf, command.chapterChanged)
             }
         }.onSuccess { opened ->
+            protectVisibleChapters(opened.book.bookUrl, opened.chapterIndex, opened.chapterCount)
             _state.value = _state.value.copy(
                 book = opened.book,
                 chapterIndex = opened.chapterIndex,
@@ -239,6 +242,7 @@ class DefaultMangaReaderSession(
         if (chapterIndex !in 0 until state.chapterCount) return
         resetLoadScope()
         cancelScheduledProgressPersist()
+        protectVisibleChapters(state.book?.bookUrl, chapterIndex, state.chapterCount)
         _state.value = state.copy(
             revision = state.revision + 1,
             chapterIndex = chapterIndex,
@@ -297,6 +301,7 @@ class DefaultMangaReaderSession(
             if (target is MangaChapterState.Empty) loadChapter(command.chapterIndex)
             return
         }
+        protectVisibleChapters(state.book?.bookUrl, command.chapterIndex, state.chapterCount)
         _state.value = state.copy(
             revision = state.revision + 1,
             chapterIndex = command.chapterIndex,
@@ -464,6 +469,11 @@ class DefaultMangaReaderSession(
         loadScope = CoroutineScope(loadJob + ioDispatcher)
     }
 
+    private fun protectVisibleChapters(bookUrl: String?, chapterIndex: Int, count: Int) {
+        val visible = (chapterIndex - 1..chapterIndex + 1).filter { it in 0 until count }.toSet()
+        dataGateway.setVisibleChapterCache(bookUrl, visible)
+    }
+
     private fun retainChapterResources(chapterIndex: Int) {
         val state = _state.value
         val bookUrl = state.book?.bookUrl ?: return
@@ -499,12 +509,20 @@ class DefaultMangaReaderSession(
         presentationJob?.cancel()
         catalogCheckJob?.cancel()
         cancelScheduledProgressPersist()
-        persistProgress()
-        _state.value.book?.let {
-            withContext(ioDispatcher) { dataGateway.pause(it.bookUrl, it.inBookshelf) }
+        loadJob.cancel()
+        try {
+            persistProgress()
+            _state.value.book?.let {
+                withContext(ioDispatcher) { dataGateway.pause(it.bookUrl, it.inBookshelf) }
+            }
+        } finally {
+            dataGateway.setVisibleChapterCache(null, emptySet())
+            try {
+                withContext(ioDispatcher) { dataGateway.releaseAllChapterResources() }
+            } finally {
+                commands.close()
+                sessionScope.cancel()
+            }
         }
-        withContext(ioDispatcher) { dataGateway.releaseAllChapterResources() }
-        commands.close()
-        sessionScope.cancel()
     }
 }

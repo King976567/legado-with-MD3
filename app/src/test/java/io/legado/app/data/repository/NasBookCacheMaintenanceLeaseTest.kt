@@ -9,6 +9,7 @@ import io.legado.app.data.entities.BookChapter
 import io.legado.app.data.repository.manga.NasComicImageLeases
 import io.legado.app.domain.model.OrphanDeleteRequest
 import io.legado.app.help.book.BookHelp
+import io.legado.app.help.book.ChapterCacheDeleteResult
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
@@ -107,6 +108,27 @@ class NasBookCacheMaintenanceLeaseTest {
         assertEquals(0, result.skippedBooks)
         assertFalse(directory.exists())
         assertFalse(legacy.exists())
+    }
+
+    @Test
+    fun `managed deletion rejects a stale chapter and leaves both bodies during NAS planning`() = runBlocking {
+        database.bookChapterDao.insert(refreshed)
+        val app = RuntimeEnvironment.getApplication()
+        val manager = BookCacheManageRepository(app, database.bookDao, database.bookChapterDao, database.bookGroupDao)
+        directory.mkdirs()
+        body.writeText("new layout")
+        legacy.writeText("legacy layout")
+        assertEquals(ChapterCacheDeleteResult.ChapterChanged,
+            manager.deleteChapterCache(book.bookUrl, refreshed.index, refreshed.url, "Stale title"))
+        NasComicImageLeases().use { leases ->
+            leases.pinChapter(book, refreshed)
+            assertEquals(ChapterCacheDeleteResult.Busy,
+                manager.deleteChapterCache(book.bookUrl, refreshed.index, refreshed.url, refreshed.title))
+            assertTrue(body.isFile && legacy.isFile)
+        }
+        assertEquals(ChapterCacheDeleteResult.Cleared,
+            manager.deleteChapterCache(book.bookUrl, refreshed.index, refreshed.url, refreshed.title))
+        assertFalse(body.exists() || legacy.exists())
     }
 
     @Test

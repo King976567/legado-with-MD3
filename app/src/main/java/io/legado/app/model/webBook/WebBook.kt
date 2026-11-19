@@ -7,6 +7,7 @@ import io.legado.app.data.entities.BookSource
 import io.legado.app.data.entities.BookSourcePart
 import io.legado.app.data.entities.SearchBook
 import io.legado.app.exception.NoStackTraceException
+import io.legado.app.help.book.ChapterCacheUse
 import io.legado.app.help.book.addType
 import io.legado.app.help.book.removeAllBookType
 import io.legado.app.help.coroutine.Coroutine
@@ -398,6 +399,19 @@ object WebBook {
         bookChapter: BookChapter,
         nextChapterUrl: String? = null,
         needSave: Boolean = true
+    ): String {
+        val cacheUse = if (needSave) ChapterCacheUse().apply {
+            retain(book.bookUrl, setOf(bookChapter.index))
+        } else null
+        return cacheUse.use { fetchContent(bookSource, book, bookChapter, nextChapterUrl, needSave) }
+    }
+
+    private suspend fun fetchContent(
+        bookSource: BookSource,
+        book: Book,
+        bookChapter: BookChapter,
+        nextChapterUrl: String?,
+        needSave: Boolean,
     ): String {
         if (bookSource.getContentRule().content.isNullOrEmpty()) {
             Debug.log(bookSource.bookSourceUrl, "⇒正文规则为空,使用章节链接:${bookChapter.url}")

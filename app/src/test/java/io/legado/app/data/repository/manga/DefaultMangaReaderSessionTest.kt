@@ -374,7 +374,10 @@ class DefaultMangaReaderSessionTest {
         // 只加载新的远端章节（chapter 2）
         assertEquals("book-a" to 2, gateway.loadedRequests.lastOrNull())
         assertEquals("book-a" to setOf(0, 1, 2), gateway.retainedWindows.last())
+        assertEquals("book-a" to setOf(0, 1, 2), gateway.visibleCacheWindow)
         session.close()
+        advanceUntilIdle()
+        assertEquals(null to emptySet<Int>(), gateway.visibleCacheWindow)
     }
 
     @Test
@@ -476,6 +479,7 @@ class DefaultMangaReaderSessionTest {
         val loadedRequests = mutableListOf<Pair<String, Int>>()
         val retainedWindows = mutableListOf<Pair<String, Set<Int>>>()
         var resourcesReleased = false
+        var visibleCacheWindow: Pair<String?, Set<Int>> = null to emptySet()
 
         override fun observeBookPresentation(bookUrl: String) = presentation
 
@@ -517,6 +521,10 @@ class DefaultMangaReaderSessionTest {
 
         override suspend fun prefetchChapter(bookUrl: String, chapterIndex: Int) {
             prefetched += bookUrl to chapterIndex
+        }
+
+        override fun setVisibleChapterCache(bookUrl: String?, chapterIndexes: Set<Int>) {
+            visibleCacheWindow = bookUrl to chapterIndexes
         }
 
         override suspend fun retainChapterResources(bookUrl: String, chapterIndexes: Set<Int>) {

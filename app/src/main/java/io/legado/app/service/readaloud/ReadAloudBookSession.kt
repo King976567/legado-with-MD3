@@ -22,6 +22,8 @@ import io.legado.app.feature.reader.platform.AndroidReaderHtmlSemanticTextResolv
 import io.legado.app.help.AppWebDav
 import io.legado.app.exception.NoStackTraceException
 import io.legado.app.help.book.BookHelp
+import io.legado.app.help.book.ChapterCacheUse
+import io.legado.app.help.book.isLocal
 import io.legado.app.help.book.ContentProcessor
 import io.legado.app.help.book.isLocalManga
 import io.legado.app.help.globalExecutor
@@ -80,6 +82,20 @@ class ReadAloudBookSession : KoinComponent {
     private var lastSavedAt = 0L
     private var lastSavedChapterIndex = -1
     private var readRecord: ReadRecordSession? = null
+    private val chapterCache = ChapterCacheUse()
+    private var playbackUsesCache = false
+
+    @Synchronized
+    internal fun setPlaybackUsesCache(active: Boolean) {
+        playbackUsesCache = active
+        protectPlaybackChapter(_state.value)
+    }
+
+    private fun protectPlaybackChapter(snapshot: Snapshot) {
+        val bookUrl = snapshot.book?.takeUnless { it.isLocal }?.bookUrl?.takeIf { playbackUsesCache }
+        chapterCache.retain(bookUrl, setOf(snapshot.chapterIndex))
+    }
+
     private val persistenceScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
 
     fun owns(bookUrl: String?): Boolean = bookUrl != null && bookUrl == book?.bookUrl
@@ -87,6 +103,7 @@ class ReadAloudBookSession : KoinComponent {
     @Synchronized
     fun adopt(request: Snapshot) {
         finishReadTime()
+        protectPlaybackChapter(request)
         _state.value = request.copy(book = request.book?.copy(), generation = _state.value.generation + 1)
         lastSavedAt = 0L
         lastSavedChapterIndex = request.book?.durChapterIndex ?: -1
@@ -95,12 +112,14 @@ class ReadAloudBookSession : KoinComponent {
     @Synchronized
     fun selectChapter(index: Int) {
         val current = _state.value
-        _state.value = current.copy(
+        val next = current.copy(
             chapterIndex = index, chapterPosition = 0,
             input = current.input?.takeIf { it.chapter.index == index },
             pagination = current.pagination?.takeIf { it.chapterIndex == index },
             generation = current.generation + 1,
         )
+        protectPlaybackChapter(next)
+        _state.value = next
     }
 
     /** Reuse visible pagination only when both book and chapter belong to playback. */

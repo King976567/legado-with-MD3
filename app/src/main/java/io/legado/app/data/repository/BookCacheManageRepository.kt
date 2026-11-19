@@ -10,6 +10,11 @@ import io.legado.app.data.entities.BookChapter
 import io.legado.app.data.entities.BookGroup
 import io.legado.app.data.model.BookChapterCacheInfo
 import io.legado.app.help.book.BookHelp
+import io.legado.app.help.book.ChapterCacheDeleteResult
+import io.legado.app.help.book.isAudio
+import io.legado.app.help.book.isLocal
+import io.legado.app.help.book.isVideo
+import io.legado.app.model.CacheBook
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.ensureActive
@@ -41,6 +46,24 @@ class BookCacheManageRepository(
 
     suspend fun getBook(bookUrl: String): Book? = withContext(Dispatchers.IO) {
         bookDao.getBook(bookUrl)
+    }
+
+    internal suspend fun deleteChapterCache(
+        bookUrl: String,
+        index: Int,
+        expectedUrl: String,
+        expectedTitle: String,
+    ): ChapterCacheDeleteResult = withContext(Dispatchers.IO) {
+        val book = bookDao.getBook(bookUrl)?.takeUnless { it.isLocal || it.isAudio || it.isVideo }
+            ?: return@withContext ChapterCacheDeleteResult.ChapterChanged
+        val chapter = bookChapterDao.getChapter(bookUrl, index)
+            ?.takeIf { !it.isVolume && it.url == expectedUrl && it.title == expectedTitle }
+            ?: return@withContext ChapterCacheDeleteResult.ChapterChanged
+        // Consult the running queue while under the logical lease guard as well. That covers
+        // the handoff between the download's text-fetch and image-write leases.
+        BookHelp.deleteManagedChapterCache(book, chapter) {
+            CacheBook.downloadStateFlow.value.books[bookUrl]?.runningIndices?.contains(index) == true
+        }
     }
 
     suspend fun getDownloadableChapterCount(bookUrl: String): Int = withContext(Dispatchers.IO) {

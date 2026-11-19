@@ -21,6 +21,9 @@ interface MangaReaderDataGateway {
 
     suspend fun prefetchChapter(bookUrl: String, chapterIndex: Int)
 
+    /** Protects visible chapter cache before a state/window change is rendered. */
+    fun setVisibleChapterCache(bookUrl: String?, chapterIndexes: Set<Int>) = Unit
+
     /** Releases chapter-scoped resources outside the active reader window. */
     suspend fun retainChapterResources(bookUrl: String, chapterIndexes: Set<Int>) = Unit
 

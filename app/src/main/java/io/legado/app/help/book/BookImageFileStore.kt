@@ -37,17 +37,31 @@ internal class BookImageFileStore(
     private val evictionLock = Any()
 
     /** 读取租约与写入共用保护登记，close 可在任意线程重复调用。 */
-    fun pin(file: File): Closeable {
-        val key = file.absolutePath
-        val entry = synchronized(entries) {
-            entries.getOrPut(key, ::Entry).also { it.users++ }
+    fun pin(file: File): Closeable = pin(listOf(file))
+
+    fun pin(files: List<File>): Closeable {
+        val keys = files.map { it.absolutePath }.distinct()
+        synchronized(entries) {
+            keys.forEach { entries.getOrPut(it, ::Entry).users++ }
         }
         val closed = AtomicBoolean()
         return Closeable {
             if (closed.compareAndSet(false, true)) synchronized(entries) {
-                if (--entry.users == 0) entries.remove(key)
+                keys.forEach { key ->
+                    if (--entries.getValue(key).users == 0) entries.remove(key)
+                }
             }
         }
+    }
+
+    /** Unlike legacy deleteIfIdle, a managed chapter also honors parent directory leases. */
+    fun <T : Any> mutateIfIdle(files: List<File>, action: () -> T): T? = synchronized(entries) {
+        val busy = files.any { file ->
+            val path = file.absolutePath
+            entries.keys.any { it == path || it.startsWith(path + File.separator) ||
+                path.startsWith(it + File.separator) }
+        }
+        if (busy) null else action()
     }
 
     private fun onlineMarker(file: File) = File(File(file.parentFile, ONLINE_MARKER_DIRECTORY), file.name)
@@ -62,6 +76,18 @@ internal class BookImageFileStore(
         val properties = java.util.Properties()
         downloadIndex(file).inputStream().use(properties::load)
         properties.getProperty("version") == "1" && properties.getProperty("chapter.$chapterKey") == "explicit"
+    } catch (_: IOException) {
+        false
+    } catch (_: IllegalArgumentException) {
+        false
+    }
+
+    fun hasExclusiveDownloadChapter(file: File, chapterKey: String): Boolean = try {
+        val properties = java.util.Properties()
+        downloadIndex(file).inputStream().use(properties::load)
+        properties.stringPropertyNames() == setOf("version", "chapter.$chapterKey") &&
+            properties.getProperty("version") == "1" &&
+            properties.getProperty("chapter.$chapterKey") == "explicit"
     } catch (_: IOException) {
         false
     } catch (_: IllegalArgumentException) {

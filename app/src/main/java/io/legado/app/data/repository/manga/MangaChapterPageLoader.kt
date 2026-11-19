@@ -28,8 +28,10 @@ internal class MangaChapterPageLoader(
     ): MangaChapterContent {
         val key = ChapterKey(book.bookUrl, chapter.index)
         retainedChapters[key]?.let { return it.content }
-        val content = BookHelp.getContent(book, chapter)
-            ?: RemoteChapterContentLoader(application, database).load(book, chapter)
+        val content = BookHelp.pinChapterCache(book, chapter).use {
+            BookHelp.getContent(book, chapter)
+                ?: RemoteChapterContentLoader(application, database).load(book, chapter)
+        }
         val imageUrls = BookHelp.flowImages(chapter, content)
             .distinctUntilChanged()
             .toList()

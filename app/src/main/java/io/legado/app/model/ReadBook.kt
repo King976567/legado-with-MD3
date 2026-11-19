@@ -26,6 +26,7 @@ import io.legado.app.feature.reader.platform.ReaderAndroidPaginationStyle
 import io.legado.app.feature.reader.platform.ReaderPerfTrace
 import io.legado.app.help.AppWebDav
 import io.legado.app.help.book.BookHelp
+import io.legado.app.help.book.ChapterCacheUse
 import io.legado.app.help.book.ContentProcessor
 import io.legado.app.help.book.isEpub
 import io.legado.app.help.readaloud.cast.CastAssignmentStore
@@ -136,13 +137,27 @@ data class ReaderPaginationEnvironment(
 
 @Suppress("MemberVisibilityCanBePrivate")
 object ReadBook : CoroutineScope by MainScope(), KoinComponent {
+    private val visibleChapterCache = ChapterCacheUse()
+
+    private fun protectVisibleChapters(activeBook: Book?, index: Int, callback: CallBack?) {
+        val url = activeBook?.takeUnless { it.isLocal }?.bookUrl?.takeIf { callback != null }
+        visibleChapterCache.retain(url, (index - 1..index + 1).filter { it >= 0 }.toSet())
+    }
+
     // 主线程写（打开/关闭书籍），IO 线程读——缓存维护在 Dispatchers.IO 上用它判断
     // "这本书正在被读"，从而不把它的缓存判成孤儿。没有 @Volatile 时 IO 侧可能读到
     // 陈旧值，表现为正在阅读的书的缓存被删掉（删除不可逆）。
     @Volatile
     var book: Book? = null
-        private set
+        private set(value) {
+            protectVisibleChapters(value, durChapterIndex, callBack)
+            field = value
+        }
     var callBack: CallBack? = null
+        set(value) {
+            protectVisibleChapters(book, durChapterIndex, value)
+            field = value
+        }
 
     /**
      * 渲染回调槽位：由 UI 层渲染控制器实现，承接指令式渲染协议。
@@ -158,7 +173,10 @@ object ReadBook : CoroutineScope by MainScope(), KoinComponent {
     // 表现为「排版完了但没刷新到当前页」。
     @Volatile
     var durChapterIndex = 0
-        private set
+        private set(value) {
+            protectVisibleChapters(book, value, callBack)
+            field = value
+        }
 
     @Volatile
     var durChapterPos = 0

@@ -749,8 +749,9 @@ object BookHelp {
         }
     }
 
-    fun pinImageFile(file: File): Closeable {
-        val lease = imageFiles.pin(file)
+    fun pinImageFile(file: File): Closeable = cleanupOnRelease(imageFiles.pin(file))
+
+    private fun cleanupOnRelease(lease: Closeable): Closeable {
         val closed = AtomicBoolean()
         return Closeable {
             if (closed.compareAndSet(false, true)) {
@@ -760,13 +761,34 @@ object BookHelp {
         }
     }
 
-    /** Protect chapter planning before its image URLs are known, including legacy text. */
+    /** Protect planning before image URLs are known, including legacy text and title changes. */
     internal fun pinChapterCache(book: Book, chapter: BookChapter): Closeable {
-        val leases = listOf(
-            requireNotNull(getChapterContentFile(book, chapter).parentFile),
-            legacyChapterContentFile(book, chapter),
-        ).map(::pinImageFile)
-        return Closeable { leases.asReversed().forEach(Closeable::close) }
+        val current = getChapterContentFile(book, chapter)
+        val legacy = legacyChapterContentFile(book, chapter)
+        val owner = ChapterCacheUse().apply { retain(book.bookUrl, setOf(chapter.index)) }
+        val lease = imageFiles.pin(listOf(requireNotNull(current.parentFile), legacy, rubyCacheStamp(legacy)))
+        return cleanupOnRelease(Closeable {
+            lease.close()
+            owner.close()
+        })
+    }
+
+    /** Cache management only; refresh/edit callers of delContent continue to preserve images. */
+    internal fun deleteManagedChapterCache(
+        book: Book,
+        chapter: BookChapter,
+        isDownloadRunning: () -> Boolean,
+    ): ChapterCacheDeleteResult {
+        val result = ChapterCacheUse.deleteIfIdle(book.bookUrl, chapter.index) {
+            if (isDownloadRunning()) return@deleteIfIdle ChapterCacheDeleteResult.Busy
+            ManagedChapterCacheDeletion(imageFiles).delete(
+                File(cachePath), getChapterContentFile(book, chapter), legacyChapterContentFile(book, chapter),
+                chapterImageDir(book, chapter), bookImageDir(book), chapter.downloadCacheKey(), book.isImage,
+                locatedChapterImages.snapshot().values.mapTo(hashSetOf()) { it.absolutePath },
+            )
+        }
+        if (result.refreshBook) ContentProcessor.invalidateSemanticContent(book.bookUrl, chapter.index)
+        return result
     }
 
     /**

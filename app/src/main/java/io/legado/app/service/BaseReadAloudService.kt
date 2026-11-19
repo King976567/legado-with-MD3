@@ -315,6 +315,7 @@ abstract class BaseReadAloudService : BaseService(),
     override fun onCreate() {
         super.onCreate()
         isAlive = true
+        bookSession.setPlaybackUsesCache(true)
         stopRequested = false
         isRun = true
         pause = false
@@ -384,6 +385,7 @@ abstract class BaseReadAloudService : BaseService(),
         super.onDestroy()
         prepareReadAloudGeneration++
         prepareReadAloudJob?.cancel()
+        bookSession.setPlaybackUsesCache(false)
         playAfterPreparation = null
         if (useWakeLock) {
             wakeLock.release()
