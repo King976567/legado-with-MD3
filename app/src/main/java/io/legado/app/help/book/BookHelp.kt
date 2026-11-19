@@ -445,24 +445,16 @@ object BookHelp {
         }
     }
 
-    fun countImagesInContent(bookChapter: BookChapter, content: String): Int {
-        var count = 0
-        for (m in AppPattern.imgPattern.findAll(content)) {
-            val src = m.groupValues[1].takeIf { it.isNotEmpty() } ?: continue
-            // 与 flowImages 同一口径：总数不含气泡，下载进度才能跑满
-            if (src.isBubbleImageSrc()) continue
-            count++
-        }
-        return count
-    }
+    private fun BookChapter.downloadCacheKey(): String = "$index.${MD5Utils.md5Encode16(url)}"
 
     /** 显式下载还需要当前章节的保留引用，不能仅凭在线文件命中跳过升级。 */
     fun hasExplicitImageContent(book: Book, chapter: BookChapter): Boolean {
         if (!hasContent(book, chapter)) return false
+        val chapterKey = chapter.downloadCacheKey()
         var complete = true
         forEachImageSrc(book, chapter) { src ->
             val image = getImage(book, chapter, src)
-            if (!imageFiles.hasDownloadChapter(image, "${chapter.index}.${MD5Utils.md5Encode16(chapter.url)}") ||
+            if (!imageFiles.hasDownloadChapter(image, chapterKey) ||
                 !imageFiles.isValid(image)) complete = false
         }
         return complete
@@ -483,19 +475,21 @@ object BookHelp {
         onProgress?.invoke(0, total)
         if (total == 0) return@coroutineScope 0
         val progressMutex = Mutex()
+        val chapterKey = if (explicitDownload) bookChapter.downloadCacheKey() else null
         var completed = 0
         var failures = 0
         imageUrls.asFlow().onEachParallel(concurrency) { mSrc ->
             val ok = saveImage(
                 bookSource, book, mSrc, bookChapter,
-                explicitDownloadChapter = if (explicitDownload) {
-                    "${bookChapter.index}.${MD5Utils.md5Encode16(bookChapter.url)}"
-                } else null,
+                explicitDownloadChapter = chapterKey,
             )
             progressMutex.withLock {
-                if (!ok) failures++
-                completed++
-                onProgress?.invoke(completed, total)
+                if (ok) {
+                    completed++
+                    onProgress?.invoke(completed, total)
+                } else {
+                    failures++
+                }
             }
         }.collect()
         failures
@@ -786,11 +780,13 @@ object BookHelp {
         book: Book,
         bookChapter: BookChapter,
         failures: Int,
+        explicitDownload: Boolean,
     ): Boolean {
-        return io.legado.app.help.book.isChapterImageCacheComplete(
-            failures,
-            failures == 0 && hasImageContent(book, bookChapter),
-        )
+        return failures == 0 && if (explicitDownload) {
+            hasExplicitImageContent(book, bookChapter)
+        } else {
+            hasImageContent(book, bookChapter)
+        }
     }
 
     /** 章节缓存目录：book_cache/<书>/<章节名主体>。 */

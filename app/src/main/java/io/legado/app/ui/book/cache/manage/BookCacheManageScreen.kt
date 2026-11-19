@@ -887,7 +887,9 @@ private fun BookCacheBookCard(
                     style = LegadoTheme.typography.labelMediumEmphasized,
                     color = LegadoTheme.colorScheme.onSurfaceVariant
                 )
-                if (item.hasDownloadTask || (!item.isCheckingCache && item.cachedCount < item.totalCount)) {
+                if (item.hasDownloadTask || item.errorCount > 0 ||
+                    (!item.isCheckingCache && item.cachedCount < item.totalCount)
+                ) {
                     SmallTonalButton(
                         onClick = {
                             if (item.hasActiveDownload) {
@@ -902,7 +904,7 @@ private fun BookCacheBookCard(
                                 R.string.pause_book_download,
                                 item.name
                             )
-                            item.isPaused -> stringResource(
+                            item.isPaused || item.errorCount > 0 -> stringResource(
                                 R.string.resume_book_download,
                                 item.name
                             )
@@ -997,11 +999,11 @@ private fun BookCacheChapterRow(
                 icon = Icons.Default.Stop,
                 contentDescription = stringResource(R.string.pause_chapter_download, item.title)
             )
-        } else if (item.isPaused || !item.isCached) {
+        } else if (item.isPaused || item.isError || !item.isCached) {
             SmallTonalButton(
                 onClick = onDownload,
                 icon = Icons.Default.Download,
-                contentDescription = if (item.isPaused) {
+                contentDescription = if (item.isPaused || item.isError) {
                     stringResource(R.string.resume_chapter_download, item.title)
                 } else {
                     stringResource(R.string.download_chapter, item.title)

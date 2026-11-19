@@ -764,11 +764,12 @@ class BookCacheManageViewModel(
         val chapters = repository.getChapterCacheInfo(bookUrl)
         return sequence {
             val model = CacheBook.cacheBookMap[bookUrl]
+            val failedIndices = errorIndices(bookUrl)
             var batch = ArrayList<Int>(batchSize)
             for (chapter in chapters) {
                 if (
                     chapter.isVolume ||
-                        isChapterFullyCached(book, chapter) ||
+                        (chapter.index !in failedIndices && isChapterFullyCached(book, chapter)) ||
                         model?.isPaused(chapter.index) == true ||
                         model?.isWaiting(chapter.index) == true ||
                         model?.isDownloading(chapter.index) == true

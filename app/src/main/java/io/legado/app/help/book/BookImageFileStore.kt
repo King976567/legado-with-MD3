@@ -77,8 +77,14 @@ internal class BookImageFileStore(
         } catch (_: IllegalArgumentException) {
             // 损坏索引仍保护原图，本次显式下载恢复可验证的引用。
         }
+        // 续传命中已登记的页时无需重复写入、fsync 和原子替换索引。
+        val propertyKey = "chapter.$chapterKey"
+        if (properties.getProperty("version") == "1" && properties.getProperty(propertyKey) == "explicit") {
+            setOnline(file, false)
+            return@synchronized
+        }
         properties.setProperty("version", "1")
-        properties.setProperty("chapter.$chapterKey", "explicit")
+        properties.setProperty(propertyKey, "explicit")
         val parent = requireNotNull(index.parentFile)
         if (!parent.isDirectory && !parent.mkdirs()) throw IOException("无法创建下载用途索引")
         val temp = File.createTempFile("${file.name}.", ".tmp", parent)

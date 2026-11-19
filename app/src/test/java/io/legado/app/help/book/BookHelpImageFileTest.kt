@@ -6,14 +6,21 @@ import android.graphics.BitmapFactory
 import android.graphics.Color
 import android.util.Base64
 import io.legado.app.constant.AppLog
+import io.legado.app.constant.BookType
 import io.legado.app.data.entities.Book
 import io.legado.app.data.entities.BookChapter
+import io.legado.app.data.entities.BookSource
+import io.legado.app.exception.NoStackTraceException
+import io.legado.app.model.cache.CacheDownloadRepository
 import io.legado.app.model.ImageProvider
 import io.legado.app.domain.gateway.DownloadCacheSettingsGateway
 import io.legado.app.domain.gateway.OtherSettingsGateway
 import io.legado.app.domain.model.settings.DownloadCacheSettings
 import io.legado.app.domain.model.settings.OtherSettings
 import kotlinx.coroutines.flow.flowOf
+import mockwebserver3.MockResponse
+import mockwebserver3.MockWebServer
+import okio.Buffer
 import org.junit.After
 import org.koin.core.context.startKoin
 import org.koin.core.context.stopKoin
@@ -264,6 +271,93 @@ class BookHelpImageFileTest {
         } finally {
             lease?.close()
             BookHelp.clearCache(book)
+        }
+    }
+
+    @Test
+    fun `failed page does not fill progress and continuing only fetches the missing page`() = runBlocking {
+        val comic = book.copy(type = BookType.image)
+        val bytes = png()
+        val repository = CacheDownloadRepository()
+        MockWebServer().use { server ->
+            server.start()
+            val chapter = BookChapter(
+                bookUrl = comic.bookUrl, url = server.url("/chapter").toString(), title = "Comic",
+            )
+            val source = BookSource(bookSourceUrl = server.url("/").toString())
+            val page1 = server.url("/1.png").toString()
+            val page2 = server.url("/2.png").toString()
+            fun imageResponse() = MockResponse.Builder().body(Buffer().write(bytes)).build()
+            server.enqueue(imageResponse())
+            server.enqueue(MockResponse.Builder().code(503).body("Please try again").build())
+            server.enqueue(imageResponse())
+            try {
+                BookHelp.saveText(
+                    comic, chapter, "<img src=\"$page1\">\n<img src=\"$page2\">", notifyContentChange = false,
+                )
+                val firstProgress = mutableListOf<Pair<Int, Int>>()
+                val failure = runCatching {
+                    repository.saveCachedImagesAwait(source, comic, chapter, { done, total ->
+                        firstProgress.add(done to total)
+                    }, explicitDownload = true)
+                }.exceptionOrNull()
+                assertTrue(failure is NoStackTraceException)
+                assertFalse(BookHelp.hasExplicitImageContent(comic, chapter))
+                assertArrayEquals(bytes, BookHelp.getImage(comic, chapter, page1).readBytes())
+                assertFalse(BookHelp.getImage(comic, chapter, page2).exists())
+                assertEquals(listOf(0 to 2, 1 to 2), firstProgress)
+
+                val continuedProgress = mutableListOf<Pair<Int, Int>>()
+                repository.saveCachedImagesAwait(source, comic, chapter, { done, total ->
+                    continuedProgress.add(done to total)
+                }, explicitDownload = true)
+                assertTrue(BookHelp.hasExplicitImageContent(comic, chapter))
+                assertArrayEquals(bytes, BookHelp.getImage(comic, chapter, page2).readBytes())
+                assertEquals(listOf(0 to 2, 1 to 2, 2 to 2), continuedProgress)
+                assertEquals(3, server.requestCount)
+                assertEquals(listOf("/1.png", "/2.png", "/2.png"), List(3) {
+                    server.takeRequest().url.encodedPath
+                })
+            } finally {
+                BookHelp.clearCache(comic)
+            }
+        }
+    }
+
+    @Test
+    fun `missing download index prevents full progress even when all images are valid`() = runBlocking {
+        val comic = book.copy(type = BookType.image)
+        val chapter = BookChapter(bookUrl = comic.bookUrl, url = "https://example.invalid/chapter", title = "Comic")
+        val page1 = "https://example.invalid/page1.png"
+        val page2 = "https://example.invalid/page2.png"
+        val chapterDir = requireNotNull(BookHelp.getChapterContentFile(comic, chapter).parentFile)
+        val firstImage = BookHelp.getImage(comic, chapter, page1)
+        val firstIndex = firstImage.parentFile!!.resolve(BookImageFileStore.DOWNLOAD_INDEX_DIRECTORY)
+            .resolve(firstImage.name)
+        val progress = mutableListOf<Pair<Int, Int>>()
+        try {
+            BookHelp.saveText(
+                comic, chapter, "<img src=\"$page1\">\n<img src=\"$page2\">", notifyContentChange = false,
+            )
+            BookHelp.writeImage(comic, chapter, page1, png())
+            BookHelp.writeImage(comic, chapter, page2, png())
+            val failure = runCatching {
+                CacheDownloadRepository().saveCachedImagesAwait(BookSource(), comic, chapter, { done, total ->
+                    progress.add(done to total)
+                    if (done == 1) {
+                        assertFalse(BookHelp.deleteChapterCacheEntryIfIdle(chapterDir))
+                        // 模拟索引异常消失，确保收尾不只检测原图文件。
+                        assertTrue(firstIndex.delete())
+                    }
+                }, explicitDownload = true)
+            }.exceptionOrNull()
+            assertTrue(failure is NoStackTraceException)
+            assertTrue(BookHelp.hasImageContent(comic, chapter))
+            assertFalse(BookHelp.hasExplicitImageContent(comic, chapter))
+            assertEquals(listOf(0 to 2, 1 to 2), progress)
+            assertTrue(BookHelp.deleteChapterCacheEntryIfIdle(chapterDir))
+        } finally {
+            BookHelp.clearCache(comic)
         }
     }
 

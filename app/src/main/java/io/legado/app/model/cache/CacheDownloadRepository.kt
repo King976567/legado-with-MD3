@@ -49,11 +49,24 @@ class CacheDownloadRepository {
         onProgress: (suspend (completed: Int, total: Int) -> Unit)? = null,
         explicitDownload: Boolean = false,
     ) {
-        val content = BookHelp.getContent(book, chapter)
-            ?: throw NoStackTraceException("${book.name} ${chapter.title} 图片缓存未完成：缺少正文")
-        val failures = BookHelp.saveImages(bookSource, book, chapter, content, 1, onProgress, explicitDownload)
-        if (!BookHelp.isChapterImageCacheComplete(book, chapter, failures)) {
-            throw NoStackTraceException("${book.name} ${chapter.title} 图片缓存未完成")
+        BookHelp.pinChapterCache(book, chapter).use {
+            val content = BookHelp.getContent(book, chapter)
+                ?: throw NoStackTraceException("${book.name} ${chapter.title} 图片缓存未完成：缺少正文")
+            var totalImages = 0
+            val failures = BookHelp.saveImages(
+                bookSource, book, chapter, content, concurrency = 1,
+                explicitDownload = explicitDownload,
+                onProgress = if (onProgress == null) null else { completed, total ->
+                    totalImages = total
+                    // 验证已落盘的整章及显式缓存索引之前，不报告 100%。
+                    if (completed == 0 || completed < total) onProgress(completed, total)
+                },
+            )
+            if (!BookHelp.isChapterImageCacheComplete(book, chapter, failures, explicitDownload)) {
+                val detail = if (failures > 0) "${failures} 张图片下载或校验失败" else "缓存文件或保留索引缺失"
+                throw NoStackTraceException("${book.name} ${chapter.title} 图片缓存未完成：$detail")
+            }
+            if (totalImages > 0) onProgress?.invoke(totalImages, totalImages)
         }
     }
 

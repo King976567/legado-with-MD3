@@ -298,6 +298,11 @@ class CacheBookModel(
         synchronized(this) {
             isStopped = false
             val selected = selectionIndices(request.selection)
+            if (enqueueExplicit) {
+                retryCountMap.entries.removeAll { (index, attempts) ->
+                    index in selected && attempts >= CACHE_DOWNLOAD_RETRY_LIMIT
+                }
+            }
             // An explicit request resumes only its selected chapters. Reader preloads must not
             // override a user's pause for this book or the global download queue.
             if (isPaused && request.source != CacheDownloadSource.ReadPreload) {
@@ -588,6 +593,7 @@ class CacheBookModel(
     private fun onSkipped(index: Int) {
         onDownloadSet.remove(index)
         chapterTasks.remove(index)
+        retryCountMap.remove(index)
         notifyDownloadSetChanged()
         if (queue.waitingCount() == 0 && onDownloadSet.isEmpty() && pausedChapterSet.isEmpty() && !isLoading) {
             host.onTaskRemoved(book.bookUrl)
@@ -723,7 +729,7 @@ class CacheBookModel(
     private fun reportImageDownloadProgress(
         chapter: BookChapter,
         completed: Int,
-        total: Int = imageCountInChapter(chapter),
+        total: Int = 0,
     ) {
         host.stateStore.updateChapterProgress(
             book.bookUrl,
@@ -734,11 +740,6 @@ class CacheBookModel(
                 total = total,
             ),
         )
-    }
-
-    private fun imageCountInChapter(chapter: BookChapter): Int {
-        val content = BookHelp.getContent(book, chapter) ?: return 0
-        return BookHelp.countImagesInContent(chapter, content)
     }
 
     private suspend fun ensureChapterImagesCached(chapter: BookChapter) {
