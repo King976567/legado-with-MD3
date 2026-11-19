@@ -38,7 +38,14 @@ jobs:
 
   prepare:
     runs-on: ubuntu-latest
-    if: ${{ !startsWith(github.event.head_commit.message, 'Merge pull request') }}
+    # Sync PRs build their verification APK in verify-sync.yml.
+    if: >-
+      ${{ !startsWith(github.event.head_commit.message, 'Merge pull request') &&
+      !(github.repository == 'King976567/legado-with-MD3' &&
+      github.event_name == 'pull_request' &&
+      github.event.pull_request.head.repo.full_name == github.repository &&
+      ((github.base_ref == 'main' && startsWith(github.head_ref, 'automation/sync-upstream-')) ||
+      (github.base_ref == 'nas-md3' && github.head_ref == 'automation/sync-nas-main'))) }}
     outputs:
       versionL: ${{ steps.set-ver.outputs.full_version_name }}
       version: ${{ steps.set-ver.outputs.current_version }}
@@ -224,7 +231,9 @@ jobs:
             --init-script .github/scripts/official-kotlin-compiler.gradle \
             --init-script .github/scripts/arm64-only.gradle \
             --project-prop ksp.incremental=false \
-            --max-workers=2 --no-parallel --no-configuration-cache
+            --project-prop kotlin.compiler.execution.strategy=in-process \
+            -Dorg.gradle.jvmargs="-Xmx6g -Xms512m -XX:MaxMetaspaceSize=1024m -XX:+HeapDumpOnOutOfMemoryError -Dfile.encoding=UTF-8 -XX:+UseG1GC" \
+            --max-workers=1 --no-parallel --no-configuration-cache
         env:
           COMMIT_NUMBER: ${{ env.COMMIT_NUMBER_VAL }}
           APP_VERSION_NAME: ${{ env.VERSIONL }}
