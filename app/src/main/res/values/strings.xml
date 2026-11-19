@@ -485,7 +485,6 @@
     <string name="book_source_export_failed">Export failed: %1$s</string>
     <string name="book_source_upload_success">Upload completed: %1$s</string>
     <string name="book_source_upload_failed">Upload failed: %1$s</string>
-    <string name="check_select_source">Check the selected source</string>
     <string name="progress_show">%1$s      Progress %2$d/%3$d</string>
     <string name="tts_fix">Please install and select Chinese TTS!</string>
     <string name="tts_init_failed">TTS initialization failed!</string>
@@ -1357,12 +1356,14 @@
 
     <!-- check source config string -->
     <string name="check_source_config">Check setting</string>
-    <string name="check_source_item">Check item</string>
     <string name="check_source_timeout">Single book source check timeout (seconds)</string>
+    <string name="check_source_thread_count">Check concurrency (1-64)</string>
+    <string name="check_source_quick_mode">Fast full check mode</string>
+    <string name="domain">Domain</string>
+    <string name="write_source_comment">Write source comment</string>
     <string name="timeout">Timeout</string>
     <string name="seconds">Seconds</string>
     <string name="less_than">Less than</string>
-    <string name="check_source_config_summary">Check timeout: %1$ss\nCheck item:%2$s</string>
     <string name="record_debug_log">Record debug log</string>
     <string name="sub_dir">Sub Dir</string>
     <string name="general">General</string>
@@ -3135,6 +3136,8 @@
     <string name="multi_role_cast">Role casting</string>
     <string name="bgm_assign">Background music</string>
     <string name="bgm_assign_summary">Show a music capsule at paragraph starts and play background music per scene while reading; the capsule is visual only and is never spoken</string>
+    <string name="read_aloud_chapter_title">Read chapter titles</string>
+    <string name="read_aloud_chapter_title_summary">Read the chapter title before the body. When off, reading starts at the body; volume-only chapters still read their title. Independent of whether titles are shown in the text; takes effect from the next chapter</string>
     <string name="cast_bgm_scene_title">Scene music</string>
     <string name="cast_bgm_track">Music track</string>
     <string name="cast_bgm_scene_follow">Random from pool</string>

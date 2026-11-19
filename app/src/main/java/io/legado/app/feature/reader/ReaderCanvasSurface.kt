@@ -2251,7 +2251,10 @@ private fun androidx.compose.ui.graphics.drawscope.DrawScope.drawScrollPageConte
                 // 链接下划线仍由原生 Paint 绘制。
                 paint.isUnderlineText = (e.style.nativeUnderline && e.style.underline == null) ||
                         e.drawsLinkUnderline
-                native.drawText(e.value, e.bounds.left, e.baselinePx, paint)
+                native.drawText(e.value, e.bounds.left + e.glyphOffsetX, e.baselinePx, paint)
+                if (e.rubyText != null) {
+                    drawRubyText(native, e, paint, data.mergedRunPaint)
+                }
             } else if (run.first === e) {
                 drawMergedTextRun(
                     canvas = native,
@@ -2891,8 +2894,8 @@ private fun ReaderPageCanvas(
         textElements.map { it.style }.distinct()
             .associateWith(ReaderAndroidPaintFactory::create)
     }
-    // 可以整段画的正文段落划分。与命中、朗读状态无关，只跟排版元素有关。
-    val textDrawRuns = remember(page.elements) { buildMergedTextRuns(page.elements) }
+    // 建页时按真实字体核对整段 advance；命中、朗读状态变化不重复测量。
+    val textDrawRuns = remember(page.elements, paints) { buildMergedTextRuns(page.elements, paints) }
     // 整段绘制时临时承载字距的画笔，避免改动 [paints] 里共用的画笔。
     val mergedRunPaint = remember { Paint() }
     val solidBackground = solidPageBackground(background, backgroundImage, backgroundImageAlpha)
@@ -3044,7 +3047,10 @@ private fun ReaderPageCanvas(
                     // 链接下划线仍按旧版优先（`TextHtmlColumn.draw` 的 isUnderlineText）。
                     paint.isUnderlineText = (e.style.nativeUnderline && e.style.underline == null) ||
                             e.drawsLinkUnderline
-                    native.drawText(e.value, e.bounds.left, e.baselinePx, paint)
+                    native.drawText(e.value, e.bounds.left + e.glyphOffsetX, e.baselinePx, paint)
+                    if (e.rubyText != null) {
+                        drawRubyText(native, e, paint, mergedRunPaint)
+                    }
                 } else if (run.first === e) {
                     drawMergedTextRun(
                         canvas = native,
