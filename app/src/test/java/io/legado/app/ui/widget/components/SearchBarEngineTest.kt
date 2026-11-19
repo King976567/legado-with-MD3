@@ -28,8 +28,10 @@ import io.legado.app.domain.model.settings.AppShellSettings
 import io.legado.app.domain.model.settings.AppUiConfiguration
 import io.legado.app.ui.theme.AppTheme
 import io.legado.app.ui.widget.components.coui.AppCouiSearchBar
+import io.legado.app.ui.widget.components.coui.isCouiSearchMaterialAvailable
 import kotlin.math.abs
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Rule
 import org.junit.Test
@@ -110,6 +112,7 @@ class SearchBarEngineTest {
     @Config(sdk = [33])
     @GraphicsMode(GraphicsMode.Mode.LEGACY)
     fun couiUsesNativeSearchWithCallerWidthAndKeepsClearAndTrailingAction() {
+        assertFalse(isCouiSearchMaterialAvailable)
         val query = mutableStateOf("")
         var cleared = 0
         var submitted: String? = null

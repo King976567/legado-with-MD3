@@ -1,7 +1,6 @@
 package io.legado.app.ui.widget.components.coui
 
 import android.os.Build
-import androidx.annotation.RequiresApi
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -29,8 +28,8 @@ import io.legado.app.ui.theme.LegadoTheme
 import timber.log.Timber
 
 // The pinned SearchBar creates its renderer internally and cannot accept a fallback renderer.
-@get:RequiresApi(Build.VERSION_CODES.UPSIDE_DOWN_CAKE)
 internal val isCouiSearchMaterialAvailable: Boolean by lazy {
+    if (Build.VERSION.SDK_INT < Build.VERSION_CODES.UPSIDE_DOWN_CAKE) return@lazy false
     try {
         CouiFloatingRenderer.pair()
         true
