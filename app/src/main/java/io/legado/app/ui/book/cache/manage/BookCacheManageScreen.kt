@@ -152,8 +152,11 @@ private fun BookCacheManageScreen(
     val isFiltered = hasSearchQuery || selectedGroupId != BookGroup.IdAll
     val overview = remember(filteredBooks) { summarizeBookCache(filteredBooks) }
     val downloadSummary = if (filteredBooks.isEmpty()) null else {
-        val cacheStatus = if (overview.isCheckingCache) stringResource(R.string.cache_count_checking)
-        else stringResource(R.string.cache_summary_cached, overview.cached)
+        val cachedLabel = stringResource(R.string.cache_summary_cached, overview.cached)
+        val cacheStatus = if (overview.isCheckingCache) {
+            val checkingLabel = stringResource(R.string.cache_count_checking)
+            if (overview.cached > 0) "$cachedLabel · $checkingLabel" else checkingLabel
+        } else cachedLabel
         stringResource(
             R.string.cache_download_summary,
             overview.downloading, overview.waiting, overview.paused, overview.failed, cacheStatus,
@@ -999,7 +1002,7 @@ private fun BookCacheChapterRow(
                 icon = Icons.Default.Stop,
                 contentDescription = stringResource(R.string.pause_chapter_download, item.title)
             )
-        } else if (item.isPaused || item.isError || !item.isCached) {
+        } else if (item.isPaused || item.isError || (!item.isCheckingCache && !item.isCached)) {
             SmallTonalButton(
                 onClick = onDownload,
                 icon = Icons.Default.Download,
@@ -1028,6 +1031,7 @@ private fun chapterStatusText(item: BookCacheChapterItem): String {
             isError = item.isError,
             isCached = item.isCached,
             hasProgressLabel = !item.progressLabel.isNullOrBlank(),
+            isCheckingCache = item.isCheckingCache,
         )
     ) {
         ChapterCacheStatusKey.ProgressLabel -> item.progressLabel.orEmpty()
@@ -1038,6 +1042,7 @@ private fun chapterStatusText(item: BookCacheChapterItem): String {
         ChapterCacheStatusKey.Paused -> stringResource(R.string.download_paused)
         ChapterCacheStatusKey.Error -> stringResource(R.string.download_error)
         ChapterCacheStatusKey.Cached -> stringResource(R.string.download_success)
+        ChapterCacheStatusKey.Checking -> stringResource(R.string.cache_count_checking)
         ChapterCacheStatusKey.NotCached -> stringResource(R.string.not_cached)
     }
 }

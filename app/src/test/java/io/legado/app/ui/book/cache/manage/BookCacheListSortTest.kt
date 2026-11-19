@@ -64,6 +64,25 @@ class BookCacheListSortTest {
         )
     }
 
+    @Test
+    fun refreshKeepsOrderEvenWhenCachedCountsAndDownloadPriorityChange() {
+        val current = listOf(item("first", cachedCount = 4), item("last", cachedCount = 1))
+        val updated = listOf(item("first", cachedCount = 4), item("last", cachedCount = 8, downloadingCount = 1))
+        val prioritized = sortBookCacheItems(updated, downloadOrder = listOf("last"))
+
+        assertEquals(listOf("last", "first"), prioritized.map { it.bookUrl })
+        assertEquals(updated, retainBookCacheOrder(current, prioritized))
+    }
+
+    @Test
+    fun refreshRemovesMissingBooksAndAppendsNewBooks() {
+        val current = listOf(item("a"), item("removed"), item("b"))
+        val incoming = listOf(item("new"), item("b"), item("a"))
+
+        assertEquals(listOf("a", "b", "new"), retainBookCacheOrder(current, incoming).map { it.bookUrl })
+        assertEquals(incoming, retainBookCacheOrder(emptyList(), incoming))
+    }
+
     private fun item(
         bookUrl: String,
         downloadingCount: Int = 0,

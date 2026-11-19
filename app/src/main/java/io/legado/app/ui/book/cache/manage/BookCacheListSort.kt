@@ -18,6 +18,15 @@ fun sortBookCacheItems(
     )
 }
 
+/** Reconcile changed membership without moving books the user is already looking at. */
+internal fun retainBookCacheOrder(
+    current: List<BookCacheBookItem>,
+    incoming: List<BookCacheBookItem>,
+): List<BookCacheBookItem> {
+    val remaining = incoming.associateByTo(linkedMapOf()) { it.bookUrl }
+    return current.mapNotNull { remaining.remove(it.bookUrl) } + remaining.values
+}
+
 internal data class BookCacheOverview(
     val downloading: Int = 0,
     val waiting: Int = 0,
@@ -43,7 +52,7 @@ internal fun summarizeBookCache(items: List<BookCacheBookItem>): BookCacheOvervi
         failed += book.errorCount
         cached += book.cachedCount
         checking = checking || book.isCheckingCache
-        hasTarget = hasTarget || book.isPaused ||
+        hasTarget = hasTarget || book.isPaused || book.errorCount > 0 ||
             (!book.isCheckingCache && book.cachedCount < book.totalCount)
     }
     return BookCacheOverview(downloading, waiting, paused, failed, cached, checking, hasTarget)

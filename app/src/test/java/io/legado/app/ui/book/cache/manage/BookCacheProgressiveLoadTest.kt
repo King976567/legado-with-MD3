@@ -1,12 +1,14 @@
 package io.legado.app.ui.book.cache.manage
 
 import io.legado.app.data.entities.Book
+import io.legado.app.data.model.BookChapterCacheInfo
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -72,6 +74,28 @@ class BookCacheProgressiveLoadTest {
             onCount = { _, _ -> error("No count expected") },
         )
         assertEquals(emptyList<BookCacheBookItem>(), rows)
+    }
+
+    @Test
+    fun downloadCompletionDuringScanDoesNotGetOverwrittenOrCountedTwice() {
+        val first = BookChapterCacheInfo("first", "First", false, 0)
+        val second = BookChapterCacheInfo("second", "Second", false, 1)
+        val changes = BookCacheScanChanges()
+        changes.chapterCompleted(first)
+        changes.chapterCompleted(second)
+        changes.chapterCompleted(second)
+
+        assertEquals(setOf(first, second), changes.reconcile(setOf(first)))
+    }
+
+    @Test
+    fun deletionInvalidatesAnOverlappingScan() {
+        val first = BookChapterCacheInfo("first", "First", false, 0)
+        val changes = BookCacheScanChanges()
+        changes.chapterCompleted(first)
+        changes.invalidate()
+
+        assertNull(changes.reconcile(setOf(first)))
     }
 
     private fun row(url: String) = BookCacheBookItem(

@@ -12,6 +12,7 @@ enum class ChapterCacheStatusKey {
     Paused,
     Error,
     Cached,
+    Checking,
     NotCached,
 }
 
@@ -22,6 +23,7 @@ fun resolveChapterCacheStatusKey(
     isError: Boolean,
     isCached: Boolean,
     hasProgressLabel: Boolean,
+    isCheckingCache: Boolean = false,
 ): ChapterCacheStatusKey {
     if (isDownloading && hasProgressLabel) return ChapterCacheStatusKey.ProgressLabel
     if (isDownloading) return ChapterCacheStatusKey.Downloading
@@ -30,5 +32,6 @@ fun resolveChapterCacheStatusKey(
     if (isPaused) return ChapterCacheStatusKey.Paused
     if (isError) return ChapterCacheStatusKey.Error
     if (isCached) return ChapterCacheStatusKey.Cached
+    if (isCheckingCache) return ChapterCacheStatusKey.Checking
     return ChapterCacheStatusKey.NotCached
 }

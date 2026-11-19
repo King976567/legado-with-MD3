@@ -49,4 +49,23 @@ class ChapterCacheStatusTest {
             ),
         )
     }
+
+    @Test
+    fun checkingIsDistinctFromMissingAndDoesNotHideKnownStatus() {
+        fun status(isCached: Boolean = false, isError: Boolean = false, isDownloading: Boolean = false) =
+            resolveChapterCacheStatusKey(
+                isDownloading = isDownloading,
+                isWaiting = false,
+                isPaused = false,
+                isError = isError,
+                isCached = isCached,
+                hasProgressLabel = false,
+                isCheckingCache = true,
+            )
+
+        assertEquals(ChapterCacheStatusKey.Checking, status())
+        assertEquals(ChapterCacheStatusKey.Cached, status(isCached = true))
+        assertEquals(ChapterCacheStatusKey.Error, status(isError = true))
+        assertEquals(ChapterCacheStatusKey.Downloading, status(isDownloading = true))
+    }
 }
