@@ -169,7 +169,6 @@ fun BookSourceScreen(
     onSearchSource: (String, String) -> Unit,
     onDebugSource: (String) -> Unit,
 ) {
-    val context = LocalContext.current
     val rules = state.items
     val selectedIds = state.selectedIds
     val listState = rememberLazyListState()
@@ -228,9 +227,7 @@ fun BookSourceScreen(
     val importDocument =
         rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
             uri?.let {
-                context.contentResolver.openInputStream(it)?.bufferedReader()?.use { reader ->
-                    onIntent(BookSourceIntent.Import(reader.readText()))
-                }
+                onIntent(BookSourceIntent.Import(it.toString()))
             }
         }
     val qrCodeImport =
@@ -338,12 +335,22 @@ fun BookSourceScreen(
     CheckSourceBottomSheet(
         show = checkSheet == CheckSheet.Settings,
         timeoutSeconds = checkOptionsDraft.timeoutSeconds,
+        threadCount = checkOptionsDraft.threadCount,
+        writeSourceComment = checkOptionsDraft.writeSourceComment,
+        quickMode = checkOptionsDraft.quickMode,
+        checkDomain = checkOptionsDraft.checkDomain,
         checkSearch = checkOptionsDraft.checkSearch,
         checkDiscovery = checkOptionsDraft.checkDiscovery,
         checkInfo = checkOptionsDraft.checkInfo,
         checkCategory = checkOptionsDraft.checkCategory,
         checkContent = checkOptionsDraft.checkContent,
         onTimeoutChange = { checkOptionsDraft = checkOptionsDraft.copy(timeoutSeconds = it) },
+        onThreadCountChange = { checkOptionsDraft = checkOptionsDraft.copy(threadCount = it) },
+        onWriteSourceCommentChange = {
+            checkOptionsDraft = checkOptionsDraft.copy(writeSourceComment = it)
+        },
+        onQuickModeChange = { checkOptionsDraft = checkOptionsDraft.copy(quickMode = it) },
+        onCheckDomainChange = { checkOptionsDraft = checkOptionsDraft.copy(checkDomain = it) },
         onCheckSearchChange = { enabled ->
             checkOptionsDraft = checkOptionsDraft.copy(
                 checkSearch = enabled,

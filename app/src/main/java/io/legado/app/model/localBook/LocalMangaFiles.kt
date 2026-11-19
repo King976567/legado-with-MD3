@@ -17,6 +17,7 @@ import io.legado.app.utils.FileDoc
 import io.legado.app.utils.compress.LibArchiveUtils
 import io.legado.app.utils.openReadPfd
 import io.legado.app.utils.treeChildren
+import kotlin.io.path.invariantSeparatorsPathString
 import splitties.init.appCtx
 import java.io.File
 import java.io.FileNotFoundException
@@ -30,7 +31,7 @@ internal fun isLocalMangaImage(path: String): Boolean =
 
 private val localMangaImageExtensions = setOf("jpg", "jpeg", "png", "webp", "gif", "avif", "bmp")
 
-/** Coil needs an explicit file authority separator to keep the path absolute. */
+/** Coil needs a file:/// URL to retain the absolute path; Path.toUri() also escapes it. */
 internal fun File.toLocalMangaImageUrl(): String =
     toPath().toUri().toASCIIString()
 
@@ -246,7 +247,8 @@ internal fun relativeMangaArchivePaths(entries: List<String>): List<String> {
         if (paths.all { it.startsWith(parent) }) break
         common = parent.parent
     }
-    return paths.map { (common?.relativize(it) ?: it).joinToString("/") }
+    // 章节标题靠 '/' 切分；Path.toString() 在 Windows 上是反斜杠，会把整本书并成一章。
+    return paths.map { (common?.relativize(it) ?: it).invariantSeparatorsPathString }
 }
 
 internal fun <T> groupLocalMangaPages(
