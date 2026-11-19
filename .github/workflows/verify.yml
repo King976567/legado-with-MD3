@@ -80,7 +80,7 @@ jobs:
         timeout-minutes: 20
         run: |
           chmod +x gradlew
-          ./gradlew :app:compileApp${{ matrix.product }}DebugUnitTestKotlin \
+          bash scripts/run-gradle-with-retry.sh ./gradlew :app:compileApp${{ matrix.product }}DebugUnitTestKotlin \
             --init-script .github/scripts/official-kotlin-compiler.gradle \
             :app:compileApp${{ matrix.product }}DebugAndroidTestKotlin \
             --project-prop ksp.incremental=false \
@@ -94,7 +94,7 @@ jobs:
         timeout-minutes: 20
         run: |
           chmod +x gradlew
-          ./gradlew testApp${{ matrix.product }}DebugUnitTest \
+          bash scripts/run-gradle-with-retry.sh ./gradlew testApp${{ matrix.product }}DebugUnitTest \
             --init-script .github/scripts/official-kotlin-compiler.gradle \
             --init-script .github/scripts/shard-tests.gradle \
             --project-prop ciTestShardIndex=${{ matrix.shard }} \
@@ -111,7 +111,7 @@ jobs:
         if: ${{ !cancelled() && matrix.shard == 0 && steps.tests.outcome != 'skipped' }}
         timeout-minutes: 20
         run: |
-          ./gradlew lintApp${{ matrix.product }}Debug verifyConfigArchitecture \
+          bash scripts/run-gradle-with-retry.sh ./gradlew lintApp${{ matrix.product }}Debug verifyConfigArchitecture \
             --init-script .github/scripts/official-kotlin-compiler.gradle \
             --project-prop ksp.incremental=false \
             --project-prop kotlin.compiler.execution.strategy=in-process \
@@ -123,7 +123,7 @@ jobs:
         if: ${{ !cancelled() && matrix.shard == 0 && steps.tests.outcome != 'skipped' }}
         timeout-minutes: 20
         run: |
-          ./gradlew assembleApp${{ matrix.product }}Debug \
+          bash scripts/run-gradle-with-retry.sh ./gradlew assembleApp${{ matrix.product }}Debug \
             --init-script .github/scripts/official-kotlin-compiler.gradle \
             --init-script .github/scripts/arm64-only.gradle \
             --project-prop ksp.incremental=false \

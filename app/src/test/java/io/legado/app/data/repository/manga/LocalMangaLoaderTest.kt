@@ -33,7 +33,9 @@ class LocalMangaLoaderTest {
             val url = LocalMangaLoader(cache).use { it.load(book, chapter).pages.single().imageUrl }
 
             assertTrue(url.startsWith("file:///"))
-            assertEquals(image.absoluteFile, File(URI(url)))
+            assertEquals(image.toPath().toUri().toASCIIString(), url)
+            assertEquals("file", URI(url).scheme)
+            assertEquals(image.canonicalFile, File(URI(url)).canonicalFile)
         } finally {
             root.deleteRecursively()
             cache.deleteRecursively()
