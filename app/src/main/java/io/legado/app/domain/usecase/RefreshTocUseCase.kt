@@ -44,13 +44,13 @@ class RefreshTocUseCase(
         book.removeType(BookType.updateError)
         applyTagGroupRulesForBook(book)
         if (book.bookUrl == bookUrl) {
-            bookRepository.update(book)
+            bookRepository.replaceChaptersAndUpdateBook(book, toc)
         } else {
             bookRepository.replace(oldBook, book)
             BookHelp.updateCacheFolder(oldBook, book)
+            bookRepository.deleteChaptersByBook(bookUrl)
+            bookRepository.insertChapters(*toc.toTypedArray())
         }
-        bookRepository.deleteChaptersByBook(bookUrl)
-        bookRepository.insertChapters(*toc.toTypedArray())
         ReadBook.onChapterListUpdated(book)
         onSuccess(source, book)
     }.onFailure {

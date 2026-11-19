@@ -15,6 +15,8 @@ interface MangaReaderDataGateway {
         chapterChanged: Boolean,
     ): OpenedMangaBook
 
+    suspend fun checkForCatalogUpdates(bookUrl: String) = Unit
+
     suspend fun loadChapter(bookUrl: String, chapterIndex: Int): MangaChapterContent
 
     suspend fun prefetchChapter(bookUrl: String, chapterIndex: Int)

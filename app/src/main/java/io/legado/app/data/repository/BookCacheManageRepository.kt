@@ -4,9 +4,9 @@ import io.legado.app.data.dao.BookChapterDao
 import io.legado.app.data.dao.BookDao
 import io.legado.app.data.dao.BookGroupDao
 import io.legado.app.data.entities.Book
+import io.legado.app.data.entities.BookChapter
 import io.legado.app.data.entities.BookGroup
 import io.legado.app.data.model.BookChapterCacheInfo
-import io.legado.app.data.entities.BookChapter
 import io.legado.app.help.book.BookHelp
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.currentCoroutineContext
@@ -37,12 +37,8 @@ class BookCacheManageRepository(
         bookDao.getBook(bookUrl)
     }
 
-    suspend fun getChapterCount(bookUrl: String): Int = withContext(Dispatchers.IO) {
-        bookChapterDao.getChapterCount(bookUrl)
-    }
-
-    suspend fun getVolumeCount(bookUrl: String): Int = withContext(Dispatchers.IO) {
-        bookChapterDao.getVolumeCount(bookUrl)
+    suspend fun getDownloadableChapterCount(bookUrl: String): Int = withContext(Dispatchers.IO) {
+        bookChapterDao.getDownloadableChapterCount(bookUrl)
     }
 
     suspend fun getChapterCacheInfo(bookUrl: String): List<BookChapterCacheInfo> =
@@ -54,7 +50,7 @@ class BookCacheManageRepository(
         val chapters = bookChapterDao.getChapterCacheInfoList(book.bookUrl)
         chapters.count { chapter ->
             currentCoroutineContext().ensureActive()
-            chapter.isVolume || BookHelp.isChapterCacheComplete(
+            !chapter.isVolume && BookHelp.isChapterCacheComplete(
                 book,
                 BookChapter(
                     bookUrl = book.bookUrl,

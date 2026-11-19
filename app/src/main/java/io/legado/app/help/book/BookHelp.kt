@@ -130,17 +130,21 @@ object BookHelp {
     }
 
     fun clearCache(book: Book) {
-        val filePath = FileUtils.getPath(downloadDir, cacheFolderName, book.getFolderName())
-        deleteImageCacheDirectory(File(filePath))
-        if (book.isMarkdown) MarkdownFile.clear()
+        tryClearCache(book)
     }
 
-    private fun deleteImageCacheDirectory(directory: File) {
+    fun tryClearCache(book: Book): Boolean {
+        val filePath = FileUtils.getPath(downloadDir, cacheFolderName, book.getFolderName())
+        val removed = deleteImageCacheDirectory(File(filePath))
+        if (book.isMarkdown) MarkdownFile.clear()
+        return removed
+    }
+
+    private fun deleteImageCacheDirectory(directory: File): Boolean =
         imageFiles.deleteIfIdle(directory) {
             FileUtils.delete(it.absolutePath)
             !it.exists()
         }
-    }
 
     /**
      * 章节目录下的图片是否「不能安全删除」。

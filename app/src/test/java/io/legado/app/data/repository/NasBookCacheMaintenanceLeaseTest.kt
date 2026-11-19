@@ -69,6 +69,20 @@ class NasBookCacheMaintenanceLeaseTest {
     }
 
     @Test
+    fun `book cache cleanup reports a protected cache as not removed`() = runBlocking {
+        val cleanup = BookCacheCleanupRepository(database.bookDao)
+        NasComicImageLeases().use { leases ->
+            leases.pinChapter(book, refreshed)
+            directory.mkdirs()
+            body.writeText("leased")
+            assertFalse(cleanup.clear(book.bookUrl))
+            assertTrue(body.isFile)
+        }
+        assertTrue(cleanup.clear(book.bookUrl))
+        assertFalse(body.exists())
+    }
+
+    @Test
     fun `refresh-only chapter and legacy body stay listed until upload releases leases`() = runBlocking {
         val bytes = "new chapter body before images".toByteArray()
         NasComicImageLeases().use { leases ->

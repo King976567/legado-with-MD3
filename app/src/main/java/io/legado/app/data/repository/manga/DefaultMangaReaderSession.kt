@@ -28,6 +28,9 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import splitties.init.appCtx
+import kotlin.time.Duration.Companion.seconds
+import kotlin.time.TimeMark
+import kotlin.time.TimeSource
 
 class DefaultMangaReaderSession(
     private val dataGateway: MangaReaderDataGateway,
@@ -38,6 +41,7 @@ class DefaultMangaReaderSession(
     private companion object {
         const val ADJACENT_LOAD_DISTANCE = 5
         const val PROGRESS_PERSIST_INTERVAL_MS = 3_000L
+        val CATALOG_CHECK_INTERVAL = 60.seconds
     }
 
     private val sessionJob = SupervisorJob()
@@ -45,6 +49,8 @@ class DefaultMangaReaderSession(
     private var loadJob = SupervisorJob(sessionJob)
     private var loadScope = CoroutineScope(loadJob + ioDispatcher)
     private var presentationJob: Job? = null
+    private var catalogCheckJob: Job? = null
+    private var lastCatalogCheckAt: TimeMark? = null
     private var scheduledProgressPersistJob: Job? = null
     private var lastProgressPersistAt = 0L
     private val commands = Channel<MangaSessionCommand>(Channel.UNLIMITED)
@@ -122,19 +128,30 @@ class DefaultMangaReaderSession(
                 val state = _state.value
                 val book = state.book ?: return
                 if (book.bookUrl != command.bookUrl) return
+                val catalog = command.presentation.catalog?.takeIf {
+                    book.chapterUrls.isNotEmpty() && it.preservesIndices(book.chapterUrls) &&
+                        it.readableCount > state.chapterIndex
+                }
                 _state.value = state.copy(
                     book = book.copy(
                         scrollMode = command.presentation.scrollMode,
                         sidePaddingDp = command.presentation.sidePaddingDp,
                         inBookshelf = command.presentation.inBookshelf ?: book.inBookshelf,
-                    )
+                        chapterTitles = catalog?.titles ?: book.chapterTitles,
+                        chapterUrls = catalog?.urls ?: book.chapterUrls,
+                    ),
+                    chapterCount = catalog?.readableCount ?: state.chapterCount,
                 )
+                if (catalog != null && catalog.readableCount > state.chapterCount) {
+                    prefetch(state.chapterIndex)
+                }
             }
             is MangaSessionCommand.ApplyProgress -> applyProgress(command)
             is MangaSessionCommand.ChapterLoaded -> chapterLoaded(command)
             MangaSessionCommand.Resume -> {
                 _state.value.book?.let { withContext(ioDispatcher) { dataGateway.resume(it.bookUrl) } }
                 _state.value = _state.value.copy(resumed = true)
+                checkCatalogNearEnd()
             }
             MangaSessionCommand.Pause -> {
                 cancelScheduledProgressPersist()
@@ -144,7 +161,11 @@ class DefaultMangaReaderSession(
                 }
                 _state.value = _state.value.copy(resumed = false)
             }
-            MangaSessionCommand.NetworkAvailable -> syncProgress()
+            MangaSessionCommand.NetworkAvailable -> {
+                // Retry promptly if the initial check happened offline.
+                checkCatalogNearEnd(afterReconnect = true)
+                syncProgress()
+            }
             MangaSessionCommand.Close -> shutdown()
         }
     }
@@ -152,6 +173,8 @@ class DefaultMangaReaderSession(
     private suspend fun open(command: MangaSessionCommand.Open) {
         resetLoadScope()
         presentationJob?.cancel()
+        catalogCheckJob?.cancel()
+        lastCatalogCheckAt = null
         cancelScheduledProgressPersist()
         val old = _state.value
         if (old.book != null) {
@@ -232,6 +255,29 @@ class DefaultMangaReaderSession(
         retainChapterResources(chapterIndex)
         loadChapter(chapterIndex)
         prefetch(chapterIndex)
+        checkCatalogNearEnd()
+    }
+
+    private fun checkCatalogNearEnd(afterReconnect: Boolean = false) {
+        val state = _state.value
+        val book = state.book ?: return
+        if (book.isLocal || state.chapterCount != state.chapterIndex + 1 ||
+            catalogCheckJob?.isActive == true
+        ) return
+        if (!afterReconnect && lastCatalogCheckAt?.let { it.elapsedNow() < CATALOG_CHECK_INTERVAL } == true) {
+            return
+        }
+        lastCatalogCheckAt = TimeSource.Monotonic.markNow()
+        // Do not block the reducer or delay opening a cached chapter on a slow/offline source.
+        catalogCheckJob = sessionScope.launch(ioDispatcher) {
+            try {
+                dataGateway.checkForCatalogUpdates(book.bookUrl)
+            } catch (error: CancellationException) {
+                throw error
+            } catch (error: Exception) {
+                AppLog.put("漫画目录更新检查失败", error)
+            }
+        }
     }
 
     /**
@@ -263,6 +309,7 @@ class DefaultMangaReaderSession(
         else if (!movingForward && prefetchPrevCount > 0) loadChapter(command.chapterIndex - 1)
         retainChapterResources(command.chapterIndex)
         prefetch(command.chapterIndex)
+        checkCatalogNearEnd()
     }
 
     private fun prefetch(chapterIndex: Int) {
@@ -450,6 +497,7 @@ class DefaultMangaReaderSession(
 
     private suspend fun shutdown() {
         presentationJob?.cancel()
+        catalogCheckJob?.cancel()
         cancelScheduledProgressPersist()
         persistProgress()
         _state.value.book?.let {

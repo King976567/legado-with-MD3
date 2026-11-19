@@ -14,7 +14,6 @@ class BookCacheCleanupRepository(
 
     override suspend fun clear(bookUrl: String): Boolean {
         val book = bookDao.getBook(bookUrl) ?: return false
-        BookHelp.clearCache(book)
-        return true
+        return BookHelp.tryClearCache(book)
     }
 }

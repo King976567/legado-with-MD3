@@ -46,6 +46,24 @@ class BookCacheListSortTest {
         assertEquals(listOf("a", "b", "zoo", "alpha"), sorted.map { it.bookUrl })
     }
 
+    @Test
+    fun `overview counts only the supplied books and paused work remains resumable`() {
+        val visible = item("visible", pausedCount = 3, cachedCount = 2).copy(
+            totalCount = 2,
+            errorCount = 1,
+        )
+        val hidden = item("hidden", waitingCount = 10, downloadingCount = 2)
+        assertEquals(
+            BookCacheOverview(paused = 3, failed = 1, cached = 2, hasDownloadTarget = true),
+            summarizeBookCache(listOf(visible)),
+        )
+        assertEquals(10, summarizeBookCache(listOf(visible, hidden)).waiting)
+        assertEquals(
+            BookCacheOverview(isCheckingCache = true),
+            summarizeBookCache(listOf(item("checking").copy(isCheckingCache = true))),
+        )
+    }
+
     private fun item(
         bookUrl: String,
         downloadingCount: Int = 0,

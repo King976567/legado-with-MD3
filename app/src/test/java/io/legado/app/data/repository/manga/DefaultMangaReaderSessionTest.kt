@@ -3,6 +3,7 @@ package io.legado.app.data.repository.manga
 import io.legado.app.domain.gateway.MangaReaderDataGateway
 import io.legado.app.domain.model.manga.MangaBookPresentation
 import io.legado.app.domain.model.manga.MangaBookState
+import io.legado.app.domain.model.manga.MangaCatalog
 import io.legado.app.domain.model.manga.MangaChapterContent
 import io.legado.app.domain.model.manga.MangaChapterState
 import io.legado.app.domain.model.manga.MangaPageContent
@@ -23,6 +24,55 @@ import org.junit.Test
 
 @OptIn(ExperimentalCoroutinesApi::class)
 class DefaultMangaReaderSessionTest {
+
+    @Test
+    fun `new online chapters appear without reloading the last cached chapter`() = runTest {
+        val gateway = FakeGateway()
+        gateway.savedProgress["book"] = 4 to 0
+        val dispatcher = StandardTestDispatcher(testScheduler)
+        val session = DefaultMangaReaderSession(gateway, dispatcher, dispatcher)
+        session.execute(MangaSessionCommand.Open("book", true, false))
+        advanceUntilIdle()
+        gateway.complete("book", 4)
+        advanceUntilIdle()
+        val previous = session.state.value
+        assertEquals(listOf("book"), gateway.catalogChecks)
+
+        gateway.presentation.value = MangaBookPresentation(null, null, catalog = MangaCatalog(
+            urls = List(6) { "chapter-$it" },
+            titles = List(6) { "Chapter ${it + 1}" },
+            readableCount = 6,
+        ))
+        advanceUntilIdle()
+        assertEquals(6, session.state.value.chapterCount)
+        assertEquals("Chapter 6", session.state.value.book?.chapterTitles?.last())
+        assertEquals(previous.currentChapter, session.state.value.currentChapter)
+        assertEquals(previous.revision, session.state.value.revision)
+        assertEquals(previous.chapterIndex, session.state.value.chapterIndex)
+        session.execute(MangaSessionCommand.OpenChapter(5))
+        advanceUntilIdle()
+        assertEquals(5, session.state.value.chapterIndex)
+        assertTrue("book" to 5 in gateway.loadedRequests)
+        session.close()
+    }
+
+    @Test
+    fun `reordered directory is not applied to the live index based reader`() = runTest {
+        val gateway = FakeGateway()
+        val dispatcher = StandardTestDispatcher(testScheduler)
+        val session = DefaultMangaReaderSession(gateway, dispatcher, dispatcher)
+        session.execute(MangaSessionCommand.Open("book", true, false))
+        advanceUntilIdle()
+        gateway.presentation.value = MangaBookPresentation(null, null, catalog = MangaCatalog(
+            urls = listOf("chapter-1", "chapter-0", "chapter-2", "chapter-3", "chapter-4", "chapter-5"),
+            titles = List(6) { "Changed $it" },
+            readableCount = 6,
+        ))
+        advanceUntilIdle()
+        assertEquals(5, session.state.value.chapterCount)
+        assertEquals("Chapter 1", session.state.value.book?.chapterTitles?.first())
+        session.close()
+    }
 
     @Test
     fun `only an empty directory offers folder reselection for an empty TOC`() = runTest {
@@ -410,6 +460,12 @@ class DefaultMangaReaderSessionTest {
 
     private class FakeGateway : MangaReaderDataGateway {
         val presentation = MutableStateFlow(MangaBookPresentation(null, null))
+        val catalogChecks = mutableListOf<String>()
+
+        override suspend fun checkForCatalogUpdates(bookUrl: String) {
+            catalogChecks += bookUrl
+        }
+
         var rewrittenBookUrl: String? = null
         var openGate: CompletableDeferred<Unit>? = null
         private val requests = mutableMapOf<Pair<String, Int>, CompletableDeferred<MangaChapterContent>>()
@@ -446,6 +502,7 @@ class DefaultMangaReaderSessionTest {
                     sidePaddingDp = null,
                     isLocal = false,
                     chapterTitles = List(5) { "Chapter ${it + 1}" },
+                    chapterUrls = List(5) { "chapter-$it" },
                 ),
                 chapterIndex = progress.first,
                 pageIndex = progress.second,

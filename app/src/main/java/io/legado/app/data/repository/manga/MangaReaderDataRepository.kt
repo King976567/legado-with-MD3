@@ -1,10 +1,12 @@
 package io.legado.app.data.repository.manga
 
 import android.app.Application
+import androidx.room.withTransaction
 import io.legado.app.BuildConfig
 import io.legado.app.R
 import io.legado.app.data.AppDatabase
 import io.legado.app.data.entities.Book
+import io.legado.app.data.entities.BookChapter
 import io.legado.app.data.entities.readRecord.ReadRecordSession
 import io.legado.app.data.repository.ReadRecordRepository
 import io.legado.app.domain.gateway.BackupSettingsGateway
@@ -12,6 +14,7 @@ import io.legado.app.domain.gateway.BookCacheDownloadGateway
 import io.legado.app.domain.gateway.MangaReaderDataGateway
 import io.legado.app.domain.model.manga.MangaBookPresentation
 import io.legado.app.domain.model.manga.MangaBookState
+import io.legado.app.domain.model.manga.MangaCatalog
 import io.legado.app.domain.model.manga.MangaChapterContent
 import io.legado.app.domain.model.manga.MangaProgressState
 import io.legado.app.domain.model.manga.OpenedMangaBook
@@ -34,8 +37,13 @@ import io.legado.app.model.localBook.LocalBook
 import io.legado.app.model.localBook.LocalMangaFiles
 import io.legado.app.model.localBook.isLocalMangaArchive
 import io.legado.app.model.webBook.WebBook
+import io.legado.app.utils.NetworkUtils
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.ensureActive
+import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.withTimeoutOrNull
 
 class MangaReaderDataRepository(
     private val application: Application,
@@ -52,16 +60,49 @@ class MangaReaderDataRepository(
     private val localMangaLoader =
         LocalMangaLoader(java.io.File(application.cacheDir, "local-manga"))
 
-    override fun observeBookPresentation(bookUrl: String) =
-        database.bookDao.flowGetBook(bookUrl)
-            .map { book ->
-                MangaBookPresentation(
-                    scrollMode = book?.readConfig?.mangaScrollMode,
-                    sidePaddingDp = book?.readConfig?.webtoonSidePaddingDp,
-                    inBookshelf = book?.let { !it.isNotShelf },
-                )
-            }
-            .distinctUntilChanged()
+    override fun observeBookPresentation(bookUrl: String) = combine(
+        database.bookDao.flowGetBook(bookUrl).map { book ->
+            val presentation = MangaBookPresentation(
+                scrollMode = book?.readConfig?.mangaScrollMode,
+                sidePaddingDp = book?.readConfig?.webtoonSidePaddingDp,
+                inBookshelf = book?.let { !it.isNotShelf },
+            )
+            val isOnline = book?.isLocal == false
+            val simulatedCount = book?.takeIf { isOnline && it.readSimulating() }
+                ?.simulatedTotalChapterNum()
+            Triple(presentation, isOnline, simulatedCount)
+        }.distinctUntilChanged(),
+        database.bookChapterDao.flowChapterCacheInfo(bookUrl).distinctUntilChanged().map { chapters ->
+            MangaCatalog(
+                urls = chapters.map { it.url },
+                titles = chapters.map { it.title },
+                readableCount = chapters.size,
+            )
+        },
+    ) { (presentation, isOnline, simulatedCount), catalog ->
+        presentation.copy(catalog = when {
+            !isOnline -> null
+            simulatedCount != null -> catalog.copy(
+                readableCount = simulatedCount.coerceIn(0, catalog.urls.size),
+            )
+            else -> catalog
+        })
+    }.distinctUntilChanged()
+
+    override suspend fun checkForCatalogUpdates(bookUrl: String) {
+        if (!NetworkUtils.isAvailable()) return
+        val original = database.bookDao.getBook(bookUrl) ?: return
+        if (original.isLocal || !original.canUpdate || original.tocUrl.isBlank() ||
+            original.readSimulating()
+        ) return
+        val source = database.bookSourceDao.getBookSource(original.origin)?.takeIf { it.enabled } ?: return
+        val fetchedBook = original.copy()
+        val fetched = withTimeoutOrNull(15_000L) {
+            WebBook.getChapterListAwait(source, fetchedBook, runPerJs = true).getOrThrow()
+        } ?: return
+        currentCoroutineContext().ensureActive()
+        database.appendMangaCatalog(original, fetchedBook, fetched)
+    }
 
     override suspend fun openBook(
         bookUrl: String?,
@@ -93,8 +134,7 @@ class MangaReaderDataRepository(
                 BookHelp.updateCacheFolder(oldBook, book)
             }
         }
-        var chapterCount = database.bookChapterDao.getChapterCount(book.bookUrl)
-        if (chapterCount == 0 || book.isLocalModified()) {
+        if (database.bookChapterDao.getChapterCount(book.bookUrl) == 0 || book.isLocalModified()) {
             if (book.isLocal) {
                 val chapters = LocalBook.getChapterList(book)
                 database.runInTransaction {
@@ -102,7 +142,6 @@ class MangaReaderDataRepository(
                     database.bookChapterDao.insert(*chapters.toTypedArray())
                     database.bookDao.update(book)
                 }
-                chapterCount = chapters.size
             } else {
                 val activeSource = source ?: throw NoStackTraceException(
                     application.getString(R.string.error_load_toc),
@@ -117,17 +156,16 @@ class MangaReaderDataRepository(
                 }
                 database.bookChapterDao.delByBook(oldBook.bookUrl)
                 database.bookChapterDao.insert(*chapters.toTypedArray())
-                chapterCount = chapters.size
             }
         }
-        if (chapterCount == 0) chapterCount = database.bookChapterDao.getChapterCount(book.bookUrl)
         // Older imports may not have a separate cover. Do not replace an existing or custom cover.
         if (book.isLocalManga && localMangaLoader.ensureCover(book)) {
             database.bookDao.update(book)
         }
+        val chapters = database.bookChapterDao.getChapterList(book.bookUrl)
         val simulatedCount = if (book.readSimulating()) {
-            book.simulatedTotalChapterNum()
-        } else chapterCount
+            book.simulatedTotalChapterNum().coerceIn(0, chapters.size)
+        } else chapters.size
         val safeChapter = book.durChapterIndex.coerceIn(0, (simulatedCount - 1).coerceAtLeast(0))
         val newerProgress = if (!chapterChanged) findNewerProgress(book) else null
         return OpenedMangaBook(
@@ -144,7 +182,8 @@ class MangaReaderDataRepository(
                 scrollMode = book.readConfig?.mangaScrollMode,
                 sidePaddingDp = book.readConfig?.webtoonSidePaddingDp,
                 isLocal = book.isLocal,
-                chapterTitles = database.bookChapterDao.getChapterList(book.bookUrl).map { it.title },
+                chapterTitles = chapters.map { it.title },
+                chapterUrls = chapters.map { it.url },
             ),
             chapterIndex = safeChapter,
             pageIndex = book.durChapterPos.coerceAtLeast(0),
@@ -185,14 +224,16 @@ class MangaReaderDataRepository(
     }
 
     override suspend fun persistProgress(bookUrl: String, chapterIndex: Int, pageIndex: Int) {
-        val book = database.bookDao.getBook(bookUrl) ?: return
-        book.durChapterIndex = chapterIndex
-        book.durChapterPos = pageIndex
-        book.durChapterTime = System.currentTimeMillis()
-        database.bookChapterDao.getChapter(bookUrl, chapterIndex)?.let {
-            book.durChapterTitle = it.title
+        database.withTransaction {
+            val book = database.bookDao.getBook(bookUrl) ?: return@withTransaction
+            book.durChapterIndex = chapterIndex
+            book.durChapterPos = pageIndex
+            book.durChapterTime = System.currentTimeMillis()
+            database.bookChapterDao.getChapter(bookUrl, chapterIndex)?.let {
+                book.durChapterTitle = it.title
+            }
+            database.bookDao.update(book)
         }
-        database.bookDao.update(book)
     }
 
     override suspend fun applyProgress(bookUrl: String, progress: MangaProgressState) {
@@ -273,4 +314,35 @@ class MangaReaderDataRepository(
         durChapterTime = durChapterTime,
         durChapterTitle = durChapterTitle,
     )
+}
+
+/** Preserve cached chapter identities and active index-based downloads on automatic refresh. */
+internal suspend fun AppDatabase.appendMangaCatalog(
+    original: Book,
+    refreshed: Book,
+    fetched: List<BookChapter>,
+) = withTransaction {
+    val bookUrl = original.bookUrl
+    val current = bookDao.getBook(bookUrl) ?: return@withTransaction
+    if (refreshed.bookUrl != bookUrl || current.isLocal || !current.canUpdate ||
+        current.origin != original.origin || current.tocUrl != original.tocUrl ||
+        current.readSimulating() || current.getReverseToc() != original.getReverseToc()
+    ) return@withTransaction
+    val existing = bookChapterDao.getChapterList(bookUrl)
+    if (existing.isEmpty() || fetched.size <= existing.size ||
+        existing.indices.any { fetched[it].url != existing[it].url || existing[it].index != it }
+    ) return@withTransaction
+    val added = fetched.drop(existing.size)
+    if (fetched.mapTo(HashSet(fetched.size)) { it.url }.size != fetched.size) return@withTransaction
+    if (added.withIndex().any { (index, chapter) ->
+            chapter.bookUrl != bookUrl || chapter.index != existing.size + index
+        }
+    ) return@withTransaction
+    bookChapterDao.insert(*added.toTypedArray())
+    current.totalChapterNum = fetched.size
+    current.latestChapterTitle = refreshed.latestChapterTitle
+    current.latestChapterTime = refreshed.lastCheckTime
+    current.lastCheckTime = refreshed.lastCheckTime
+    current.lastCheckCount = added.size
+    bookDao.update(current)
 }

@@ -4105,4 +4105,15 @@
     <string name="a11y_reorder_position">Position %1$d of %2$d</string>
     <string name="hyper_os4_components">HyperOS 4 components</string>
     <string name="hyper_os4_components_summary">Use the glass top app bar, tabs and dropdowns in the Miuix theme. Requires Android 13 and system blur.</string>
+    <string name="cache_filter_search">Filtering by title or author</string>
+    <string name="cache_download_summary">Downloading %1$d · Queued %2$d · Paused %3$d · Failed %4$d · %5$s</string>
+    <string name="cache_summary_cached">Cached %1$d</string>
+    <string name="cache_queue_pause_all">Pause all downloads</string>
+    <string name="cache_queue_resume_all">Resume all downloads</string>
+    <string name="cache_queue_start_all">Start downloads for all listed books</string>
+    <string name="cache_queue_enqueued">Queued %1$d chapters</string>
+    <string name="cache_queue_no_chapters">No chapters to cache</string>
+    <string name="cache_queue_operation_failed">Could not update the download queue: %1$s</string>
+    <string name="cache_delete_book_complete">Book cache cleared</string>
+    <string name="cache_delete_book_incomplete">Cache could not be fully cleared. It may still be in use.</string>
 </resources>

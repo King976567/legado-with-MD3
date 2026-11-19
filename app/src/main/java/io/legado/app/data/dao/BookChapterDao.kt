@@ -34,6 +34,9 @@ interface BookChapterDao {
     @Query("select url, title, isVolume, `index` from chapters where bookUrl = :bookUrl order by `index`")
     fun getChapterCacheInfoList(bookUrl: String): List<BookChapterCacheInfo>
 
+    @Query("select url, title, isVolume, `index` from chapters where bookUrl = :bookUrl order by `index`")
+    fun flowChapterCacheInfo(bookUrl: String): Flow<List<BookChapterCacheInfo>>
+
     @Query("select url, wordCount from chapters where bookUrl = :bookUrl and wordCount is not null and wordCount != ''")
     fun getChapterWordCounts(bookUrl: String): List<ChapterWordCount>
 
@@ -51,6 +54,9 @@ interface BookChapterDao {
 
     @Query("select count(url) from chapters where bookUrl = :bookUrl")
     fun getChapterCount(bookUrl: String): Int
+
+    @Query("select count(*) from chapters where bookUrl = :bookUrl and isVolume = 0")
+    fun getDownloadableChapterCount(bookUrl: String): Int
 
     @Query("select count(url) from chapters where bookUrl = :bookUrl and isVolume = 1")
     fun getVolumeCount(bookUrl: String): Int

@@ -4096,4 +4096,15 @@
     <string name="a11y_reorder_position">第 %1$d 项，共 %2$d 项</string>
     <string name="hyper_os4_components">HyperOS 4 风格组件</string>
     <string name="hyper_os4_components_summary">在 Miuix 主题下使用玻璃顶栏、标签页与下拉菜单。需要 Android 13 与系统模糊支持。</string>
+    <string name="cache_filter_search">筛选书名或作者</string>
+    <string name="cache_download_summary">下载 %1$d · 排队 %2$d · 暂停 %3$d · 失败 %4$d · %5$s</string>
+    <string name="cache_summary_cached">已缓存 %1$d</string>
+    <string name="cache_queue_pause_all">暂停全部下载</string>
+    <string name="cache_queue_resume_all">继续全部下载</string>
+    <string name="cache_queue_start_all">开始下载列表中所有书籍</string>
+    <string name="cache_queue_enqueued">已将 %1$d 章加入队列</string>
+    <string name="cache_queue_no_chapters">没有可缓存的章节</string>
+    <string name="cache_queue_operation_failed">更新下载队列失败：%1$s</string>
+    <string name="cache_delete_book_complete">书籍缓存已清除</string>
+    <string name="cache_delete_book_incomplete">未能完全清除缓存，可能仍在使用中。</string>
 </resources>

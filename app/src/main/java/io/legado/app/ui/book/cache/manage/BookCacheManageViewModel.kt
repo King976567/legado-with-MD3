@@ -26,6 +26,7 @@ import io.legado.app.model.CacheBookModel
 import io.legado.app.model.cache.CacheBookDownloadState
 import io.legado.app.model.cache.CacheChapterProgress
 import io.legado.app.model.cache.CacheChapterProgressPhase
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.currentCoroutineContext
@@ -49,8 +50,7 @@ data class BookCacheManageUiState(
     val groups: List<BookGroup> = emptyList(),
     val expandedBookUrls: Set<String> = emptySet(),
     val chaptersByBookUrl: Map<String, List<BookCacheChapterItem>> = emptyMap(),
-    val downloadSummary: String = "",
-    val hasPausedDownloads: Boolean = false,
+    val isUpdatingQueue: Boolean = false,
     val nasUploads: List<NasUploadTask> = emptyList(),
     val nasHistory: List<NasTransferHistory> = emptyList(),
     val version: Long = 0,
@@ -145,8 +145,6 @@ class BookCacheManageViewModel(
     private val bookReloadJobs = hashMapOf<String, Job>()
     private val chapterLoadJobs = hashMapOf<String, Job>()
     private val pendingDownloadRefreshBookUrls = ConcurrentHashMap.newKeySet<String>()
-    @Volatile
-    private var pendingDownloadSummaryRefresh = false
 
     fun onIntent(intent: BookCacheManageIntent) {
         when (intent) {
@@ -290,13 +288,15 @@ class BookCacheManageViewModel(
                         scheduleRuntimeStatusRefresh(bookUrl)
                     }
                 }
-                pendingDownloadSummaryRefresh = true
             }
         }
         viewModelScope.launch {
+            var previous = emptyMap<String, Int>()
             CacheBook.pendingAdmissionFlow.collect { pending ->
-                pending.keys.forEach { scheduleRuntimeStatusRefresh(it) }
-                pendingDownloadSummaryRefresh = true
+                (previous.keys + pending.keys).forEach { bookUrl ->
+                    if (previous[bookUrl] != pending[bookUrl]) scheduleRuntimeStatusRefresh(bookUrl)
+                }
+                previous = pending
             }
         }
         viewModelScope.launch {
@@ -339,8 +339,6 @@ class BookCacheManageViewModel(
                             notShelfBooks = items.filter { it.isNotShelf },
                             expandedBookUrls = state.expandedBookUrls.intersect(bookUrls),
                             chaptersByBookUrl = state.chaptersByBookUrl.filterKeys { it in bookUrls },
-                            downloadSummary = buildDownloadSummary(items),
-                            hasPausedDownloads = CacheBook.hasPausedDownloads,
                             version = state.version + 1,
                         )
                     }
@@ -360,7 +358,6 @@ class BookCacheManageViewModel(
                         state.copy(
                             shelfBooks = items.filterNot { it.isNotShelf },
                             notShelfBooks = items.filter { it.isNotShelf },
-                            downloadSummary = buildDownloadSummary(items),
                             version = state.version + 1,
                         )
                     }
@@ -382,27 +379,14 @@ class BookCacheManageViewModel(
         if (bookUrl.isNotBlank()) {
             pendingDownloadRefreshBookUrls.add(bookUrl)
         }
-        pendingDownloadSummaryRefresh = true
     }
 
     private suspend fun flushDownloadStatusRefresh() {
         val bookUrls = pendingDownloadRefreshBookUrls.toList()
         bookUrls.forEach { pendingDownloadRefreshBookUrls.remove(it) }
-        val shouldRefreshSummary = pendingDownloadSummaryRefresh || bookUrls.isNotEmpty()
-        pendingDownloadSummaryRefresh = false
         if (bookUrls.isNotEmpty()) {
             // 批量轻量刷新：只改内存中的排队/进度态，并对列表按 FIFO 重排
             updateRuntimeDownloadStatuses(bookUrls)
-            return
-        }
-        if (shouldRefreshSummary) {
-            _uiState.update {
-                it.copy(
-                    downloadSummary = buildDownloadSummary(it.shelfBooks + it.notShelfBooks),
-                    hasPausedDownloads = CacheBook.hasPausedDownloads,
-                    version = it.version + 1,
-                )
-            }
         }
     }
 
@@ -474,8 +458,6 @@ class BookCacheManageViewModel(
                 } else {
                     state.chaptersByBookUrl
                 },
-                downloadSummary = buildDownloadSummary(sortedBooks),
-                hasPausedDownloads = CacheBook.hasPausedDownloads,
                 version = state.version + 1,
             )
         }
@@ -532,8 +514,6 @@ class BookCacheManageViewModel(
                 notShelfBooks = sortedBooks.filter { item -> item.isNotShelf },
                 expandedBookUrls = expandedBookUrls,
                 chaptersByBookUrl = chaptersByBookUrl,
-                downloadSummary = buildDownloadSummary(sortedBooks),
-                hasPausedDownloads = CacheBook.hasPausedDownloads,
                 version = state.version + 1,
             )
         }
@@ -556,7 +536,7 @@ class BookCacheManageViewModel(
         val waitingCount = if (isBookPaused) 0 else rawWaitingCount
         val downloadingCount = if (isBookPaused) 0 else rawDownloadingCount
         val errorIndices = errorIndices(book.bookUrl)
-        val totalCount = repository.getChapterCount(book.bookUrl)
+        val totalCount = repository.getDownloadableChapterCount(book.bookUrl)
         val cachedFileCount = cacheFiles.count { it.endsWith(".nb") }
         val cachedCount = if (checkCache) min(repository.countCachedChapters(book), totalCount) else 0
         if (totalCount == 0 && cacheFiles.isEmpty() && waitingCount == 0 && downloadingCount == 0 && pausedCount == 0 && !book.isNotShelf) {
@@ -702,12 +682,27 @@ class BookCacheManageViewModel(
         }
     }
 
-    private fun stopAllDownloads() {
-        execute {
-            CacheBook.pause(context)
-        }.onFinally {
-            // 勿 forceDatabase 全量重载：展开章列表扫盘会卡住折叠/启停
-            refreshAllRuntimeDownloadStatuses()
+    private fun stopAllDownloads() = updateGlobalQueue {
+        CacheBook.pause(context)
+    }
+
+    private fun updateGlobalQueue(action: suspend () -> Unit) {
+        if (uiState.value.isUpdatingQueue) return
+        _uiState.update { it.copy(isUpdatingQueue = true) }
+        viewModelScope.launch {
+            try {
+                withContext(Dispatchers.IO) { action() }
+            } catch (error: CancellationException) {
+                throw error
+            } catch (error: Exception) {
+                _effects.tryEmit(BookCacheManageEffect.ShowMessage(
+                    context.getString(R.string.cache_queue_operation_failed, error.localizedMessage.orEmpty()),
+                ))
+            } finally {
+                _uiState.update { it.copy(isUpdatingQueue = false) }
+                // Do not rescan files just to refresh queue state.
+                refreshAllRuntimeDownloadStatuses()
+            }
         }
     }
 
@@ -720,31 +715,20 @@ class BookCacheManageViewModel(
     }
 
     private fun startAllDownloads() {
-        val items = uiState.value.shelfBooks + uiState.value.notShelfBooks
-        execute {
-            // FAB 一键开始：先全局解冻所有已在任务里的书/章；无任务时再为全部缺章书入队
-            if (CacheBook.resume(context)) {
-                return@execute null
-            }
+        val bookUrls = (uiState.value.shelfBooks + uiState.value.notShelfBooks).map { it.bookUrl }
+        updateGlobalQueue {
+            if (CacheBook.resume(context)) return@updateGlobalQueue
             var count = 0
-            items.forEach { item ->
-                downloadableChapterIndexBatches(item.bookUrl).forEach { chapterIndices ->
-                    count += cacheBookChaptersUseCase.execute(item.bookUrl, chapterIndices)
+            bookUrls.forEach { bookUrl ->
+                downloadableChapterIndexBatches(bookUrl).forEach { chapterIndices ->
+                    currentCoroutineContext().ensureActive()
+                    count += cacheBookChaptersUseCase.execute(bookUrl, chapterIndices)
                 }
-                currentCoroutineContext().ensureActive()
             }
-            count
-        }.onSuccess { countOrNull ->
-            val count = countOrNull ?: return@onSuccess
-            if (count > 0) {
-                _effects.tryEmit(BookCacheManageEffect.ShowMessage("已加入缓存队列: $count 章"))
-            } else {
-                _effects.tryEmit(BookCacheManageEffect.ShowMessage("没有可缓存的章节"))
-            }
-        }.onError {
-            _effects.tryEmit(BookCacheManageEffect.ShowMessage("加入缓存队列失败\n${it.localizedMessage}"))
-        }.onFinally {
-            refreshAllRuntimeDownloadStatuses()
+            _effects.tryEmit(BookCacheManageEffect.ShowMessage(
+                if (count > 0) context.getString(R.string.cache_queue_enqueued, count)
+                else context.getString(R.string.cache_queue_no_chapters),
+            ))
         }
     }
 
@@ -868,8 +852,6 @@ class BookCacheManageViewModel(
                 shelfBooks = finalBooks.filterNot { item -> item.isNotShelf },
                 notShelfBooks = finalBooks.filter { item -> item.isNotShelf },
                 chaptersByBookUrl = chaptersByBookUrl,
-                downloadSummary = buildDownloadSummary(finalBooks),
-                hasPausedDownloads = CacheBook.hasPausedDownloads,
                 version = state.version + 1,
             )
         }
@@ -904,8 +886,11 @@ class BookCacheManageViewModel(
         execute {
             CacheBook.removeAwait(context, bookUrl)
             clearBookCacheUseCase.execute(bookUrl)
-        }.onSuccess {
-            _effects.tryEmit(BookCacheManageEffect.ShowMessage("缓存已删除"))
+        }.onSuccess { removedBookUrl ->
+            _effects.tryEmit(BookCacheManageEffect.ShowMessage(context.getString(
+                if (removedBookUrl != null) R.string.cache_delete_book_complete
+                else R.string.cache_delete_book_incomplete,
+            )))
         }.onError {
             _effects.tryEmit(BookCacheManageEffect.ShowMessage("删除缓存失败\n${it.localizedMessage}"))
         }.onFinally {
@@ -966,21 +951,6 @@ class BookCacheManageViewModel(
 
     private fun sortItems(items: List<BookCacheBookItem>): List<BookCacheBookItem> {
         return sortBookCacheItems(items, CacheBook.explicitDownloadOrder())
-    }
-
-    private fun buildDownloadSummary(items: List<BookCacheBookItem>): String {
-        if (items.isEmpty()) return ""
-        val downloadingCount = items.sumOf { it.downloadingCount }
-        val waitingCount = items.sumOf { it.waitingCount }
-        val pausedCount = items.sumOf { it.pausedCount }
-        val errorCount = items.sumOf { it.errorCount }
-        val cachedCount = items.sumOf { it.cachedCount }
-        val cacheSummary = if (items.any { it.isCheckingCache }) {
-            context.getString(R.string.cache_count_checking)
-        } else {
-            "已缓存:$cachedCount"
-        }
-        return "下载中:$downloadingCount | 等待:$waitingCount | 暂停:$pausedCount | 失败:$errorCount | $cacheSummary"
     }
 
     private data class LoadedBookState(

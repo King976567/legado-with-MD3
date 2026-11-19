@@ -149,8 +149,17 @@ private fun BookCacheManageScreen(
             notBookshelfExpanded = true
         }
     }
-    val hasRunningDownload = filteredBooks.any { it.hasActiveDownload }
-    val hasDownloadTarget = filteredBooks.any { !it.isCheckingCache && it.cachedCount < it.totalCount }
+    val isFiltered = hasSearchQuery || selectedGroupId != BookGroup.IdAll
+    val overview = remember(filteredBooks) { summarizeBookCache(filteredBooks) }
+    val downloadSummary = if (filteredBooks.isEmpty()) null else {
+        val cacheStatus = if (overview.isCheckingCache) stringResource(R.string.cache_count_checking)
+        else stringResource(R.string.cache_summary_cached, overview.cached)
+        stringResource(
+            R.string.cache_download_summary,
+            overview.downloading, overview.waiting, overview.paused, overview.failed, cacheStatus,
+        )
+    }
+    val hasRunningDownload = overview.downloading > 0 || overview.waiting > 0
     val listUiState = remember(filteredBooks, searchKey, isSearchMode) {
         BookCacheManageListState(
             items = filteredBooks,
@@ -182,7 +191,7 @@ private fun BookCacheManageScreen(
         topBar = {
             DynamicTopAppBar(
                 title = stringResource(R.string.cache_management),
-                subtitle = state.downloadSummary.takeIf { it.isNotBlank() },
+                subtitle = downloadSummary,
                 state = listUiState,
                 onBackClick = onBackClick,
                 onSearchToggle = { active ->
@@ -190,7 +199,7 @@ private fun BookCacheManageScreen(
                     if (!active) searchKey = ""
                 },
                 onSearchQueryChange = { searchKey = it },
-                searchPlaceholder = "筛选书名/作者",
+                searchPlaceholder = stringResource(R.string.cache_filter_search),
                 onClearSelection = {},
                 topBarActions = {
                     AppChoiceDropdown(
@@ -215,7 +224,10 @@ private fun BookCacheManageScreen(
             )
         },
         floatingActionButton = {
-            if (hasRunningDownload || hasDownloadTarget) {
+            // This is a global operation; a filtered view keeps only per-book/section controls.
+            if (!isFiltered && state.isUpdatingQueue) {
+                AppCircularProgressIndicator()
+            } else if (!isFiltered && (hasRunningDownload || overview.hasDownloadTarget)) {
                 AppFloatingActionButton(
                     onClick = {
                         if (hasRunningDownload) {
@@ -226,10 +238,10 @@ private fun BookCacheManageScreen(
                     },
                     icon = if (hasRunningDownload) Icons.Default.Stop else Icons.Default.Download,
                     tooltipText = stringResource(
-                        if (hasRunningDownload) {
-                            R.string.stop_download
-                        } else {
-                            R.string.start_download
+                        when {
+                            hasRunningDownload -> R.string.cache_queue_pause_all
+                            overview.paused > 0 -> R.string.cache_queue_resume_all
+                            else -> R.string.cache_queue_start_all
                         }
                     )
                 )

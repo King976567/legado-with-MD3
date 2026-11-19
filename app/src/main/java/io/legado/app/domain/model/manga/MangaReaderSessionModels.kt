@@ -24,13 +24,25 @@ data class MangaBookState(
     val isLocal: Boolean,
     /** TOC titles are retained so a chapter transition stays informative before pages load. */
     val chapterTitles: List<String>,
+    val chapterUrls: List<String> = emptyList(),
 )
+
+data class MangaCatalog(
+    val urls: List<String>,
+    val titles: List<String>,
+    val readableCount: Int,
+) {
+    // In-flight page loads and cache jobs address chapters by index. Only apply a compatible TOC.
+    fun preservesIndices(previousUrls: List<String>): Boolean =
+        urls.size >= previousUrls.size && previousUrls.indices.all { urls[it] == previousUrls[it] }
+}
 
 data class MangaBookPresentation(
     val scrollMode: Int?,
     val sidePaddingDp: Int?,
     /** Null means that the source has not supplied a current shelf membership. */
     val inBookshelf: Boolean? = null,
+    val catalog: MangaCatalog? = null,
 )
 
 data class OpenedMangaBook(

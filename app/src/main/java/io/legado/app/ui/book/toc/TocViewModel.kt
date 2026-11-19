@@ -832,13 +832,13 @@ class TocViewModel(
                 WebBook.getChapterListAwait(it, book, true)
                     .onSuccess { cList ->
                         if (oldBook.bookUrl == book.bookUrl) {
-                            bookRepository.update(book)
+                            bookRepository.replaceChaptersAndUpdateBook(book, cList)
                         } else {
                             bookRepository.replace(oldBook, book)
                             BookHelp.updateCacheFolder(oldBook, book)
+                            bookRepository.deleteChaptersByBook(oldBook.bookUrl)
+                            bookRepository.insertChapters(*cList.toTypedArray())
                         }
-                        bookRepository.deleteChaptersByBook(oldBook.bookUrl)
-                        bookRepository.insertChapters(*cList.toTypedArray())
                         ReadBook.onChapterListUpdated(book)
                     }.onFailure {
                         AppLog.put("LoadTocError:${it.localizedMessage}", it)
