@@ -15,6 +15,10 @@
 
 机器人使用 `GITHUB_TOKEN` 创建 PR，不依赖该事件触发其他工作流；准备步骤完成后通过 `workflow_call` 直接执行验证。人工更新同步 PR 时，`pull_request` 入口也会重新验证。
 
+同步 PR 以 **Verify sync PR** 为唯一完整云端门禁。归属本 Fork 且目标匹配的 `automation/sync-upstream-*` → `main`、`automation/sync-nas-main` → `nas-md3` PR，跳过重复的常规 Verify 和 Auto Build；普通 PR、外部 Fork PR、手动发布与常规分支 push 入口不变。
+
+同一候选 SHA 和目标基线已有机器人直接调用时，不再批准或另行触发重复检查。候选或基线变化后重新验证。本机只跑受影响的定向回归，不重复执行云端全量；NAS Comic 的正式签名构建与保留数据的覆盖升级仍在本机执行。
+
 状态为 **Sync verification (upstream/nas)**；点击状态链接可查看报告和下载 APK，Artifacts 保留 14 天。此 APK 为 Comic Debug 测试包，不会自动发布 Release。构建只打包 arm64-v8a。
 
 用户日常交付使用 `nas-md3` 的签名 Release，流程见 [Android 正式版交付](android-release.md)。NAS Release 保留 `io.legato.kazusa.debug` 安装身份与历史签名，可直接覆盖原 Debug 版并保留数据；它仍为启用 R8、资源压缩且不可调试的正式构建，版本名不带 `_debug`。`main` 继续保留上游身份配置；第二阶段整合必须保留 NAS 分支这一交付差异。正式 APK 留在工程默认 Release 输出目录。
