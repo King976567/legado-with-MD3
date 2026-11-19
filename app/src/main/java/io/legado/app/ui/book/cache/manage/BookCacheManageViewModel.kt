@@ -9,6 +9,7 @@ import io.legado.app.data.entities.BookChapter
 import io.legado.app.data.entities.BookGroup
 import io.legado.app.data.model.BookChapterCacheInfo
 import io.legado.app.data.repository.BookCacheManageRepository
+import io.legado.app.data.repository.BookCacheSavedCount
 import io.legado.app.data.repository.NasUploadTaskRepository
 import io.legado.app.data.repository.NasTransferHistoryRepository
 import io.legado.app.data.repository.NasTransferRetryRepository
@@ -36,6 +37,7 @@ import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
@@ -54,6 +56,8 @@ data class BookCacheManageUiState(
     val nasUploads: List<NasUploadTask> = emptyList(),
     val nasHistory: List<NasTransferHistory> = emptyList(),
     val version: Long = 0,
+    val storageOrder: BookCacheStorageOrder? = null,
+    val isMeasuringStorage: Boolean = false,
 )
 
 data class BookCacheBookItem(
@@ -62,7 +66,7 @@ data class BookCacheBookItem(
     val author: String,
     val totalCount: Int,
     val cachedCount: Int,
-    val cachedFileCount: Int,
+    val hasCacheFiles: Boolean,
     val waitingCount: Int,
     val downloadingCount: Int,
     val pausedCount: Int,
@@ -71,8 +75,9 @@ data class BookCacheBookItem(
     val isVideo: Boolean = false,
     val group: Long,
     val isCheckingCache: Boolean = false,
+    val hasKnownCacheCount: Boolean = !isCheckingCache,
 ) {
-    val progress: Float get() = if (totalCount == 0) 0f else cachedCount.toFloat() / totalCount
+    val progress: Float get() = if (totalCount == 0) 0f else (cachedCount.toFloat() / totalCount).coerceIn(0f, 1f)
     val hasActiveDownload: Boolean get() = waitingCount > 0 || downloadingCount > 0
     val isPaused: Boolean get() = pausedCount > 0
     val hasDownloadTask: Boolean get() = hasActiveDownload || isPaused
@@ -96,6 +101,7 @@ data class BookCacheChapterItem(
 sealed interface BookCacheManageIntent {
     data object Initialize : BookCacheManageIntent
     data object Refresh : BookCacheManageIntent
+    data class SetStorageSort(val enabled: Boolean) : BookCacheManageIntent
     data object StartAllDownloads : BookCacheManageIntent
     data object StopAllDownloads : BookCacheManageIntent
     data class StartBookDownload(val bookUrl: String) : BookCacheManageIntent
@@ -143,11 +149,15 @@ class BookCacheManageViewModel(
 
     private var observeJob: Job? = null
     private var fullReloadJob: Job? = null
+    private var storageJob: Job? = null
+    private var didReadSavedCounts = false
+    private val hasScannedMembership = MutableStateFlow(false)
     private val bookReloadJobs = hashMapOf<String, Job>()
     private val chapterLoadJobs = hashMapOf<String, Job>()
     // Main-thread revisions: a scan that overlapped a successful download/deletion must
     // not publish older counts or restore a deleted cache entry.
     private val cacheMutationVersions = hashMapOf<String, Long>()
+    private val cacheDeletionVersions = hashMapOf<String, Long>()
     private val inFlightCacheScans = hashMapOf<String, MutableSet<BookCacheScanChanges>>()
     private val progressUpdateJobs = hashMapOf<String, Job>()
     private val pendingDownloadRefreshBookUrls = ConcurrentHashMap.newKeySet<String>()
@@ -155,7 +165,16 @@ class BookCacheManageViewModel(
     fun onIntent(intent: BookCacheManageIntent) {
         when (intent) {
             BookCacheManageIntent.Initialize -> initialize()
-            BookCacheManageIntent.Refresh -> reloadAll(forceDatabase = true)
+            BookCacheManageIntent.Refresh -> {
+                reloadAll(forceDatabase = true)
+                if (uiState.value.storageOrder != null || uiState.value.isMeasuringStorage) measureStorage()
+            }
+            is BookCacheManageIntent.SetStorageSort -> {
+                if (intent.enabled) measureStorage() else {
+                    storageJob?.cancel()
+                    _uiState.update { it.copy(storageOrder = null, isMeasuringStorage = false) }
+                }
+            }
             BookCacheManageIntent.StartAllDownloads -> startAllDownloads()
             BookCacheManageIntent.StopAllDownloads -> stopAllDownloads()
             is BookCacheManageIntent.StartBookDownload -> startBookDownload(intent.bookUrl)
@@ -328,44 +347,105 @@ class BookCacheManageViewModel(
         fullReloadJob = viewModelScope.launch {
             val sourceBooks = (if (forceDatabase) repository.getAllBooks()
                 else books ?: repository.getAllBooks()).filterNot { it.isLocal || it.isAudio || it.isVideo }
+            val byUrl = sourceBooks.associateBy { it.bookUrl }
+            val loadSaved = !didReadSavedCounts
+            val cacheVersionsAtStart = cacheMutationVersions.toMap()
             loadCacheItemsInStages(
                 books = sourceBooks,
-                loadSummary = { book ->
-                    withContext(Dispatchers.IO) {
-                        buildBookItem(book)?.takeIf(::shouldShowItem)
+                loadSaved = if (!loadSaved) null else {
+                    {
+                        val saved = repository.savedBookCounts(sourceBooks)
+                        sourceBooks.mapNotNull { book ->
+                            val count = saved[book.bookUrl] ?: return@mapNotNull null
+                            cacheBookRow(book, count.total).withSavedCacheCount(count)
+                        }
                     }
                 },
+                onSaved = { saved ->
+                    didReadSavedCounts = true
+                    if (saved.isNotEmpty()) publishBookList(saved, byUrl, isSaved = true, cacheVersionsAtStart = cacheVersionsAtStart)
+                },
+                loadSummary = { book -> withContext(Dispatchers.IO) { buildBookItem(book) } },
                 onSummaries = { summaries ->
-                    val runtime = CacheBook.downloadStateFlow.value.books
-                    val byUrl = sourceBooks.associateBy { it.bookUrl }
-                    val items = sortItems(summaries.map { item ->
-                        val recent = byUrl[item.bookUrl]?.let(repository::recentCachedChapters)
-                        applyDownloadStateToBookItem(
-                            if (recent == null) item else item.copy(
-                                cachedCount = min(recent.size, item.totalCount), isCheckingCache = false,
-                            ),
-                            runtime[item.bookUrl] ?: CacheBookDownloadState(item.bookUrl),
-                            CacheBook.cacheBookMap[item.bookUrl],
-                        )
-                    })
-                    val bookUrls = items.mapTo(hashSetOf()) { it.bookUrl }
-                    _uiState.update { state ->
-                        state.copy(
-                            isLoading = false,
-                            shelfBooks = retainBookCacheOrder(state.shelfBooks, items.filterNot { it.isNotShelf }),
-                            notShelfBooks = retainBookCacheOrder(state.notShelfBooks, items.filter { it.isNotShelf }),
-                            expandedBookUrls = state.expandedBookUrls.intersect(bookUrls),
-                            chaptersByBookUrl = state.chaptersByBookUrl.filterKeys { it in bookUrls },
-                            version = state.version + 1,
-                        )
+                    val previous = (uiState.value.shelfBooks + uiState.value.notShelfBooks).map { it.bookUrl }
+                    publishBookList(summaries, byUrl, isSaved = false, cacheVersionsAtStart = cacheVersionsAtStart)
+                    hasScannedMembership.value = true
+                    val shown = summaries.mapTo(hashSetOf()) { it.bookUrl }
+                    previous.forEach { url ->
+                        val unchanged = cacheVersionsAtStart[url] == cacheMutationVersions[url]
+                        if (url !in byUrl || (url !in shown && unchanged && !hasRuntimeDownloadState(url))) {
+                            // An old snapshot for a now-empty book cannot survive the rescan.
+                            repository.invalidateCachedChapters(url)
+                        }
                     }
+                    (runtimeBookUrls() - shown).forEach { ensureRuntimeBookVisible(it) }
                 },
-                countCached = { scanAndRememberCachedChapters(it).size },
+                countCached = { book, row -> scanAndRememberCachedChapters(book, row.totalCount).size },
                 onCount = { bookUrl, count ->
                     updateVerifiedBookCount(bookUrl, count)
                     if (bookUrl in uiState.value.expandedBookUrls) loadBookChapters(bookUrl, recheck = false)
                 },
             )
+        }
+    }
+
+    private fun publishBookList(
+        incoming: List<BookCacheBookItem>,
+        byUrl: Map<String, Book>,
+        isSaved: Boolean,
+        cacheVersionsAtStart: Map<String, Long>,
+    ) {
+        val runtime = CacheBook.downloadStateFlow.value.books
+        _uiState.update { state ->
+            val previous = (state.shelfBooks + state.notShelfBooks).associateBy { it.bookUrl }
+            val items = incoming.associateByTo(linkedMapOf()) { it.bookUrl }
+            val updated = items.mapValuesTo(linkedMapOf()) { (url, item) ->
+                val recent = byUrl[url]?.let(repository::recentCachedChapters)
+                val old = previous[url]
+                val counter = when {
+                    !isSaved && recent != null -> item.withVerifiedCacheCount(recent.size)
+                    !isSaved && item.isCheckingCache && old?.hasKnownCacheCount == true ->
+                        item.copy(cachedCount = min(old.cachedCount, item.totalCount), hasKnownCacheCount = true)
+                    else -> item
+                }
+                applyDownloadStateToBookItem(counter, runtime[url] ?: CacheBookDownloadState(url), CacheBook.cacheBookMap[url])
+            }
+            // A first download can start after this book's summary was read.
+            previous.forEach { (url, item) ->
+                val changed = cacheVersionsAtStart[url] != cacheMutationVersions[url]
+                if (url !in updated && url in byUrl && (isSaved || changed || hasRuntimeDownloadState(url))) {
+                    updated[url] = applyDownloadStateToBookItem(
+                        item, runtime[url] ?: CacheBookDownloadState(url), CacheBook.cacheBookMap[url],
+                    )
+                }
+            }
+            val ordered = sortItems(updated.values.toList())
+            state.copy(
+                isLoading = false,
+                shelfBooks = retainBookCacheOrder(state.shelfBooks, ordered.filterNot { it.isNotShelf }),
+                notShelfBooks = retainBookCacheOrder(state.notShelfBooks, ordered.filter { it.isNotShelf }),
+                expandedBookUrls = state.expandedBookUrls.intersect(updated.keys),
+                chaptersByBookUrl = state.chaptersByBookUrl.filterKeys { it in updated },
+                version = state.version + 1,
+            )
+        }
+    }
+
+    private fun measureStorage() {
+        storageJob?.cancel()
+        _uiState.update { it.copy(isMeasuringStorage = true) }
+        storageJob = viewModelScope.launch {
+            try {
+                val versions = cacheDeletionVersions.toMap()
+                hasScannedMembership.first { it }
+                val books = repository.getAllBooks().filterNot { it.isLocal || it.isAudio || it.isVideo }
+                val bytes = repository.measureCacheBytes(books).filterKeys { versions[it] == cacheDeletionVersions[it] }
+                _uiState.update { state ->
+                    state.copy(storageOrder = BookCacheStorageOrder.create(state.shelfBooks + state.notShelfBooks, bytes))
+                }
+            } finally {
+                if (currentCoroutineContext().isActive) _uiState.update { it.copy(isMeasuringStorage = false) }
+            }
         }
     }
 
@@ -417,6 +497,7 @@ class BookCacheManageViewModel(
 
     private suspend fun scanAndRememberCachedChapters(
         book: Book,
+        totalCount: Int,
         catalog: List<BookChapterCacheInfo>? = null,
     ): Set<BookChapterCacheInfo> {
         val bookUrl = book.bookUrl
@@ -429,7 +510,7 @@ class BookCacheManageViewModel(
                 scans.remove(changes)
                 if (scans.isEmpty()) inFlightCacheScans.remove(bookUrl)
             } ?: continue
-            repository.rememberCachedChapters(book, verified)
+            repository.rememberCachedChapters(book, verified, totalCount)
             return verified
         }
     }
@@ -439,7 +520,7 @@ class BookCacheManageViewModel(
             fun update(item: BookCacheBookItem): BookCacheBookItem {
                 if (item.bookUrl != bookUrl) return item
                 return applyDownloadStateToBookItem(
-                    item.copy(cachedCount = min(count, item.totalCount), isCheckingCache = false),
+                    item.withVerifiedCacheCount(count),
                     CacheBook.downloadStateFlow.value.books[bookUrl] ?: CacheBookDownloadState(bookUrl),
                     CacheBook.cacheBookMap[bookUrl],
                 )
@@ -454,7 +535,12 @@ class BookCacheManageViewModel(
         bumpCacheVersion(bookUrl)
         val chapterInfo = BookChapterCacheInfo(chapter.url, chapter.title, false, chapter.index)
         inFlightCacheScans[bookUrl]?.forEach { it.chapterCompleted(chapterInfo) }
-        repository.recordCachedChapter(bookUrl, chapterInfo)?.let { updateVerifiedBookCount(bookUrl, it) }
+        val count = repository.recordCachedChapter(bookUrl, chapterInfo)
+        if (count != null && isBookVisible(bookUrl)) {
+            updateVerifiedBookCount(bookUrl, count)
+        } else if (inFlightCacheScans[bookUrl].isNullOrEmpty() && bookReloadJobs[bookUrl]?.isActive != true) {
+            scheduleBookReload(bookUrl)
+        }
         _uiState.update { state ->
             val chapters = state.chaptersByBookUrl[bookUrl] ?: return@update state
             state.copy(
@@ -488,10 +574,10 @@ class BookCacheManageViewModel(
     private suspend fun reloadBook(bookUrl: String) {
         val book = repository.getBook(bookUrl)?.takeUnless { it.isLocal || it.isAudio || it.isVideo }
         val summary = book?.let { withContext(Dispatchers.IO) { buildBookItem(it) } }
-        val item = if (book != null && summary?.let(::shouldShowItem) == true) {
-            val cached = scanAndRememberCachedChapters(book)
+        val item = if (book != null && summary != null) {
+            val cached = scanAndRememberCachedChapters(book, summary.totalCount)
             applyDownloadStateToBookItem(
-                summary.copy(cachedCount = min(cached.size, summary.totalCount), isCheckingCache = false),
+                summary.withVerifiedCacheCount(cached.size),
                 CacheBook.downloadStateFlow.value.books[bookUrl] ?: CacheBookDownloadState(bookUrl),
                 CacheBook.cacheBookMap[bookUrl],
             )
@@ -523,51 +609,47 @@ class BookCacheManageViewModel(
     }
 
     private suspend fun buildBookItem(book: Book): BookCacheBookItem? {
-        val cacheFiles = BookHelp.getChapterFiles(book)
-        val bookState = CacheBook.downloadStateFlow.value.books[book.bookUrl]
-        val model = CacheBook.cacheBookMap[book.bookUrl]
-        val rawWaitingCount = bookState?.waitingCount.orZero() +
-                CacheBook.pendingAdmissionFlow.value[book.bookUrl].orZero()
-        val rawDownloadingCount = bookState?.runningIndices?.size.orZero()
-        val isBookPaused = model?.isPaused() == true ||
-                (CacheBook.hasPausedDownloads && CacheBook.pendingAdmissionFlow.value.containsKey(book.bookUrl))
-        val pausedCount = if (isBookPaused) {
-            rawWaitingCount + rawDownloadingCount + bookState?.pausedIndices?.size.orZero()
-        } else {
-            bookState?.pausedIndices?.size.orZero()
-        }
-        val waitingCount = if (isBookPaused) 0 else rawWaitingCount
-        val downloadingCount = if (isBookPaused) 0 else rawDownloadingCount
-        val errorIndices = errorIndices(book.bookUrl)
-        val cachedFileCount = cacheFiles.count { it.endsWith(".nb") }
-        if (cachedFileCount == 0 && waitingCount == 0 && downloadingCount == 0 &&
-            pausedCount == 0 && errorIndices.isEmpty()
-        ) return null
-        val totalCount = repository.getDownloadableChapterCount(book.bookUrl)
-        val cachedCount = when {
-            cachedFileCount == 0 -> 0
-            else -> repository.recentCachedChapters(book)?.size
-        }
-        return BookCacheBookItem(
-            bookUrl = book.bookUrl,
-            name = book.name,
-            author = book.getRealAuthor(),
-            totalCount = totalCount,
-            cachedCount = min(cachedCount ?: 0, totalCount),
-            cachedFileCount = cachedFileCount,
-            waitingCount = waitingCount,
-            downloadingCount = downloadingCount,
-            pausedCount = pausedCount,
-            errorCount = errorIndices.size,
-            isNotShelf = book.isNotShelf,
-            isVideo = book.isVideo,
-            group = book.group,
-            isCheckingCache = cachedCount == null,
+        val hasFiles = repository.hasCacheFiles(book)
+        val bookUrl = book.bookUrl
+        if (!hasFiles && !hasRuntimeDownloadState(bookUrl)) return null
+        val totalCount = repository.getDownloadableChapterCount(bookUrl)
+        val recent = if (hasFiles) repository.recentCachedChapters(book) else null
+        val row = cacheBookRow(book, totalCount).copy(
+            hasCacheFiles = hasFiles,
+            isCheckingCache = hasFiles && recent == null,
+            hasKnownCacheCount = !hasFiles || recent != null,
+            cachedCount = min(recent?.size ?: 0, totalCount),
+        )
+        return applyDownloadStateToBookItem(row,
+            CacheBook.downloadStateFlow.value.books[bookUrl] ?: CacheBookDownloadState(bookUrl),
+            CacheBook.cacheBookMap[bookUrl],
         )
     }
 
-    private fun shouldShowItem(item: BookCacheBookItem): Boolean {
-        return item.cachedFileCount > 0 || item.hasDownloadTask || item.errorCount > 0
+    private fun cacheBookRow(book: Book, totalCount: Int) = BookCacheBookItem(
+        bookUrl = book.bookUrl, name = book.name, author = book.getRealAuthor(),
+        totalCount = totalCount, cachedCount = 0, hasCacheFiles = false,
+        waitingCount = 0, downloadingCount = 0, pausedCount = 0, errorCount = 0,
+        isNotShelf = book.isNotShelf, isVideo = book.isVideo, group = book.group,
+    )
+
+    private fun hasRuntimeDownloadState(bookUrl: String): Boolean {
+        val state = CacheBook.downloadStateFlow.value.books[bookUrl]
+        return state?.let { it.waitingCount > 0 || it.runningIndices.isNotEmpty() || it.pausedIndices.isNotEmpty() } == true ||
+            CacheBook.pendingAdmissionFlow.value.containsKey(bookUrl) || errorIndices(bookUrl).isNotEmpty()
+    }
+
+    private fun isBookVisible(bookUrl: String): Boolean = uiState.value.let { state ->
+        state.shelfBooks.any { it.bookUrl == bookUrl } || state.notShelfBooks.any { it.bookUrl == bookUrl }
+    }
+
+    private fun runtimeBookUrls(): Set<String> = CacheBook.downloadStateFlow.value.books.keys +
+        CacheBook.pendingAdmissionFlow.value.keys + CacheBook.cacheBookMap.keys
+
+    private fun ensureRuntimeBookVisible(bookUrl: String) {
+        if (hasRuntimeDownloadState(bookUrl) && !isBookVisible(bookUrl) &&
+            bookReloadJobs[bookUrl]?.isActive != true
+        ) scheduleBookReload(bookUrl)
     }
 
     private suspend fun buildChapterItems(
@@ -667,7 +749,7 @@ class BookCacheManageViewModel(
                     publishBookChapters(book, catalog)
                 }
                 if (recheck || recent == null) {
-                    val verified = scanAndRememberCachedChapters(book, catalog)
+                    val verified = scanAndRememberCachedChapters(book, catalog.count { !it.isVolume }, catalog)
                     updateVerifiedBookCount(bookUrl, verified.size)
                     publishBookChapters(book, catalog)
                 }
@@ -728,7 +810,8 @@ class BookCacheManageViewModel(
     }
 
     private fun startAllDownloads() {
-        val bookUrls = (uiState.value.shelfBooks + uiState.value.notShelfBooks).map { it.bookUrl }
+        val bookUrls = (uiState.value.shelfBooks + uiState.value.notShelfBooks)
+            .filter { it.hasCacheFiles || it.hasDownloadTask || it.errorCount > 0 }.map { it.bookUrl }
         updateGlobalQueue {
             if (CacheBook.resume(context)) return@updateGlobalQueue
             var count = 0
@@ -820,6 +903,7 @@ class BookCacheManageViewModel(
         if (bookUrls.isEmpty()) return
         val targets = bookUrls.filter { it.isNotBlank() }.toSet()
         if (targets.isEmpty()) return
+        targets.forEach { ensureRuntimeBookVisible(it) }
         val stateSnapshot = CacheBook.downloadStateFlow.value.books
         _uiState.update { state ->
             fun updateBookItem(item: BookCacheBookItem): BookCacheBookItem {
@@ -959,6 +1043,8 @@ class BookCacheManageViewModel(
 
     private fun invalidateAfterCacheDeletion(bookUrl: String) {
         bumpCacheVersion(bookUrl)
+        cacheDeletionVersions[bookUrl] = cacheMutationVersions.getValue(bookUrl)
+        _uiState.update { state -> state.copy(storageOrder = state.storageOrder?.withoutBytes(bookUrl)) }
         inFlightCacheScans[bookUrl]?.forEach { it.invalidate() }
         repository.invalidateCachedChapters(bookUrl)
         chapterLoadJobs.remove(bookUrl)?.cancel()
@@ -987,21 +1073,37 @@ internal class BookCacheScanChanges {
 
 internal suspend fun loadCacheItemsInStages(
     books: List<Book>,
+    loadSaved: (suspend () -> List<BookCacheBookItem>)? = null,
+    onSaved: suspend (List<BookCacheBookItem>) -> Unit = {},
     loadSummary: suspend (Book) -> BookCacheBookItem?,
     onSummaries: suspend (List<BookCacheBookItem>) -> Unit,
-    countCached: suspend (Book) -> Int,
+    countCached: suspend (Book, BookCacheBookItem) -> Int,
     onCount: suspend (String, Int) -> Unit,
 ) {
+    if (loadSaved != null) {
+        val saved = loadSaved()
+        currentCoroutineContext().ensureActive()
+        onSaved(saved)
+    }
     val summaries = books.mapNotNull { book ->
         currentCoroutineContext().ensureActive()
         loadSummary(book)?.let { book to it }
     }
     currentCoroutineContext().ensureActive()
     onSummaries(summaries.map { it.second })
-    for ((book, _) in summaries) {
+    for ((book, row) in summaries) {
         currentCoroutineContext().ensureActive()
-        val count = countCached(book)
+        val count = countCached(book, row)
         currentCoroutineContext().ensureActive()
         onCount(book.bookUrl, count)
     }
 }
+
+internal fun BookCacheBookItem.withSavedCacheCount(count: BookCacheSavedCount) = copy(
+    totalCount = count.total, cachedCount = count.cached, isCheckingCache = true, hasKnownCacheCount = true,
+)
+
+private fun BookCacheBookItem.withVerifiedCacheCount(count: Int) = copy(
+    cachedCount = min(count, totalCount), isCheckingCache = false, hasKnownCacheCount = true,
+    hasCacheFiles = hasCacheFiles || count > 0,
+)

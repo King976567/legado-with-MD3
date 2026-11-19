@@ -57,3 +57,28 @@ internal fun summarizeBookCache(items: List<BookCacheBookItem>): BookCacheOvervi
     }
     return BookCacheOverview(downloading, waiting, paused, failed, cached, checking, hasTarget)
 }
+
+/** A user-requested measurement and ordering, independent of the live download queue. */
+data class BookCacheStorageOrder private constructor(
+    val bytesByBook: Map<String, Long>,
+    private val rankByBook: Map<String, Int>,
+) {
+    fun applyTo(items: List<BookCacheBookItem>, lockedUrls: Set<String>): List<BookCacheBookItem> =
+        items.sortedBy { item ->
+            if (item.bookUrl in lockedUrls) Int.MAX_VALUE else rankByBook[item.bookUrl] ?: Int.MAX_VALUE
+        }
+
+    // A delete makes the displayed size stale, but must not move the row.
+    fun withoutBytes(bookUrl: String) = copy(bytesByBook = bytesByBook - bookUrl)
+
+    companion object {
+        internal fun create(items: List<BookCacheBookItem>, bytes: Map<String, Long>): BookCacheStorageOrder {
+            val stable = items.map { it.bookUrl }
+            val ranked = stable
+                .filter { it in bytes }
+                .sortedByDescending { bytes.getValue(it) }
+                .withIndex().associate { it.value to it.index }
+            return BookCacheStorageOrder(bytes, ranked)
+        }
+    }
+}

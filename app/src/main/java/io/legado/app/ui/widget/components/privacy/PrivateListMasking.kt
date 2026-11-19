@@ -25,7 +25,10 @@ import org.koin.compose.koinInject
  * 让四处列表各写一遍 VM 管线反而更容易漂移。网关访问收在这一个组件内，调用方不碰数据层。
  */
 @Composable
-fun rememberPrivateLockedBookUrls(bookUrls: List<String>): Set<String> {
+fun rememberPrivateLockedBookUrls(
+    bookUrls: List<String>,
+    maskWhileLoading: Boolean = false,
+): Set<String> {
     val privateContentGateway: PrivateContentGateway = koinInject()
     val privateAccessGateway: PrivateAccessGateway = koinInject()
     val access by privateAccessGateway.state.collectAsStateWithLifecycle(PrivateAccessState())
@@ -41,12 +44,12 @@ fun rememberPrivateLockedBookUrls(bookUrls: List<String>): Set<String> {
         }
     }
 
-    return remember(bookUrls, facts, access, settings) {
+    return remember(bookUrls, facts, access, settings, maskWhileLoading) {
         if (!settings.verifyOnOpenBook) {
             emptySet()
         } else {
             bookUrls.filterTo(mutableSetOf()) { url ->
-                val itemFacts = facts[url] ?: return@filterTo false
+                val itemFacts = facts[url] ?: return@filterTo maskWhileLoading
                 itemFacts.isPrivate && !access.isTargetGranted(url, itemFacts.groupMask)
             }
         }

@@ -3922,6 +3922,12 @@
     <string name="feature_nas_book_remove_title">删除 NAS 源文件？</string>
     <string name="feature_nas_book_remove_message">确定永久删除“%1$s”的 NAS 源文件和书库记录吗？此操作不可恢复。</string>
     <string name="feature_nas_book_remove_confirm">删除源文件</string>
+    <string name="cache_sort_title">缓存排序</string>
+    <string name="cache_sort_default">默认排序</string>
+    <string name="cache_sort_storage">按占用排序</string>
+    <string name="cache_storage_measuring">正在统计缓存文件…</string>
+    <string name="cache_storage_bytes">缓存占用：%1$s</string>
+    <string name="cache_storage_unavailable">未测得缓存占用</string>
     <string name="cache_count_checking">正在统计缓存…</string>
     <string name="cast_voice_effect">变声器</string>
     <string name="cast_voice_effect_sentence">变声器（只这一句）</string>

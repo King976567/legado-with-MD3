@@ -1,5 +1,7 @@
 package io.legado.app.ui.book.cache.manage
 
+import android.text.format.Formatter
+
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -15,6 +17,7 @@ import androidx.compose.foundation.lazy.LazyListScope
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
+import androidx.compose.material.icons.automirrored.filled.Sort
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Download
 import androidx.compose.material.icons.filled.CloudUpload
@@ -127,7 +130,9 @@ private fun BookCacheManageScreen(
     var selectedGroupId by remember { mutableStateOf(BookGroup.IdAll) }
 
     val allBooks = state.shelfBooks + state.notShelfBooks
-    val filteredBooks = remember(allBooks, searchKey, isSearchMode, selectedGroupId) {
+    // Keep private entries deletable without revealing book/chapter titles or measured sizes.
+    val lockedBookUrls = rememberPrivateLockedBookUrls(allBooks.map { it.bookUrl }, maskWhileLoading = true)
+    val filteredBooks = remember(allBooks, searchKey, isSearchMode, selectedGroupId, lockedBookUrls) {
         allBooks.filter { book ->
             val matchesGroup = when (selectedGroupId) {
                 BookGroup.IdAll -> true
@@ -135,13 +140,18 @@ private fun BookCacheManageScreen(
                 else -> !book.isNotShelf && (book.group and selectedGroupId) > 0L
             }
             val matchesSearch = !isSearchMode || searchKey.isBlank() ||
-                    book.name.contains(searchKey.trim(), ignoreCase = true) ||
-                    book.author.contains(searchKey.trim(), ignoreCase = true)
+                    (book.bookUrl !in lockedBookUrls && (
+                        book.name.contains(searchKey.trim(), ignoreCase = true) ||
+                            book.author.contains(searchKey.trim(), ignoreCase = true)
+                        ))
             matchesGroup && matchesSearch
         }
     }
-    val filteredShelfBooks = remember(filteredBooks) { filteredBooks.filterNot { it.isNotShelf } }
-    val filteredNotShelfBooks = remember(filteredBooks) { filteredBooks.filter { it.isNotShelf } }
+    val displayedBooks = remember(filteredBooks, state.storageOrder, lockedBookUrls) {
+        state.storageOrder?.applyTo(filteredBooks, lockedBookUrls) ?: filteredBooks
+    }
+    val filteredShelfBooks = remember(displayedBooks) { displayedBooks.filterNot { it.isNotShelf } }
+    val filteredNotShelfBooks = remember(displayedBooks) { displayedBooks.filter { it.isNotShelf } }
     val hasSearchQuery = isSearchMode && searchKey.isNotBlank()
     LaunchedEffect(hasSearchQuery) {
         if (hasSearchQuery) {
@@ -206,6 +216,21 @@ private fun BookCacheManageScreen(
                 onClearSelection = {},
                 topBarActions = {
                     AppChoiceDropdown(
+                        options = listOf(
+                            AppChoiceOption("default", stringResource(R.string.cache_sort_default)),
+                            AppChoiceOption("size", stringResource(R.string.cache_sort_storage)),
+                        ).toImmutableList(),
+                        selectedId = if (state.storageOrder != null || state.isMeasuringStorage) "size" else "default",
+                        onSelect = { onIntent(BookCacheManageIntent.SetStorageSort(it == "size")) },
+                        title = stringResource(R.string.cache_sort_title),
+                        anchor = AppMenuAnchor.Icon,
+                    ) {
+                        AppIcon(
+                            imageVector = Icons.AutoMirrored.Filled.Sort,
+                            contentDescription = stringResource(R.string.cache_sort_title),
+                        )
+                    }
+                    AppChoiceDropdown(
                         options = groupChoices,
                         selectedId = selectedGroupId.toString(),
                         onSelect = { selectedGroupId = it.toLong() },
@@ -251,10 +276,6 @@ private fun BookCacheManageScreen(
             }
         }
     ) { paddingValues ->
-        // 私密且未获准的书：缓存条目保留（缓存管理要能清缓存），但不显示书名与作者
-        val lockedBookUrls = rememberPrivateLockedBookUrls(
-            (filteredShelfBooks + filteredNotShelfBooks).map { it.bookUrl }
-        )
         FastScrollLazyColumn(
             modifier = Modifier.fillMaxSize(),
             contentPadding = adaptiveContentPadding(
@@ -294,6 +315,11 @@ private fun BookCacheManageScreen(
                 }
                 return@FastScrollLazyColumn
             }
+            if (state.isMeasuringStorage) {
+                item(key = "cache-storage-measuring") {
+                    TextCard(text = stringResource(R.string.cache_storage_measuring), modifier = Modifier.fillMaxWidth())
+                }
+            }
             cacheSection(
                 title = bookshelfSectionTitle,
                 emptyText = bookshelfSectionEmptyText,
@@ -301,6 +327,8 @@ private fun BookCacheManageScreen(
                 sectionExpanded = bookshelfExpanded,
                 onToggleSection = { bookshelfExpanded = !bookshelfExpanded },
                 expandedBookUrls = state.expandedBookUrls,
+                lockedBookUrls = lockedBookUrls,
+                storageBytes = state.storageOrder?.bytesByBook,
                 chaptersByBookUrl = state.chaptersByBookUrl,
                 onToggleExpanded = { bookUrl ->
                     onIntent(BookCacheManageIntent.ToggleBookExpanded(bookUrl))
@@ -317,6 +345,8 @@ private fun BookCacheManageScreen(
                     sectionExpanded = notBookshelfExpanded,
                     onToggleSection = { notBookshelfExpanded = !notBookshelfExpanded },
                     expandedBookUrls = state.expandedBookUrls,
+                    lockedBookUrls = lockedBookUrls,
+                    storageBytes = state.storageOrder?.bytesByBook,
                     chaptersByBookUrl = state.chaptersByBookUrl,
                     onToggleExpanded = { bookUrl ->
                         onIntent(BookCacheManageIntent.ToggleBookExpanded(bookUrl))
@@ -714,6 +744,8 @@ private fun LazyListScope.cacheSection(
     sectionExpanded: Boolean,
     onToggleSection: () -> Unit,
     expandedBookUrls: Set<String>,
+    lockedBookUrls: Set<String>,
+    storageBytes: Map<String, Long>?,
     chaptersByBookUrl: Map<String, List<BookCacheChapterItem>>,
     onToggleExpanded: (String) -> Unit,
     onIntent: (BookCacheManageIntent) -> Unit,
@@ -741,12 +773,15 @@ private fun LazyListScope.cacheSection(
     } else {
         books.forEach { item ->
             val bookUrl = item.bookUrl
-            val expanded = expandedBookUrls.contains(bookUrl)
+            val isLocked = bookUrl in lockedBookUrls
+            val expanded = !isLocked && expandedBookUrls.contains(bookUrl)
             item(key = "$title-book-$bookUrl") {
                 BookCacheBookCard(
                     item = item,
                     expanded = expanded,
-                    onToggleExpanded = { onToggleExpanded(bookUrl) },
+                    storageBytes = storageBytes?.get(bookUrl).takeUnless { isLocked },
+                    showStorage = !isLocked && storageBytes != null,
+                    onToggleExpanded = { if (!isLocked) onToggleExpanded(bookUrl) },
                     onIntent = onIntent,
                     onDeleteBook = onDeleteBook,
                     modifier = Modifier.animateItem()
@@ -788,6 +823,8 @@ private fun LazyListScope.cacheSection(
 private fun BookCacheBookCard(
     item: BookCacheBookItem,
     expanded: Boolean,
+    storageBytes: Long?,
+    showStorage: Boolean,
     onToggleExpanded: () -> Unit,
     onIntent: (BookCacheManageIntent) -> Unit,
     onDeleteBook: (BookCacheBookItem) -> Unit,
@@ -805,11 +842,16 @@ private fun BookCacheBookCard(
         item.pausedCount,
         item.errorCount
     )
-    val progressDescription = if (item.isCheckingCache) {
-        stringResource(R.string.cache_count_checking)
-    } else {
-        stringResource(R.string.cache_progress_description, item.cachedCount, item.totalCount, progressPercent)
-    }
+    val progressDescription = listOfNotNull(
+        if (item.hasKnownCacheCount) stringResource(
+            R.string.cache_progress_description, item.cachedCount, item.totalCount, progressPercent,
+        ) else null,
+        if (item.isCheckingCache) stringResource(R.string.cache_count_checking) else null,
+    ).joinToString(" · ")
+    val storageLabel = if (showStorage) {
+        if (storageBytes == null) stringResource(R.string.cache_storage_unavailable)
+        else stringResource(R.string.cache_storage_bytes, Formatter.formatShortFileSize(LocalContext.current, storageBytes))
+    } else null
     val expandedState = stringResource(
         if (expanded) R.string.a11y_expanded else R.string.a11y_collapsed
     )
@@ -819,7 +861,7 @@ private fun BookCacheBookCard(
         item.author,
         progressDescription,
         statusSummary
-    )
+    ) + storageLabel?.let { " · $it" }.orEmpty()
     NormalCard(
         modifier = modifier
             .fillMaxWidth()
@@ -865,17 +907,17 @@ private fun BookCacheBookCard(
                     )
                 }
                 TextCard(
-                    text = if (item.isCheckingCache) "…/${item.totalCount}" else "${item.cachedCount}/${item.totalCount}",
+                    text = if (item.hasKnownCacheCount) "${item.cachedCount}/${item.totalCount}" else "…/${item.totalCount}",
                     backgroundColor = LegadoTheme.colorScheme.cardContainer,
                 )
             }
             AppLinearProgressIndicator(
-                progress = if (item.isCheckingCache) null else item.progress,
+                progress = if (item.hasKnownCacheCount) item.progress else null,
                 modifier = Modifier
                     .fillMaxWidth()
                     .semantics {
                         contentDescription = progressDescription
-                        progressBarRangeInfo = if (item.isCheckingCache) ProgressBarRangeInfo.Indeterminate
+                        progressBarRangeInfo = if (!item.hasKnownCacheCount) ProgressBarRangeInfo.Indeterminate
                             else ProgressBarRangeInfo(item.progress, 0f..1f)
                     }
             )
@@ -885,7 +927,11 @@ private fun BookCacheBookCard(
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 AppText(
-                    text = statusSummary,
+                    text = listOfNotNull(
+                        statusSummary,
+                        if (item.isCheckingCache) stringResource(R.string.cache_count_checking) else null,
+                        storageLabel,
+                    ).joinToString("\n"),
                     modifier = Modifier.weight(1f),
                     style = LegadoTheme.typography.labelMediumEmphasized,
                     color = LegadoTheme.colorScheme.onSurfaceVariant

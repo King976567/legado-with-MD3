@@ -924,15 +924,14 @@ object BookHelp {
         }
     }
 
-    fun getChapterFiles(book: Book): HashSet<String> {
+    fun getChapterFiles(book: Book, createIfMissing: Boolean = true): HashSet<String> {
         val fileNames = hashSetOf<String>()
         if (book.isLocalTxt) {
             return fileNames
         }
-        val bookDir = FileUtils.createFolderIfNotExist(
-            downloadDir,
-            subDirs = arrayOf(cacheFolderName, book.getFolderName())
-        )
+        val bookDir = if (createIfMissing) {
+            FileUtils.createFolderIfNotExist(downloadDir, subDirs = arrayOf(cacheFolderName, book.getFolderName()))
+        } else File(cachePath, book.getFolderName())
         bookDir.list()?.forEach { name ->
             val entry = File(bookDir, name)
             if (entry.isDirectory) {

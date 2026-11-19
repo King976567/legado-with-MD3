@@ -3066,6 +3066,12 @@
     <string name="feature_bookmarks_no_matching_notes">找不到相關筆記</string>
     <string name="feature_bookmarks_no_notes">暫無筆記</string>
     <string name="feature_bookmarks_chapter_fallback">第 %1$d 章</string>
+    <string name="cache_sort_title">快取排序</string>
+    <string name="cache_sort_default">預設排序</string>
+    <string name="cache_sort_storage">按佔用排序</string>
+    <string name="cache_storage_measuring">正在統計快取檔案…</string>
+    <string name="cache_storage_bytes">快取佔用：%1$s</string>
+    <string name="cache_storage_unavailable">未能量度快取佔用</string>
     <string name="cache_count_checking">正在統計快取…</string>
     <string name="read_aloud_audio_download">聽書音頻下載</string>
     <string name="read_aloud_audio_download_progress">章節 %1$d/%2$d · 句子 %3$d/%4$d</string>

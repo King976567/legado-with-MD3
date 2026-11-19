@@ -83,6 +83,20 @@ class BookCacheListSortTest {
         assertEquals(incoming, retainBookCacheOrder(emptyList(), incoming))
     }
 
+    @Test
+    fun explicitStorageOrderKeepsTiesAndUnknownsStableWithoutChangingQueueOrder() {
+        val rows = listOf(item("first"), item("tie1"), item("large"), item("tie2"), item("unknown"))
+        val storage = BookCacheStorageOrder.create(rows, mapOf("first" to 0, "tie1" to 11, "tie2" to 11, "large" to 200))
+        val sortedUrls = listOf("large", "tie1", "tie2", "first", "unknown")
+        assertEquals(sortedUrls, storage.applyTo(rows, emptySet()).map { it.bookUrl })
+        val live = rows.map { it.copy(cachedCount = 1, downloadingCount = 1) } + item("new")
+        val stale = storage.withoutBytes("large")
+        assertEquals(null, stale.bytesByBook["large"])
+        assertEquals(sortedUrls + "new", stale.applyTo(live, emptySet()).map { it.bookUrl })
+        assertEquals(listOf("tie1", "tie2", "first", "large", "unknown"), storage.applyTo(rows, setOf("large")).map { it.bookUrl })
+        assertEquals("first", sortBookCacheItems(live, listOf("first", "large")).first().bookUrl)
+    }
+
     private fun item(
         bookUrl: String,
         downloadingCount: Int = 0,
@@ -96,7 +110,7 @@ class BookCacheListSortTest {
             author = "",
             totalCount = 10,
             cachedCount = cachedCount,
-            cachedFileCount = cachedCount,
+            hasCacheFiles = cachedCount > 0,
             waitingCount = waitingCount,
             downloadingCount = downloadingCount,
             pausedCount = pausedCount,
