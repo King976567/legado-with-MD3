@@ -15,6 +15,7 @@ import io.legado.app.domain.gateway.MangaReaderDataGateway
 import io.legado.app.domain.model.manga.MangaBookPresentation
 import io.legado.app.domain.model.manga.MangaBookState
 import io.legado.app.domain.model.manga.MangaCatalog
+import io.legado.app.domain.model.manga.MangaCatalogCheck
 import io.legado.app.domain.model.manga.MangaChapterContent
 import io.legado.app.domain.model.manga.MangaProgressState
 import io.legado.app.domain.model.manga.OpenedMangaBook
@@ -91,19 +92,19 @@ class MangaReaderDataRepository(
         })
     }.distinctUntilChanged()
 
-    override suspend fun checkForCatalogUpdates(bookUrl: String) {
-        if (!NetworkUtils.isAvailable()) return
-        val original = database.bookDao.getBook(bookUrl) ?: return
+    override suspend fun checkForCatalogUpdates(bookUrl: String): MangaCatalogCheck {
+        if (!NetworkUtils.isAvailable()) return MangaCatalogCheck.Unchanged
+        val original = database.bookDao.getBook(bookUrl) ?: return MangaCatalogCheck.Unchanged
         if (original.isLocal || !original.canUpdate || original.tocUrl.isBlank() ||
             original.readSimulating()
-        ) return
-        val source = database.bookSourceDao.getBookSource(original.origin)?.takeIf { it.enabled } ?: return
+        ) return MangaCatalogCheck.Unchanged
+        val source = database.bookSourceDao.getBookSource(original.origin)?.takeIf { it.enabled } ?: return MangaCatalogCheck.Unchanged
         val fetchedBook = original.copy()
         val fetched = withTimeoutOrNull(15_000L) {
             WebBook.getChapterListAwait(source, fetchedBook, runPerJs = true).getOrThrow()
-        } ?: return
+        } ?: return MangaCatalogCheck.Unchanged
         currentCoroutineContext().ensureActive()
-        database.appendMangaCatalog(original, fetchedBook, fetched)
+        return database.appendMangaCatalog(original, fetchedBook, fetched)
     }
 
     override suspend fun openBook(
@@ -327,23 +328,34 @@ internal suspend fun AppDatabase.appendMangaCatalog(
     original: Book,
     refreshed: Book,
     fetched: List<BookChapter>,
-) = withTransaction {
+): MangaCatalogCheck = withTransaction {
     val bookUrl = original.bookUrl
-    val current = bookDao.getBook(bookUrl) ?: return@withTransaction
+    val current = bookDao.getBook(bookUrl) ?: return@withTransaction MangaCatalogCheck.Unchanged
     if (refreshed.bookUrl != bookUrl || current.isLocal || !current.canUpdate ||
         current.origin != original.origin || current.tocUrl != original.tocUrl ||
         current.readSimulating() || current.getReverseToc() != original.getReverseToc()
-    ) return@withTransaction
+    ) return@withTransaction MangaCatalogCheck.Unchanged
     val existing = bookChapterDao.getChapterList(bookUrl)
-    if (existing.isEmpty() || fetched.size <= existing.size ||
-        existing.indices.any { fetched[it].url != existing[it].url || existing[it].index != it }
-    ) return@withTransaction
+    if (existing.isEmpty() || fetched.isEmpty()) return@withTransaction MangaCatalogCheck.Unchanged
+    val urls = fetched.mapTo(HashSet(fetched.size)) { it.url }
+    if (urls.size != fetched.size) return@withTransaction MangaCatalogCheck.Unchanged
+    if (existing.any { it.url !in urls }) {
+        // A truncated response is not evidence of new chapters. Only warn when the catalog
+        // also contains a new identity; never discard the already downloaded chapter rows.
+        val previous = existing.mapTo(HashSet(existing.size)) { it.url }
+        return@withTransaction if (urls.any { it !in previous }) {
+            MangaCatalogCheck.RequiresManualRefresh
+        } else MangaCatalogCheck.Unchanged
+    }
+    if (existing.indices.any { fetched[it].url != existing[it].url || existing[it].index != it }) {
+        return@withTransaction MangaCatalogCheck.RequiresManualRefresh
+    }
+    if (fetched.size == existing.size) return@withTransaction MangaCatalogCheck.Unchanged
     val added = fetched.drop(existing.size)
-    if (fetched.mapTo(HashSet(fetched.size)) { it.url }.size != fetched.size) return@withTransaction
     if (added.withIndex().any { (index, chapter) ->
             chapter.bookUrl != bookUrl || chapter.index != existing.size + index
         }
-    ) return@withTransaction
+    ) return@withTransaction MangaCatalogCheck.Unchanged
     bookChapterDao.insert(*added.toTypedArray())
     current.totalChapterNum = fetched.size
     current.latestChapterTitle = refreshed.latestChapterTitle
@@ -351,4 +363,5 @@ internal suspend fun AppDatabase.appendMangaCatalog(
     current.lastCheckTime = refreshed.lastCheckTime
     current.lastCheckCount = added.size
     bookDao.update(current)
+    MangaCatalogCheck.Appended
 }

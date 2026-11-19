@@ -79,6 +79,7 @@ import io.legado.app.data.repository.MangaSettingsRepository
 import io.legado.app.data.repository.NasLibraryRepository
 import io.legado.app.data.repository.NasLocalBookUploadRepository
 import io.legado.app.data.repository.NasTransferHistoryRepository
+import io.legado.app.data.repository.NasBookDownloadRepository
 import io.legado.app.data.repository.NasTransferRetryRepository
 import io.legado.app.data.repository.NasUploadTaskRepository
 import io.legado.app.data.repository.NasSettingsRepository
@@ -524,6 +525,7 @@ val appModule = module {
     singleOf(::UploadNasBookUseCase)
     singleOf(::NasLocalBookUploadRepository)
     singleOf(::NasTransferHistoryRepository)
+    singleOf(::NasBookDownloadRepository)
     singleOf(::NasTransferRetryRepository)
     singleOf(::NasUploadTaskRepository)
     singleOf(::NasComicUploadRepository)

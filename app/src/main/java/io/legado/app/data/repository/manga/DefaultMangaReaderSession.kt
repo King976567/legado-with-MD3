@@ -4,6 +4,7 @@ import io.legado.app.R
 import io.legado.app.constant.AppLog
 import io.legado.app.domain.gateway.MangaReaderDataGateway
 import io.legado.app.domain.gateway.MangaReaderSession
+import io.legado.app.domain.model.manga.MangaCatalogCheck
 import io.legado.app.domain.model.manga.MangaChapterState
 import io.legado.app.domain.model.manga.MangaSessionCommand
 import io.legado.app.domain.model.manga.MangaSessionEvent
@@ -51,6 +52,7 @@ class DefaultMangaReaderSession(
     private var presentationJob: Job? = null
     private var catalogCheckJob: Job? = null
     private var lastCatalogCheckAt: TimeMark? = null
+    private var catalogNoticeShown = false
     private var scheduledProgressPersistJob: Job? = null
     private var lastProgressPersistAt = 0L
     private val commands = Channel<MangaSessionCommand>(Channel.UNLIMITED)
@@ -176,6 +178,7 @@ class DefaultMangaReaderSession(
         presentationJob?.cancel()
         catalogCheckJob?.cancel()
         lastCatalogCheckAt = null
+        catalogNoticeShown = false
         cancelScheduledProgressPersist()
         val old = _state.value
         if (old.book != null) {
@@ -273,9 +276,15 @@ class DefaultMangaReaderSession(
         }
         lastCatalogCheckAt = TimeSource.Monotonic.markNow()
         // Do not block the reducer or delay opening a cached chapter on a slow/offline source.
-        catalogCheckJob = sessionScope.launch(ioDispatcher) {
+        catalogCheckJob = sessionScope.launch {
             try {
-                dataGateway.checkForCatalogUpdates(book.bookUrl)
+                val result = withContext(ioDispatcher) { dataGateway.checkForCatalogUpdates(book.bookUrl) }
+                if (result == MangaCatalogCheck.RequiresManualRefresh && !catalogNoticeShown &&
+                    _state.value.book?.bookUrl == book.bookUrl
+                ) {
+                    catalogNoticeShown = true
+                    _events.tryEmit(MangaSessionEvent.CatalogRequiresManualRefresh)
+                }
             } catch (error: CancellationException) {
                 throw error
             } catch (error: Exception) {

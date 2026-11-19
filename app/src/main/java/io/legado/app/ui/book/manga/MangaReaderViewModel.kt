@@ -78,6 +78,8 @@ class MangaReaderViewModel(
                         it.copy(activeDialog = MangaReaderDialog.ConfirmProgress(event.progress.toBookProgress()))
                     }
                     is MangaSessionEvent.Message -> enqueueMessage(text = event.message)
+                    MangaSessionEvent.CatalogRequiresManualRefresh ->
+                        enqueueMessage(resId = R.string.manga_catalog_requires_manual_refresh)
                     is MangaSessionEvent.OpenPaymentUrl -> _effects.tryEmit(
                         MangaReaderEffect.OpenPaymentUrl(
                             event.url, event.sourceOrigin, event.sourceName, event.sourceType,

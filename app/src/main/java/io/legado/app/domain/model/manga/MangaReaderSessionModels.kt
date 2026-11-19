@@ -27,6 +27,8 @@ data class MangaBookState(
     val chapterUrls: List<String> = emptyList(),
 )
 
+enum class MangaCatalogCheck { Unchanged, Appended, RequiresManualRefresh }
+
 data class MangaCatalog(
     val urls: List<String>,
     val titles: List<String>,
@@ -136,6 +138,7 @@ sealed interface MangaSessionCommand {
 }
 
 sealed interface MangaSessionEvent {
+    data object CatalogRequiresManualRefresh : MangaSessionEvent
     data class ConfirmProgress(val progress: MangaProgressState) : MangaSessionEvent
     data class Message(val message: String) : MangaSessionEvent
     data class OpenPaymentUrl(

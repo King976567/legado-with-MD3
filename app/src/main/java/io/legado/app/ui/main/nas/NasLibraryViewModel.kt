@@ -5,8 +5,7 @@ import android.net.Uri
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import io.legado.app.data.entities.Book
-import io.legado.app.data.repository.NasTransferHistoryRepository
-import io.legado.app.domain.gateway.NasDownloadSink
+import io.legado.app.data.repository.NasBookDownloadRepository
 import io.legado.app.domain.gateway.NasUploadSource
 import io.legado.app.domain.gateway.NasSettingsGateway
 import io.legado.app.domain.model.NasBook
@@ -21,9 +20,6 @@ import io.legado.app.domain.model.NasTaskStatus
 import io.legado.app.domain.model.NasWriteAccess
 import io.legado.app.domain.model.settings.NasSettings
 import io.legado.app.domain.usecase.NasLibraryUseCase
-import io.legado.app.exception.NoBooksDirException
-import io.legado.app.help.book.isImage
-import io.legado.app.model.localBook.LocalBook
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -37,7 +33,6 @@ import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import java.io.File
 import java.io.FileInputStream
-import java.io.FileOutputStream
 import java.io.IOException
 
 /**
@@ -48,44 +43,6 @@ import java.io.IOException
  * gateway for every request, so a token change takes effect immediately.
  */
 private const val NAS_DEFAULT_PAGE_SIZE = 30
-
-internal fun nasDownloadFileName(book: NasBook): String {
-    val rawName = book.fileName.ifBlank {
-        book.relativePath.substringAfterLast('/').ifBlank { book.displayTitle }
-    }
-    val safeBaseName = rawName
-        .replace(Regex("[\\\\/:*?\"<>|]"), "_")
-        .trim()
-        .ifBlank { "nas-download" }
-    val declaredExtension = book.extension.trim().trimStart('.')
-        .ifBlank { book.kind.trim().trimStart('.') }
-        .lowercase()
-    val isComicArchive = declaredExtension == "cbz" ||
-        safeBaseName.substringAfterLast('.', "").equals("cbz", ignoreCase = true)
-    val suffix = if (isComicArchive) "cbz" else declaredExtension
-    return if (suffix.isNotBlank() &&
-        !safeBaseName.endsWith(".$suffix", ignoreCase = true)
-    ) {
-        "$safeBaseName.$suffix"
-    } else {
-        safeBaseName
-    }
-}
-
-internal fun isNasComicArchive(book: NasBook, fileName: String): Boolean =
-    book.chapterCount > 0 ||
-        book.kind.equals("cbz", ignoreCase = true) ||
-        book.extension.trimStart('.').equals("cbz", ignoreCase = true) ||
-        fileName.substringAfterLast('.', "").equals("cbz", ignoreCase = true)
-
-private fun isZipArchive(file: File): Boolean = runCatching {
-    file.inputStream().use { input ->
-        val header = ByteArray(4)
-        input.read(header) == 4 && header[0] == 'P'.code.toByte() &&
-            header[1] == 'K'.code.toByte() &&
-            (header[2] == 3.toByte() || header[2] == 5.toByte() || header[2] == 7.toByte())
-    }
-}.getOrDefault(false)
 
 data class NasLibraryUiState(
     val books: List<NasBook> = emptyList(),
@@ -188,7 +145,7 @@ class NasLibraryViewModel(
     private val context: Context,
     private val nasLibraryUseCase: NasLibraryUseCase,
     private val nasSettingsGateway: NasSettingsGateway,
-    private val nasTransferHistoryRepository: NasTransferHistoryRepository,
+    private val nasBookDownloadRepository: NasBookDownloadRepository,
 ) : ViewModel() {
 
     private val _uiState = MutableStateFlow(NasLibraryUiState())
@@ -202,6 +159,7 @@ class NasLibraryViewModel(
     private var connectionJob: Job? = null
     @Volatile private var detailGeneration = 0L
     private var diagnosticJob: Job? = null
+    private var downloadJob: Job? = null
     private var diagnosticSettings: NasSettings? = null
 
     init {
@@ -213,6 +171,8 @@ class NasLibraryViewModel(
                 val credentialsChanged = !credentialsMatch(observedSettings, settings)
                 observedSettings = settings
                 if (credentialsChanged || !settings.connectionVerified) {
+                    downloadJob?.cancel()
+                    downloadJob = null
                     detailGeneration++
                     connectionJob?.cancel()
                     connectionJob = null
@@ -544,118 +504,24 @@ class NasLibraryViewModel(
 
     private fun downloadBook(book: NasBook) {
         if (!canReadAction("download")) return
-        val historyId = "nas-download:${book.id}:${System.currentTimeMillis()}"
-        val safeName = nasDownloadFileName(book)
-        val isComicArchive = isNasComicArchive(book, safeName)
-        nasTransferHistoryRepository.recordStarted(
-            id = historyId,
-            direction = "download",
-            title = book.displayTitle,
-            kind = if (isComicArchive) "comic" else "book",
-            remotePath = book.relativePath,
-            retryKey = book.id,
-        )
-        viewModelScope.launch(Dispatchers.IO) {
-            _uiState.update { it.copy(isActionRunning = true, actionError = null) }
-            var temporaryFile: File? = null
-            runCatching {
-                val file = File(context.cacheDir, "nas-download-${System.currentTimeMillis()}-$safeName")
-                temporaryFile = file
-                FileOutputStream(file).use { output ->
-                    nasLibraryUseCase.downloadBook(
-                        id = book.id,
-                        sink = NasDownloadSink { chunk, offset, length ->
-                            output.write(chunk, offset, length)
-                        },
-                    )
-                }
-                val comicArchive = isComicArchive || isZipArchive(file)
-                val importName = if (comicArchive && !safeName.endsWith(".cbz", ignoreCase = true)) {
-                    "$safeName.cbz"
-                } else {
-                    safeName
-                }
-                val uri = saveNasBookFile(file, importName)
-                // importFiles detects image entries in CBZ/ZIP archives and
-                // creates a local image book with the manga chapter loader.
-                if (comicArchive) {
-                    LocalBook.importFiles(uri).singleOrNull()
-                        ?: throw IOException("NAS 漫画压缩包导入失败")
-                } else {
-                    LocalBook.importFile(uri)
-                }
-            }.onSuccess { imported ->
-                // The CBZ deliberately contains only reading pages.  NAS stores
-                // its curated cover beside the archive, so fetch it separately
-                // after the local import.  A cover outage must never turn a
-                // successful comic download into a failed transfer.
-                if (isComicArchive) tryDownloadNasCover(book, imported)
-                nasTransferHistoryRepository.recordFinished(
-                    id = historyId,
-                    state = NasTransferHistoryRepository.SUCCEEDED,
-                    remotePath = book.relativePath,
-                )
-                _uiState.update { it.copy(isActionRunning = false, selectedBook = null) }
-                _effects.emit(NasLibraryEffect.OpenLocalBook(imported))
-            }.onFailure { error ->
-                if (error is CancellationException && error !is TimeoutCancellationException) {
-                    nasTransferHistoryRepository.recordFinished(
-                        id = historyId,
-                        state = NasTransferHistoryRepository.CANCELLED,
-                        message = error.localizedMessage,
-                    )
-                    throw error
-                }
-                nasTransferHistoryRepository.recordFinished(
-                    id = historyId,
-                    state = NasTransferHistoryRepository.FAILED,
-                    message = error.localizedMessage,
-                )
-                _uiState.update {
-                    it.copy(
-                        isActionRunning = false,
-                        actionError = error.toNasMessage(),
-                    )
-                }
-                _effects.emit(NasLibraryEffect.ShowMessage(error.toNasMessage()))
-            }.also {
-                temporaryFile?.delete()
-            }
-        }
-    }
-
-    private fun saveNasBookFile(file: File, fileName: String): Uri =
-        runCatching { FileInputStream(file).use { LocalBook.saveBookFile(it, fileName) } }.getOrElse { error ->
-            if (error is SecurityException || error is NoBooksDirException) {
-                // SAF permissions can be revoked while the app is not running.
-                // Keep NAS downloads usable by falling back to app-private
-                // storage instead of asking the user to repeat the transfer.
-                FileInputStream(file).use { LocalBook.saveBookFileInAppStorage(it, fileName) }
-            } else {
-                throw error
-            }
-        }
-
-    private suspend fun tryDownloadNasCover(remoteBook: NasBook, localBook: Book) {
-        if (remoteBook.coverUrl.isNullOrBlank() || !localBook.isImage) return
-        runCatching {
-            val temporary = File(context.cacheDir, "nas-cover-${remoteBook.id}-${System.nanoTime()}.tmp")
+        val settings = nasSettingsGateway.currentSettings
+        if (!credentialsMatch(observedSettings, settings) || !settings.connectionVerified) return
+        _uiState.update { it.copy(isActionRunning = true, actionError = null) }
+        downloadJob = viewModelScope.launch {
             try {
-                FileOutputStream(temporary).use { output ->
-                    nasLibraryUseCase.downloadCover(
-                        id = remoteBook.id,
-                        sink = NasDownloadSink { chunk, offset, length ->
-                            output.write(chunk, offset, length)
-                        },
-                    )
+                val imported = nasBookDownloadRepository.download(book, settings)
+                if (!isCurrentSettings(settings)) return@launch
+                _uiState.update { it.copy(selectedBook = null) }
+                _effects.emit(NasLibraryEffect.OpenLocalBook(imported))
+            } catch (error: Exception) {
+                if (error is CancellationException && error !is TimeoutCancellationException) throw error
+                if (isCurrentSettings(settings)) {
+                    val message = error.toNasMessage()
+                    _uiState.update { it.copy(actionError = message) }
+                    _effects.emit(NasLibraryEffect.ShowMessage(message))
                 }
-                if (temporary.length() <= 0L) return@runCatching
-                val target = File(LocalBook.getCoverPath(localBook)).apply { parentFile?.mkdirs() }
-                temporary.copyTo(target, overwrite = true)
-                localBook.coverUrl = target.toURI().toString()
-                localBook.save()
             } finally {
-                temporary.delete()
+                if (isCurrentSettings(settings)) _uiState.update { it.copy(isActionRunning = false) }
             }
         }
     }

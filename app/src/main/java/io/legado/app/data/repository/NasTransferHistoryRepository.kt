@@ -33,6 +33,7 @@ class NasTransferHistoryRepository(application: Application) {
         remotePath: String? = null,
         retryKey: String? = null,
         replaceBookId: String? = null,
+        destinationFingerprint: String? = null,
     ) {
         update { current ->
             val now = System.currentTimeMillis()
@@ -46,6 +47,7 @@ class NasTransferHistoryRepository(application: Application) {
                 remotePath = remotePath,
                 retryKey = retryKey,
                 replaceBookId = replaceBookId,
+                destinationFingerprint = destinationFingerprint,
                 createdAt = existing?.createdAt?.takeIf { it > 0 } ?: now,
             )
             listOf(item) + current.filterNot { it.id == id }
@@ -57,12 +59,14 @@ class NasTransferHistoryRepository(application: Application) {
         state: String,
         message: String? = null,
         remotePath: String? = null,
+        kind: String? = null,
     ) {
         update { current ->
             val existing = current.firstOrNull { it.id == id } ?: return@update current
             listOf(
                 existing.copy(
                     state = state,
+                    kind = kind ?: existing.kind,
                     message = message,
                     remotePath = remotePath ?: existing.remotePath,
                     finishedAt = System.currentTimeMillis(),

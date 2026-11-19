@@ -290,7 +290,32 @@ object LocalBook {
      */
     fun importFile(uri: Uri): Book = importFiles(uri).first()
 
-    private fun importSingleFile(input: FileDoc, comicArchive: Boolean = false): Book {
+    /** NAS-managed paths are isolated by source and revision. Never rebind an unrelated same-name book. */
+    internal fun importNasDownload(uri: Uri, comicArchive: Boolean): Book {
+        val file = FileDoc.fromUri(uri, false)
+        appDb.bookDao.getBook(file.toString())?.let { return it }
+        if (comicArchive && !LocalMangaFiles.isMangaArchive(file)) {
+            throw NoStackTraceException(appCtx.getString(R.string.nas_download_invalid_comic))
+        }
+        return importSingleFile(file, comicArchive, reuseStaleByName = false)
+    }
+
+    internal fun installNasCover(bookUrl: String, image: File) {
+        appDb.runInTransaction {
+            val book = appDb.bookDao.getBook(bookUrl) ?: return@runInTransaction
+            if (!book.coverUrl.isNullOrBlank()) return@runInTransaction
+            val target = File(getCoverPath(book))
+            image.copyTo(target, overwrite = true)
+            book.coverUrl = Uri.fromFile(target).toString()
+            appDb.bookDao.update(book)
+        }
+    }
+
+    private fun importSingleFile(
+        input: FileDoc,
+        comicArchive: Boolean = false,
+        reuseStaleByName: Boolean = true,
+    ): Book {
         if (input.size == 0L) throw EmptyFileException("Unexpected empty File")
         val (fileName, _, _, updateTime) = input
         val bookUrl = input.toString()
@@ -303,7 +328,7 @@ object LocalBook {
         if (book == null) {
             // 源文件被删掉后重新导入同名文件时，书架里那条记录只是文件位置失效；
             // 直接 insert 会再裂出一条同名书，应先把它接回这次导入的文件。
-            val reusableBook = findReusableStaleLocalBook(bookUrl, fileName)
+            val reusableBook = if (reuseStaleByName) findReusableStaleLocalBook(bookUrl, fileName) else null
             if (reusableBook != null) {
                 return rebindLocalBook(reusableBook, bookUrl, fileName, type.takeIf { comicArchive })
             }
@@ -613,27 +638,6 @@ object LocalBook {
                 }
             }
         }
-    }
-
-    /**
-     * Stores a downloaded NAS book in app-private storage.
-     *
-     * NAS transfers must still work when the user-selected SAF tree was
-     * revoked by Android or points at a provider that no longer grants write
-     * access.  The returned file URI is fully compatible with importFile(s)
-     * and remains available across process restarts without broad storage
-     * permissions.
-     */
-    fun saveBookFileInAppStorage(
-        inputStream: InputStream,
-        fileName: String,
-    ): Uri {
-        val directory = File(appCtx.filesDir, "nas-books").apply { mkdirs() }
-        val file = File(directory, fileName)
-        inputStream.use { input ->
-            FileOutputStream(file).use { output -> input.copyTo(output) }
-        }
-        return Uri.fromFile(file)
     }
 
     fun isOnBookShelf(

@@ -2,6 +2,7 @@ package io.legado.app.data.repository.manga
 
 import io.legado.app.domain.gateway.MangaReaderDataGateway
 import io.legado.app.domain.model.manga.MangaBookPresentation
+import io.legado.app.domain.model.manga.MangaCatalogCheck
 import io.legado.app.domain.model.manga.MangaBookState
 import io.legado.app.domain.model.manga.MangaCatalog
 import io.legado.app.domain.model.manga.MangaChapterContent
@@ -9,12 +10,14 @@ import io.legado.app.domain.model.manga.MangaChapterState
 import io.legado.app.domain.model.manga.MangaPageContent
 import io.legado.app.domain.model.manga.MangaProgressState
 import io.legado.app.domain.model.manga.MangaSessionCommand
+import io.legado.app.domain.model.manga.MangaSessionEvent
 import io.legado.app.domain.model.manga.OpenedMangaBook
 import io.legado.app.exception.LocalMangaDirectoryEmptyException
 import io.legado.app.exception.TocEmptyException
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.test.StandardTestDispatcher
 import kotlinx.coroutines.test.advanceUntilIdle
 import kotlinx.coroutines.test.runTest
@@ -71,6 +74,30 @@ class DefaultMangaReaderSessionTest {
         advanceUntilIdle()
         assertEquals(5, session.state.value.chapterCount)
         assertEquals("Chapter 1", session.state.value.book?.chapterTitles?.first())
+        session.close()
+    }
+
+    @Test
+    fun `a changed source catalog notifies once without moving the reading position`() = runTest {
+        val gateway = FakeGateway().apply {
+            savedProgress["book"] = 4 to 2
+            catalogResult = MangaCatalogCheck.RequiresManualRefresh
+        }
+        val dispatcher = StandardTestDispatcher(testScheduler)
+        val session = DefaultMangaReaderSession(gateway, dispatcher, dispatcher)
+        val events = mutableListOf<MangaSessionEvent>()
+        backgroundScope.launch(dispatcher) { session.events.collect(events::add) }
+        // Start the event collector before opening the book.
+        testScheduler.runCurrent()
+        session.execute(MangaSessionCommand.Open("book", true, false))
+        advanceUntilIdle()
+        testScheduler.runCurrent()
+        session.execute(MangaSessionCommand.NetworkAvailable)
+        advanceUntilIdle()
+        testScheduler.runCurrent()
+        assertEquals(1, events.count { it == MangaSessionEvent.CatalogRequiresManualRefresh })
+        assertEquals(4, session.state.value.chapterIndex)
+        assertEquals(5, session.state.value.chapterCount)
         session.close()
     }
 
@@ -464,9 +491,11 @@ class DefaultMangaReaderSessionTest {
     private class FakeGateway : MangaReaderDataGateway {
         val presentation = MutableStateFlow(MangaBookPresentation(null, null))
         val catalogChecks = mutableListOf<String>()
+        var catalogResult = MangaCatalogCheck.Unchanged
 
-        override suspend fun checkForCatalogUpdates(bookUrl: String) {
+        override suspend fun checkForCatalogUpdates(bookUrl: String): MangaCatalogCheck {
             catalogChecks += bookUrl
+            return catalogResult
         }
 
         var rewrittenBookUrl: String? = null

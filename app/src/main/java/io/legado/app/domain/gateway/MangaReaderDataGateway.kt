@@ -1,6 +1,7 @@
 package io.legado.app.domain.gateway
 
 import io.legado.app.domain.model.manga.MangaBookPresentation
+import io.legado.app.domain.model.manga.MangaCatalogCheck
 import io.legado.app.domain.model.manga.MangaChapterContent
 import io.legado.app.domain.model.manga.MangaProgressState
 import io.legado.app.domain.model.manga.OpenedMangaBook
@@ -15,7 +16,7 @@ interface MangaReaderDataGateway {
         chapterChanged: Boolean,
     ): OpenedMangaBook
 
-    suspend fun checkForCatalogUpdates(bookUrl: String) = Unit
+    suspend fun checkForCatalogUpdates(bookUrl: String): MangaCatalogCheck = MangaCatalogCheck.Unchanged
 
     suspend fun loadChapter(bookUrl: String, chapterIndex: Int): MangaChapterContent
 

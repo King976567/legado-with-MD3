@@ -4139,4 +4139,8 @@
     <string name="cache_queue_operation_failed">Could not update the download queue: %1$s</string>
     <string name="cache_delete_book_complete">Book cache cleared</string>
     <string name="cache_delete_book_incomplete">Cache could not be fully cleared. It may still be in use.</string>
+    <string name="nas_download_source_changed">The original NAS could not be verified. Download the book again from the NAS library.</string>
+    <string name="nas_download_invalid_book">The downloaded file is empty, damaged, or in an unsupported format.</string>
+    <string name="nas_download_invalid_comic">This archive does not contain a supported comic.</string>
+    <string name="manga_catalog_requires_manual_refresh">The source changed the chapter order. This session kept the old catalog. Pause downloads, exit the reader, and then open the book catalog and choose Update catalog.</string>
 </resources>

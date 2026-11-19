@@ -7,6 +7,7 @@ import io.legado.app.data.AppDatabase
 import io.legado.app.data.entities.Book
 import io.legado.app.data.entities.BookChapter
 import kotlinx.coroutines.runBlocking
+import io.legado.app.domain.model.manga.MangaCatalogCheck
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Before
@@ -51,7 +52,8 @@ class MangaCatalogRefreshTest {
     @Test
     fun `appending chapters preserves cached title and concurrently saved progress`() = runBlocking {
         database.bookDao.update(book.copy(durChapterIndex = 1, durChapterTitle = "Second", durChapterPos = 8))
-        database.appendMangaCatalog(book, fetchedBook, listOf(first.copy(title = "Renamed"), second, third))
+        val result = database.appendMangaCatalog(book, fetchedBook, listOf(first.copy(title = "Renamed"), second, third))
+        assertEquals(MangaCatalogCheck.Appended, result)
 
         assertEquals(listOf("First", "Second", "Third"), database.bookChapterDao.getChapterList(book.bookUrl).map { it.title })
         val updated = requireNotNull(database.bookDao.getBook(book.bookUrl))
@@ -64,8 +66,12 @@ class MangaCatalogRefreshTest {
 
     @Test
     fun `an incomplete or reordered fetch does not change downloaded chapter indices`() = runBlocking {
-        database.appendMangaCatalog(book, fetchedBook, listOf(first))
-        database.appendMangaCatalog(book, fetchedBook, listOf(second.copy(index = 0), first.copy(index = 1), third))
+        val incomplete = database.appendMangaCatalog(book, fetchedBook, listOf(first))
+        val reordered = database.appendMangaCatalog(book, fetchedBook, listOf(second.copy(index = 0), first.copy(index = 1), third))
+        val inserted = database.appendMangaCatalog(book, fetchedBook, listOf(first, third.copy(index = 1), second.copy(index = 2)))
+        assertEquals(MangaCatalogCheck.Unchanged, incomplete)
+        assertEquals(MangaCatalogCheck.RequiresManualRefresh, reordered)
+        assertEquals(MangaCatalogCheck.RequiresManualRefresh, inserted)
         assertEquals(listOf("first", "second"), database.bookChapterDao.getChapterList(book.bookUrl).map { it.url })
         assertEquals(2, database.bookDao.getBook(book.bookUrl)?.totalChapterNum)
     }
