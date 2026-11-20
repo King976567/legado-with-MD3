@@ -14,6 +14,7 @@ import io.legado.app.data.repository.BookCacheSavedCount
 import io.legado.app.data.repository.NasUploadTaskRepository
 import io.legado.app.data.repository.NasTransferHistoryRepository
 import io.legado.app.data.repository.NasTransferRetryRepository
+import io.legado.app.data.repository.cacheBookIdentity
 import io.legado.app.domain.usecase.CacheBookChaptersUseCase
 import io.legado.app.domain.usecase.ClearBookCacheUseCase
 import io.legado.app.domain.model.NasUploadTask
@@ -164,7 +165,7 @@ class BookCacheManageViewModel(
     private val cacheMutationVersions = hashMapOf<String, Long>()
     private val cacheDeletionVersions = hashMapOf<String, Long>()
     private val chaptersWithDeleteAttempts = hashMapOf<String, MutableSet<Int>>()
-    private val inFlightCacheScans = hashMapOf<String, MutableSet<BookCacheScanChanges>>()
+    private val cacheVerification = BookCacheVerification()
     private val progressUpdateJobs = hashMapOf<String, Job>()
     private val pendingDownloadRefreshBookUrls = ConcurrentHashMap.newKeySet<String>()
 
@@ -354,6 +355,7 @@ class BookCacheManageViewModel(
         books: List<Book>? = null,
         forceDatabase: Boolean = false,
     ) {
+        if (forceDatabase) cacheVerification.invalidateAll()
         fullReloadJob?.cancel()
         bookReloadJobs.values.forEach { it.cancel() }
         bookReloadJobs.clear()
@@ -512,21 +514,11 @@ class BookCacheManageViewModel(
         book: Book,
         totalCount: Int,
         catalog: List<BookChapterCacheInfo>? = null,
-    ): Set<BookChapterCacheInfo> {
-        val bookUrl = book.bookUrl
-        while (true) {
-            val scans = inFlightCacheScans.getOrPut(bookUrl) { hashSetOf() }
-            val changes = BookCacheScanChanges().also { scans.add(it) }
-            val verified = try {
-                changes.reconcile(repository.scanCachedChapters(book, catalog))
-            } finally {
-                scans.remove(changes)
-                if (scans.isEmpty()) inFlightCacheScans.remove(bookUrl)
-            } ?: continue
-            repository.rememberCachedChapters(book, verified, totalCount)
-            return verified
-        }
-    }
+    ): Set<BookChapterCacheInfo> = cacheVerification.verify(
+        identity = cacheBookIdentity(book),
+        scan = { repository.scanCachedChapters(book, catalog) },
+        onVerified = { repository.rememberCachedChapters(book, it, totalCount) },
+    )
 
     private fun updateVerifiedBookCount(bookUrl: String, count: Int) {
         _uiState.update { state ->
@@ -547,11 +539,11 @@ class BookCacheManageViewModel(
         if (bookUrl.isBlank()) return
         bumpCacheVersion(bookUrl)
         val chapterInfo = BookChapterCacheInfo(chapter.url, chapter.title, false, chapter.index)
-        inFlightCacheScans[bookUrl]?.forEach { it.chapterCompleted(chapterInfo) }
+        cacheVerification.chapterCompleted(bookUrl, chapterInfo)
         val count = repository.recordCachedChapter(bookUrl, chapterInfo)
         if (count != null && isBookVisible(bookUrl)) {
             updateVerifiedBookCount(bookUrl, count)
-        } else if (inFlightCacheScans[bookUrl].isNullOrEmpty() && bookReloadJobs[bookUrl]?.isActive != true) {
+        } else if (!cacheVerification.isVerifying(bookUrl) && bookReloadJobs[bookUrl]?.isActive != true) {
             scheduleBookReload(bookUrl)
         }
         _uiState.update { state ->
@@ -1071,7 +1063,7 @@ class BookCacheManageViewModel(
         bumpCacheVersion(bookUrl)
         cacheDeletionVersions[bookUrl] = cacheMutationVersions.getValue(bookUrl)
         _uiState.update { state -> state.copy(storageOrder = state.storageOrder?.withoutBytes(bookUrl)) }
-        inFlightCacheScans[bookUrl]?.forEach { it.invalidate() }
+        cacheVerification.invalidate(bookUrl)
         repository.invalidateCachedChapters(bookUrl)
         chapterLoadJobs.remove(bookUrl)?.cancel()
         scheduleBookReload(bookUrl)
@@ -1079,21 +1071,6 @@ class BookCacheManageViewModel(
 
     private fun sortItems(items: List<BookCacheBookItem>): List<BookCacheBookItem> {
         return sortBookCacheItems(items, CacheBook.explicitDownloadOrder())
-    }
-}
-
-/** Main-thread changes that occurred after a scan started reading disk. */
-internal class BookCacheScanChanges {
-    private var invalidated = false
-    private val completed = hashSetOf<BookChapterCacheInfo>()
-
-    fun chapterCompleted(chapter: BookChapterCacheInfo) { completed.add(chapter) }
-    fun invalidate() { invalidated = true }
-
-    fun reconcile(scanned: Set<BookChapterCacheInfo>): Set<BookChapterCacheInfo>? = when {
-        invalidated -> null
-        completed.isEmpty() -> scanned
-        else -> scanned + completed
     }
 }
 
