@@ -112,7 +112,7 @@ fun NasLibraryRouteScreen(
     val uploadLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.OpenDocument(),
     ) { uri ->
-        uri?.let { viewModel.onIntent(NasLibraryIntent.UploadFileSelected(it)) }
+        viewModel.onIntent(NasLibraryIntent.UploadFileSelected(uri))
     }
 
     LaunchedEffect(viewModel) {

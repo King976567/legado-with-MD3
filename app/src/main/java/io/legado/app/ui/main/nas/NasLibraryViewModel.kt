@@ -22,6 +22,8 @@ import io.legado.app.domain.model.settings.NasSettings
 import io.legado.app.domain.usecase.NasLibraryUseCase
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.TimeoutCancellationException
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -31,16 +33,16 @@ import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import java.io.File
-import java.io.FileInputStream
 import java.io.IOException
 
 /**
  * State for the Compose NAS library screen.
  *
  * The repository is shared with HomeDashboard.  This view model deliberately
- * keeps no copy of the token and reads the current settings through the
- * gateway for every request, so a token change takes effect immediately.
+ * never exposes credentials in screen state. Writes are bound to the connection
+ * that was active when the user initiated them.
  */
 private const val NAS_DEFAULT_PAGE_SIZE = 30
 
@@ -102,7 +104,7 @@ sealed interface NasLibraryIntent {
     data object RetryLoadMore : NasLibraryIntent
     data class OpenBook(val book: NasBook) : NasLibraryIntent
     data class DownloadBook(val book: NasBook) : NasLibraryIntent
-    data class UploadFileSelected(val uri: Uri) : NasLibraryIntent
+    data class UploadFileSelected(val uri: Uri?) : NasLibraryIntent
     data object RequestUpload : NasLibraryIntent
     data object RefreshIndex : NasLibraryIntent
     data class ScrapeBook(val book: NasBook) : NasLibraryIntent
@@ -160,6 +162,11 @@ class NasLibraryViewModel(
     @Volatile private var detailGeneration = 0L
     private var diagnosticJob: Job? = null
     private var downloadJob: Job? = null
+    private var writeJob: Job? = null
+    @Volatile private var connectionGeneration = 0L
+    private var pendingUpload: PendingUpload? = null
+
+    private data class PendingUpload(val settings: NasSettings, val directory: String, val generation: Long)
     private var diagnosticSettings: NasSettings? = null
 
     init {
@@ -171,6 +178,9 @@ class NasLibraryViewModel(
                 val credentialsChanged = !credentialsMatch(observedSettings, settings)
                 observedSettings = settings
                 if (credentialsChanged || !settings.connectionVerified) {
+                    connectionGeneration++
+                    writeJob?.cancel()
+                    writeJob = null
                     downloadJob?.cancel()
                     downloadJob = null
                     detailGeneration++
@@ -243,19 +253,19 @@ class NasLibraryViewModel(
             is NasLibraryIntent.OpenBook -> selectBook(intent.book)
             is NasLibraryIntent.DownloadBook -> downloadBook(intent.book)
             is NasLibraryIntent.UploadFileSelected -> uploadFile(intent.uri)
-            NasLibraryIntent.RequestUpload -> _effects.tryEmit(NasLibraryEffect.SelectUploadFile)
-            NasLibraryIntent.RefreshIndex -> runAction("索引刷新") { nasLibraryUseCase.refreshIndex() }
-            is NasLibraryIntent.ScrapeBook -> runAction("单本刮削") {
-                nasLibraryUseCase.scrapeBook(intent.book.id)
+            NasLibraryIntent.RequestUpload -> requestUpload()
+            NasLibraryIntent.RefreshIndex -> runAction("索引刷新") { nasLibraryUseCase.refreshIndex(it) }
+            is NasLibraryIntent.ScrapeBook -> if (hasCurrentBook(intent.book)) {
+                runAction("单本刮削") { nasLibraryUseCase.scrapeBook(intent.book.id, it) }
             }
-            NasLibraryIntent.ScrapePending -> runAction("批量刮削") { nasLibraryUseCase.scrapeAllPending() }
-            NasLibraryIntent.RetryFailedScrape -> runAction("失败刮削重试") { nasLibraryUseCase.scrapeAllFailed() }
+            NasLibraryIntent.ScrapePending -> runAction("批量刮削") { nasLibraryUseCase.scrapeAllPending(settings = it) }
+            NasLibraryIntent.RetryFailedScrape -> runAction("失败刮削重试") { nasLibraryUseCase.scrapeAllFailed(settings = it) }
             NasLibraryIntent.LoadTasks -> loadTasks()
             is NasLibraryIntent.CancelTask -> runAction("取消任务") {
                 if (intent.kind.equals("indexer", ignoreCase = true)) {
-                    nasLibraryUseCase.cancelIndexer()
+                    nasLibraryUseCase.cancelIndexer(it)
                 } else {
-                    nasLibraryUseCase.cancelScraperTask(intent.taskId)
+                    nasLibraryUseCase.cancelScraperTask(intent.taskId, it)
                 }
             }
             NasLibraryIntent.LoadDirectories -> loadDirectories()
@@ -264,9 +274,15 @@ class NasLibraryViewModel(
                 refresh()
             }
             is NasLibraryIntent.SaveMetadata -> saveMetadata(intent)
-            is NasLibraryIntent.RequestEdit -> _uiState.update { it.copy(editingBook = intent.book) }
-            is NasLibraryIntent.RequestMove -> _uiState.update { it.copy(movingBook = intent.book) }
-            is NasLibraryIntent.RequestDelete -> _uiState.update { it.copy(deletingBook = intent.book) }
+            is NasLibraryIntent.RequestEdit -> if (hasCurrentBook(intent.book)) {
+                _uiState.update { it.copy(editingBook = intent.book) }
+            }
+            is NasLibraryIntent.RequestMove -> if (hasCurrentBook(intent.book)) {
+                _uiState.update { it.copy(movingBook = intent.book) }
+            }
+            is NasLibraryIntent.RequestDelete -> if (hasCurrentBook(intent.book)) {
+                _uiState.update { it.copy(deletingBook = intent.book) }
+            }
             NasLibraryIntent.DismissDelete -> _uiState.update { it.copy(deletingBook = null) }
             is NasLibraryIntent.DeleteBook -> deleteBookFile(intent.book)
             is NasLibraryIntent.MoveBook -> moveBook(intent)
@@ -526,64 +542,62 @@ class NasLibraryViewModel(
         }
     }
 
-    private fun uploadFile(uri: Uri) {
-        if (!_uiState.value.isConfigured || _uiState.value.writeAccessDenied ||
-            !_uiState.value.capabilities.supports("upload")
-        ) return
-        val uploadDirectory = _uiState.value.directoryPath.orEmpty()
-        viewModelScope.launch(Dispatchers.IO) {
-            _uiState.update { it.copy(isActionRunning = true, actionError = null) }
-            var temporaryFile: File? = null
+    private fun requestUpload() {
+        if (pendingUpload != null || _effects.subscriptionCount.value == 0 || !canWriteAction("upload")) return
+        val settings = captureWriteSettings() ?: return
+        pendingUpload = PendingUpload(settings, _uiState.value.directoryPath.orEmpty(), connectionGeneration)
+        if (!_effects.tryEmit(NasLibraryEffect.SelectUploadFile)) pendingUpload = null
+    }
+
+    private fun uploadFile(uri: Uri?) {
+        val selection = pendingUpload ?: return
+        pendingUpload = null
+        if (uri == null || selection.generation != connectionGeneration || !canWriteAction("upload")) return
+        startWrite(selection.settings, action = { settings, verify ->
+            val safeName = sanitizeNasUploadFileName(queryFileName(uri) ?: "nas-upload.bin")
+            val file = File.createTempFile("nas-upload-", ".part", context.cacheDir)
             try {
-                runCatching {
-                    val name = queryFileName(uri) ?: "nas-upload.bin"
-                    val safeName = sanitizeNasUploadFileName(name)
-                    val file = File(context.cacheDir, "nas-upload-${System.currentTimeMillis()}-$safeName")
-                    temporaryFile = file
-                    context.contentResolver.openInputStream(uri).use { input ->
-                        requireNotNull(input) { "无法读取上传文件" }
-                        file.outputStream().use { output -> input.copyTo(output) }
+                context.contentResolver.openInputStream(uri).use { input ->
+                    requireNotNull(input) { "无法读取上传文件" }
+                    file.outputStream().use { output ->
+                        val buffer = ByteArray(64 * 1024)
+                        while (true) {
+                            verify()
+                            val count = input.read(buffer)
+                            if (count < 0) break
+                            if (count > 0) output.write(buffer, 0, count)
+                        }
                     }
-                    nasLibraryUseCase.uploadBook(
-                        source = NasUploadSource { sink ->
-                            FileInputStream(file).use { input ->
-                                val buffer = ByteArray(64 * 1024)
-                                while (true) {
-                                    val count = input.read(buffer)
-                                    if (count < 0) break
-                                    if (count > 0) sink.write(buffer, 0, count)
-                                }
-                            }
-                        },
-                        fileName = safeName,
-                        contentLength = file.length(),
-                        directoryPath = uploadDirectory,
-                    )
-                }.onSuccess { result ->
-                    _uiState.update { it.copy(isActionRunning = false) }
-                    val message = when {
-                        result.hasDuplicate -> "NAS 上传发现重复文件，请检查重复处理结果"
-                        result.failed.isNotEmpty() -> "NAS 上传完成，但有 ${result.failed.size} 个文件失败"
-                        else -> "NAS 上传完成"
-                    }
-                    _effects.emit(NasLibraryEffect.ShowMessage(message))
-                    refresh()
-                }.onFailure { error ->
-                    if (error is CancellationException && error !is TimeoutCancellationException) {
-                        throw error
-                    }
-                    _uiState.update {
-                        it.copy(
-                            isActionRunning = false,
-                            writeAccessDenied = it.writeAccessDenied || error.isWritePermissionError(),
-                            actionError = error.toNasMessage(),
-                        )
-                    }
-                    _effects.emit(NasLibraryEffect.ShowMessage(error.toNasMessage()))
                 }
+                verify()
+                nasLibraryUseCase.uploadBook(
+                    source = NasUploadSource { sink ->
+                        file.inputStream().use { input ->
+                            val buffer = ByteArray(64 * 1024)
+                            while (true) {
+                                verify()
+                                val count = input.read(buffer)
+                                if (count < 0) break
+                                if (count > 0) sink.write(buffer, 0, count)
+                            }
+                        }
+                    },
+                    fileName = safeName,
+                    contentLength = file.length(),
+                    directoryPath = selection.directory,
+                    settings = settings,
+                )
             } finally {
-                temporaryFile?.delete()
+                file.delete()
             }
+        }) { result ->
+            val message = when {
+                result.hasDuplicate -> "NAS 上传发现重复文件，请检查重复处理结果"
+                result.failed.isNotEmpty() -> "NAS 上传完成，但有 ${result.failed.size} 个文件失败"
+                else -> "NAS 上传完成"
+            }
+            _effects.tryEmit(NasLibraryEffect.ShowMessage(message))
+            refresh()
         }
     }
 
@@ -597,37 +611,61 @@ class NasLibraryViewModel(
         if (cursor.moveToFirst()) cursor.getString(0) else null
     }
 
-    private fun runAction(label: String, action: suspend () -> NasTaskStatus) {
-        if (_uiState.value.isActionRunning || !_uiState.value.isConfigured ||
-            _uiState.value.writeAccessDenied
-        ) return
-        viewModelScope.launch(Dispatchers.IO) {
-            _uiState.update { it.copy(isActionRunning = true, actionError = null) }
-            runCatching { action() }
-                .onSuccess {
-                    _uiState.update { it.copy(isActionRunning = false) }
-                    _effects.emit(NasLibraryEffect.ShowMessage("${label}已提交"))
-                    loadTasks()
+    private fun runAction(label: String, action: suspend (NasSettings) -> NasTaskStatus) {
+        val settings = captureWriteSettings() ?: return
+        startWrite(settings, action = { snapshot, _ -> action(snapshot) }) {
+            _effects.tryEmit(NasLibraryEffect.ShowMessage("${label}已提交"))
+            loadTasks()
+        }
+    }
+
+    private fun captureWriteSettings(): NasSettings? {
+        val settings = nasSettingsGateway.currentSettings
+        return settings.takeIf {
+            observedSettings.connectionVerified && credentialsMatch(observedSettings, it) &&
+                it.connectionVerified && it.apiUrl.isNotBlank() && it.apiToken.isNotBlank()
+        }
+    }
+
+    private fun <T> startWrite(
+        settings: NasSettings,
+        action: suspend (NasSettings, verify: () -> Unit) -> T,
+        onSuccess: (T) -> Unit,
+    ) {
+        val state = _uiState.value
+        if (state.isActionRunning || !state.isConfigured || state.writeAccessDenied) return
+        val generation = connectionGeneration
+        fun currentConnection() = generation == connectionGeneration && settings.connectionVerified &&
+            nasSettingsGateway.currentSettings.let { it.connectionVerified && credentialsMatch(it, settings) }
+        if (!currentConnection()) return
+        // Reserve the action on the UI thread, before dispatching IO or accepting another tap.
+        _uiState.update { it.copy(isActionRunning = true, actionError = null) }
+        writeJob = viewModelScope.launch {
+            try {
+                val result = withContext(Dispatchers.IO) {
+                    val scope = currentCoroutineContext()
+                    val verify = {
+                        scope.ensureActive()
+                        if (!currentConnection()) throw CancellationException("NAS connection changed")
+                    }
+                    verify()
+                    action(settings, verify)
                 }
-                .onFailure { error ->
-                    if (error is CancellationException && error !is TimeoutCancellationException) {
-                        throw error
-                    }
-                    _uiState.update {
-                        it.copy(
-                            isActionRunning = false,
-                            writeAccessDenied = it.writeAccessDenied || error.isWritePermissionError(),
-                            actionError = error.toNasMessage(),
-                        )
-                    }
-                    if (error is NasTaskConflictException) {
-                        // A 409 includes the task that is already running. Load
-                        // the task center so the user can inspect its progress
-                        // instead of seeing a misleading submission success.
-                        loadTasks()
-                    }
-                    _effects.emit(NasLibraryEffect.ShowMessage(error.toNasMessage()))
+                if (currentConnection()) onSuccess(result)
+            } catch (error: Exception) {
+                if (error is CancellationException && error !is TimeoutCancellationException) throw error
+                if (!currentConnection()) return@launch
+                _uiState.update {
+                    it.copy(
+                        writeAccessDenied = it.writeAccessDenied || error.isWritePermissionError(),
+                        actionError = error.toNasMessage(),
+                    )
                 }
+                if (error is NasTaskConflictException) loadTasks()
+                _effects.tryEmit(NasLibraryEffect.ShowMessage(error.toNasMessage()))
+            } finally {
+                if (currentConnection()) _uiState.update { it.copy(isActionRunning = false) }
+            }
         }
     }
 
@@ -640,7 +678,7 @@ class NasLibraryViewModel(
             return
         }
         viewModelScope.launch(Dispatchers.IO) {
-            runCatching { nasLibraryUseCase.tasks() }
+            runCatching { nasLibraryUseCase.tasks(settings = settings) }
                 .onSuccess { tasks ->
                     if (isCurrentSettings(settings)) {
                         _uiState.update { it.copy(tasks = tasks) }
@@ -667,7 +705,7 @@ class NasLibraryViewModel(
         ) return
         viewModelScope.launch(Dispatchers.IO) {
             _uiState.update { it.copy(isLoadingDirectories = true) }
-            runCatching { nasLibraryUseCase.libraryDirectories() }
+            runCatching { nasLibraryUseCase.libraryDirectories(settings) }
                 .onSuccess { directories ->
                     if (isCurrentSettings(settings)) {
                         _uiState.update {
@@ -688,110 +726,60 @@ class NasLibraryViewModel(
         }
     }
 
+    private fun hasCurrentBook(book: NasBook): Boolean = _uiState.value.let { state ->
+        state.selectedBook === book || state.books.any { it === book }
+    }
+
     private fun saveMetadata(intent: NasLibraryIntent.SaveMetadata) {
-        if (!canWriteAction("books")) return
-        viewModelScope.launch(Dispatchers.IO) {
-            _uiState.update { it.copy(isActionRunning = true, actionError = null) }
-            runCatching {
-                nasLibraryUseCase.updateMetadata(
-                    id = intent.book.id,
-                    title = intent.title,
-                    author = intent.author,
-                    intro = intent.intro,
+        if (_uiState.value.editingBook !== intent.book || !canWriteAction("books")) return
+        val settings = captureWriteSettings() ?: return
+        startWrite(settings, action = { snapshot, _ ->
+            nasLibraryUseCase.updateMetadata(intent.book.id, intent.title, intent.author, intent.intro, snapshot)
+        }) { detail ->
+            val updated = detail.toBook()
+            _uiState.update { state ->
+                state.copy(
+                    editingBook = null,
+                    selectedBook = updated,
+                    books = state.books.map { if (it.id == updated.id) updated else it },
                 )
-            }.onSuccess { detail ->
-                val updated = detail.toBook()
-                _uiState.update { state ->
-                    state.copy(
-                        isActionRunning = false,
-                        editingBook = null,
-                        selectedBook = updated,
-                        books = state.books.map { if (it.id == updated.id) updated else it },
-                    )
-                }
-                _effects.emit(NasLibraryEffect.ShowMessage("NAS 元数据已保存"))
-            }.onFailure { error ->
-                if (error is CancellationException && error !is TimeoutCancellationException) {
-                    throw error
-                }
-                _uiState.update {
-                    it.copy(
-                        isActionRunning = false,
-                        writeAccessDenied = it.writeAccessDenied || error.isWritePermissionError(),
-                        actionError = error.toNasMessage(),
-                    )
-                }
-                _effects.emit(NasLibraryEffect.ShowMessage(error.toNasMessage()))
             }
+            _effects.tryEmit(NasLibraryEffect.ShowMessage("NAS 元数据已保存"))
         }
     }
 
     private fun moveBook(intent: NasLibraryIntent.MoveBook) {
-        if (!canWriteAction("libraryDirectories")) return
-        viewModelScope.launch(Dispatchers.IO) {
-            _uiState.update { it.copy(isActionRunning = true, actionError = null) }
-            runCatching {
-                nasLibraryUseCase.moveBook(
-                    id = intent.book.id,
-                    targetDirectoryPath = intent.targetDirectoryPath,
-                    duplicatePolicy = intent.duplicatePolicy,
-                )
-            }.onSuccess { result ->
-                val message = when {
-                    result.isDuplicate -> "目标分类存在重复文件，未移动"
-                    result.isSuccess -> "NAS 书籍已移动"
-                    else -> "NAS 移动结果：${result.status.ifBlank { "未知" }}"
-                }
-                _uiState.update { it.copy(isActionRunning = false, movingBook = null) }
-                _effects.emit(NasLibraryEffect.ShowMessage(message))
-                refresh()
-            }.onFailure { error ->
-                if (error is CancellationException && error !is TimeoutCancellationException) {
-                    throw error
-                }
-                _uiState.update {
-                    it.copy(
-                        isActionRunning = false,
-                        writeAccessDenied = it.writeAccessDenied || error.isWritePermissionError(),
-                        actionError = error.toNasMessage(),
-                    )
-                }
-                _effects.emit(NasLibraryEffect.ShowMessage(error.toNasMessage()))
+        if (_uiState.value.movingBook !== intent.book || !canWriteAction("libraryDirectories")) return
+        val settings = captureWriteSettings() ?: return
+        startWrite(settings, action = { snapshot, _ ->
+            nasLibraryUseCase.moveBook(intent.book.id, intent.targetDirectoryPath, intent.duplicatePolicy, snapshot)
+        }) { result ->
+            val message = when {
+                result.isDuplicate -> "目标分类存在重复文件，未移动"
+                result.isSuccess -> "NAS 书籍已移动"
+                else -> "NAS 移动结果：${result.status.ifBlank { "未知" }}"
             }
+            _uiState.update { it.copy(movingBook = null) }
+            _effects.tryEmit(NasLibraryEffect.ShowMessage(message))
+            refresh()
         }
     }
 
     private fun deleteBookFile(book: NasBook) {
-        if (!canWriteAction("deleteBookFile")) return
-        viewModelScope.launch(Dispatchers.IO) {
-            _uiState.update { it.copy(isActionRunning = true, actionError = null) }
-            runCatching { nasLibraryUseCase.deleteBookFile(book.id) }
-                .onSuccess {
-                    _uiState.update { state ->
-                        state.copy(
-                            isActionRunning = false,
-                            deletingBook = null,
-                            selectedBook = null,
-                            books = state.books.filterNot { it.id == book.id },
-                            total = (state.total - 1).coerceAtLeast(0),
-                        )
-                    }
-                    _effects.emit(NasLibraryEffect.ShowMessage("NAS 源文件和书库索引已删除"))
-                }
-                .onFailure { error ->
-                    if (error is CancellationException && error !is TimeoutCancellationException) {
-                        throw error
-                    }
-                    _uiState.update {
-                        it.copy(
-                            isActionRunning = false,
-                            deletingBook = null,
-                            writeAccessDenied = it.writeAccessDenied || error.isWritePermissionError(),
-                            actionError = error.toNasMessage(),
-                        )
-                    }
-                    _effects.emit(NasLibraryEffect.ShowMessage(error.toNasMessage()))
-                }
+        if (_uiState.value.deletingBook !== book || !canWriteAction("deleteBookFile")) return
+        val settings = captureWriteSettings() ?: return
+        startWrite(settings, action = { snapshot, _ ->
+            nasLibraryUseCase.deleteBookFile(book.id, snapshot)
+        }) {
+            _uiState.update { state ->
+                state.copy(
+                    deletingBook = null,
+                    selectedBook = state.selectedBook?.takeUnless { it.id == book.id },
+                    books = state.books.filterNot { it.id == book.id },
+                    total = (state.total - 1).coerceAtLeast(0),
+                )
+            }
+            _effects.tryEmit(NasLibraryEffect.ShowMessage("NAS 源文件和书库索引已删除"))
         }
     }
 

@@ -29,6 +29,7 @@ import kotlinx.coroutines.test.resetMain
 import kotlinx.coroutines.test.setMain
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeout
+import kotlinx.coroutines.withTimeoutOrNull
 import org.junit.After
 import org.junit.Assert.*
 import org.junit.Before
@@ -157,6 +158,43 @@ class NasLibraryPaginationTest {
         assertEquals(listOf("new-server"), state { !it.isLoading }.books.map { it.id })
     }
 
+    @Test fun `stale delete confirmation cannot target the replacement NAS`() = runBlocking {
+        firstPage()
+        val oldBook = model.uiState.value.books.first()
+        model.onIntent(NasLibraryIntent.RequestDelete(oldBook))
+        settings.update { it.copy(apiUrl = "https://new.example", apiToken = "new-token") }
+        firstPage() // Same book IDs, different server.
+        model.onIntent(NasLibraryIntent.DeleteBook(oldBook))
+        val newBook = model.uiState.value.books[1]
+        model.onIntent(NasLibraryIntent.RequestDelete(newBook))
+        model.onIntent(NasLibraryIntent.DeleteBook(newBook))
+        val (id, destination) = withTimeout(5_000) { api.deletes.receive() }
+        assertEquals(newBook.id, id)
+        assertEquals("https://new.example", destination.apiUrl)
+        state { !it.isActionRunning && it.books.size == 2 }
+        assertEquals(1, api.deleteCount.get())
+    }
+
+    @Test fun `old delete response does not remove same id from a new NAS list`() = runBlocking {
+        firstPage()
+        val book = model.uiState.value.books.first()
+        model.onIntent(NasLibraryIntent.RequestDelete(book))
+        val hold = CompletableDeferred<Unit>()
+        api.deleteHold = hold
+        model.onIntent(NasLibraryIntent.DeleteBook(book))
+        try {
+            assertEquals("https://nas.example", withTimeout(5_000) { api.deletes.receive() }.second.apiUrl)
+            settings.update { it.copy(apiUrl = "https://new.example", apiToken = "new-token") }
+            firstPage()
+            hold.complete(Unit)
+            withTimeout(5_000) { api.deleteReturns.receive() }
+            val staleUpdate = withTimeoutOrNull(500) { model.uiState.first { it.books.size != 3 } }
+            assertNull(staleUpdate)
+        } finally {
+            hold.complete(Unit)
+        }
+    }
+
     private class Settings : NasSettingsGateway {
         override val settings = MutableStateFlow(NasSettings(
             apiUrl = "https://nas.example", apiToken = "test-token", connectionVerified = true))
@@ -172,8 +210,18 @@ class NasLibraryPaginationTest {
     private class Library : NasLibraryGateway by unsupportedGateway() {
         val requests = Channel<Request>(Channel.UNLIMITED)
         val all = CopyOnWriteArrayList<Request>()
+        val deletes = Channel<Pair<String, NasSettings>>(Channel.UNLIMITED)
+        val deleteReturns = Channel<Unit>(Channel.UNLIMITED)
+        val deleteCount = java.util.concurrent.atomic.AtomicInteger()
+        @Volatile var deleteHold: CompletableDeferred<Unit>? = null
+        override suspend fun deleteBookFile(id: String, settings: NasSettings) {
+            deleteCount.incrementAndGet()
+            deletes.send(id to settings)
+            withContext(NonCancellable) { deleteHold?.await() }
+            deleteReturns.send(Unit)
+        }
         override fun normalizeUrl(raw: String) = raw.trimEnd('/')
-        override suspend fun checkConnection(settings: NasSettings) = NasConnection(NasHealth("ok"), NasCapabilities())
+        override suspend fun checkConnection(settings: NasSettings) = NasConnection(NasHealth("ok"), NasCapabilities(features = setOf("deleteBookFile")))
         override suspend fun listBooks(page: Int, pageSize: Int, search: String?, directoryPath: String?,
             scrapeStatus: String?, manualConfirmed: Boolean?, sortBy: String, sortOrder: String,
             settings: NasSettings): NasBookPage {
