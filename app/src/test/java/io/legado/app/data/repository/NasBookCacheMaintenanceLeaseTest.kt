@@ -10,6 +10,7 @@ import io.legado.app.data.repository.manga.NasComicImageLeases
 import io.legado.app.domain.model.OrphanDeleteRequest
 import io.legado.app.help.book.BookHelp
 import io.legado.app.help.book.ChapterCacheDeleteResult
+import io.legado.app.help.book.ChapterCacheUse
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
@@ -67,6 +68,23 @@ class NasBookCacheMaintenanceLeaseTest {
     fun tearDown() {
         BookHelp.clearCache(book)
         database.close()
+    }
+
+    @Test
+    fun `entire book cleanup honors a reader window even with no open files`() = runBlocking {
+        val cleanup = BookCacheCleanupRepository(database.bookDao)
+        directory.mkdirs()
+        body.writeText("near the current reader window")
+        legacy.writeText("another cached chapter")
+        ChapterCacheUse().use { reader ->
+            reader.retain(book.bookUrl, setOf(0))
+            assertFalse(cleanup.clear(book.bookUrl))
+            assertTrue(body.isFile && legacy.isFile)
+            reader.retain("another-book", setOf(0))
+            assertTrue(cleanup.clear(book.bookUrl))
+        }
+        assertFalse(body.exists() || legacy.exists())
+        assertEquals(book.bookUrl, database.bookDao.getBook(book.bookUrl)?.bookUrl)
     }
 
     @Test

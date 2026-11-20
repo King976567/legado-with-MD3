@@ -17,6 +17,11 @@ internal class ChapterCacheUse : Closeable {
     companion object {
         private val active = mutableMapOf<ChapterCacheUse, Window>()
 
+        /** Hold the same logical guard used for single-chapter deletes, even with no open file. */
+        fun deleteBookIfIdle(bookUrl: String, delete: () -> Boolean): Boolean = synchronized(active) {
+            if (active.values.any { it.bookUrl == bookUrl }) false else delete()
+        }
+
         /** Lock order: logical chapter lease → BookImageFileStore. Never enter from within it. */
         fun deleteIfIdle(
             bookUrl: String,

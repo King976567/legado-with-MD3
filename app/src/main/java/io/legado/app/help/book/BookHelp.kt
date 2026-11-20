@@ -135,8 +135,10 @@ object BookHelp {
 
     fun tryClearCache(book: Book): Boolean {
         val filePath = FileUtils.getPath(downloadDir, cacheFolderName, book.getFolderName())
-        val removed = deleteImageCacheDirectory(File(filePath))
-        if (book.isMarkdown) MarkdownFile.clear()
+        val removed = ChapterCacheUse.deleteBookIfIdle(book.bookUrl) {
+            deleteImageCacheDirectory(File(filePath))
+        }
+        if (removed && book.isMarkdown) MarkdownFile.clear()
         return removed
     }
 
