@@ -84,6 +84,12 @@ class NasComicUploadRepositoryTest {
         assertEquals(NasComicUploadFailure.ConfigurationChanged, retryFailure(taskId, "approved"))
     }
 
+    @Test fun legacyReplacementMustBeReconfirmedInsteadOfRetriedBlindly() = runBlocking {
+        val taskId = UUID.randomUUID()
+        writeSnapshot(taskId, "approved")
+        assertEquals(NasComicUploadFailure.RemoteChanged, retryFailure(taskId, "approved"))
+    }
+
     private suspend fun retryFailure(taskId: UUID, replaceBookId: String): NasComicUploadFailure? =
         (runCatching { repository.retry("scoped:$sourceKey", taskId, replaceBookId) }
             .exceptionOrNull() as? NasComicUploadException)?.reason

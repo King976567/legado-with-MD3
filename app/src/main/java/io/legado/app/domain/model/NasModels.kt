@@ -1,5 +1,10 @@
 package io.legado.app.domain.model
 
+private val nasSha256Pattern = Regex("[a-fA-F0-9]{64}")
+
+internal fun normalizeNasSha256(hash: String?): String? =
+    hash?.trim()?.takeIf(nasSha256Pattern::matches)?.lowercase()
+
 /** A book returned by the legado-nas-indexer library API. */
 data class NasBook(
     val id: String,

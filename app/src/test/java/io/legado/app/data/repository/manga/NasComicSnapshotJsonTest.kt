@@ -1,8 +1,11 @@
 package io.legado.app.data.repository.manga
 
 import com.google.gson.GsonBuilder
+import io.legado.app.domain.model.NasBookDetail
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
+import org.junit.Assert.assertFalse
+import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class NasComicSnapshotJsonTest {
@@ -26,7 +29,7 @@ class NasComicSnapshotJsonTest {
                {"url":"chapter-1","title":"第一章","bookUrl":"https://source.example/book/1","index":0},
                {"url":"chapter-2","title":"第二章","bookUrl":"https://source.example/book/1","index":1}],
              "clientSourceKey":"stable-source-key","configurationFingerprint":"nas-config-fingerprint",
-             "maxUploadBytes":4294967296,"replaceBookId":"existing-book-12"}
+             "maxUploadBytes":4294967296,"replaceBookId":"existing-book-12","expectedRemoteHash":"${"a".repeat(64)}"}
         """.trimIndent()
 
         val restored = gson.fromJson(existingJson, NasComicUploadRepository.ComicSnapshot::class.java)
@@ -42,9 +45,10 @@ class NasComicSnapshotJsonTest {
         assertEquals("nas-config-fingerprint", restored.configurationFingerprint)
         assertEquals(4294967296L, restored.maxUploadBytes)
         assertEquals("existing-book-12", restored.replaceBookId)
+        assertEquals("a".repeat(64), restored.expectedRemoteHash)
         assertEquals(
             setOf("bookUrl", "book", "cacheBook", "chapters", "clientSourceKey",
-                "configurationFingerprint", "maxUploadBytes", "replaceBookId"),
+                "configurationFingerprint", "maxUploadBytes", "replaceBookId", "expectedRemoteHash"),
             gson.toJsonTree(restored).asJsonObject.keySet(),
         )
     }
@@ -66,5 +70,19 @@ class NasComicSnapshotJsonTest {
         assertEquals(1073741824L, restored.maxUploadBytes)
         assertNull(restored.cacheBook)
         assertNull(restored.replaceBookId)
+        assertNull(restored.expectedRemoteHash)
+    }
+
+    @Test
+    fun replacementRequiresTheOriginalHashEvenWhenTheIdIsUnchanged() {
+        val hash = "a".repeat(64)
+        val approved = NasBookDetail(id = "same-book", contentHash = hash.uppercase())
+        assertTrue(matchesComicReplacement(approved.id, hash, approved))
+        assertFalse(matchesComicReplacement(approved.id, hash, approved.copy(contentHash = "b".repeat(64))))
+        assertFalse(matchesComicReplacement(approved.id, hash, approved.copy(contentHash = "")))
+        assertFalse(matchesComicReplacement(approved.id, null, approved))
+        assertFalse(matchesComicReplacement("other-book", hash, approved))
+        assertFalse(matchesComicReplacement(null, null, approved))
+        assertTrue(matchesComicReplacement(null, null, null))
     }
 }

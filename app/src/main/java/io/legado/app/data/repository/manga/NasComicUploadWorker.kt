@@ -121,10 +121,15 @@ class NasComicUploadWorker(
         if (!connection.capabilities.supportsComicCbzUpload) {
             throw NasComicUploadException(NasComicUploadFailure.UnsupportedBackend)
         }
-        val remote = repository.gateway().findByClientSourceKey(sourceKey, settings)
-        if ((replaceBookId == null && remote != null) || (replaceBookId != null && remote?.id != replaceBookId)) {
-            throw NasComicUploadException(NasComicUploadFailure.RemoteChanged)
+        suspend fun verifyRemoteVersion() {
+            ensureDestinationUnchanged()
+            val remote = repository.gateway().findByClientSourceKey(sourceKey, settings)
+            if (!matchesComicReplacement(replaceBookId, snapshot.expectedRemoteHash, remote)) {
+                throw NasComicUploadException(NasComicUploadFailure.RemoteChanged)
+            }
+            ensureDestinationUnchanged()
         }
+        verifyRemoteVersion()
         val source = repository.database().bookSourceDao.getBookSource(snapshot.book.origin)
             ?: throw NasComicUploadException(NasComicUploadFailure.SourceMissing)
         // Refreshing metadata may change the title and therefore Book.getFolderName().
@@ -254,7 +259,9 @@ class NasComicUploadWorker(
             overallCurrent = totalPages,
             overallTotal = totalPages,
         )
-        ensureDestinationUnchanged()
+        // Packaging may take minutes. Revalidate after it, immediately before sending an overwrite.
+        // This is a preflight, not an atomic server-side version condition.
+        if (replaceBookId != null) verifyRemoteVersion() else ensureDestinationUnchanged()
         val upload = try {
             repository.gateway().uploadBook(
                 source = NasUploadSource { sink ->

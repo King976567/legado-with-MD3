@@ -14,6 +14,7 @@ import io.legado.app.data.entities.Book
 import io.legado.app.data.entities.BookChapter
 import io.legado.app.domain.gateway.NasLibraryGateway
 import io.legado.app.domain.gateway.NasSettingsGateway
+import io.legado.app.domain.model.NasBookDetail
 import io.legado.app.domain.model.NasComicUploadException
 import io.legado.app.domain.model.NasComicUploadFailure
 import io.legado.app.domain.model.NasComicUploadPreparation
@@ -21,6 +22,7 @@ import io.legado.app.domain.model.NasComicUploadStage
 import io.legado.app.domain.model.NasComicUploadState
 import io.legado.app.domain.model.NasHttpException
 import io.legado.app.domain.model.NasWriteAccess
+import io.legado.app.domain.model.normalizeNasSha256
 import io.legado.app.domain.model.settings.NasSettings
 import io.legado.app.domain.usecase.isBookUploadEnabled
 import io.legado.app.help.book.isImage
@@ -109,6 +111,7 @@ class NasComicUploadRepository(
             clientSourceKey = key,
             configurationFingerprint = configurationFingerprint(settings),
             maxUploadBytes = connection.capabilities.maxUploadBytes,
+            expectedRemoteHash = normalizeNasSha256(remote?.contentHash),
         )
         return NasComicUploadPreparation(
             preparationId = UUID.randomUUID().toString(),
@@ -129,7 +132,7 @@ class NasComicUploadRepository(
         if (snapshot.configurationFingerprint != configurationFingerprint(currentSettings())) {
             throw NasComicUploadException(NasComicUploadFailure.ConfigurationChanged)
         }
-        if (preparation.remoteBook?.id != replaceBookId) {
+        if (!matchesComicReplacement(replaceBookId, snapshot.expectedRemoteHash, preparation.remoteBook)) {
             throw NasComicUploadException(NasComicUploadFailure.RemoteChanged)
         }
         val queuedSnapshot = snapshot.copy(replaceBookId = replaceBookId)
@@ -189,12 +192,16 @@ class NasComicUploadRepository(
         if (previous.configurationFingerprint != configurationFingerprint(currentSettings())) {
             throw NasComicUploadException(NasComicUploadFailure.ConfigurationChanged)
         }
-        if (previous.replaceBookId != replaceBookId) {
+        if (previous.replaceBookId != replaceBookId ||
+            (replaceBookId != null && normalizeNasSha256(previous.expectedRemoteHash) == null)
+        ) {
             throw NasComicUploadException(NasComicUploadFailure.RemoteChanged)
         }
         val preparation = prepare(previous.cacheBook ?: previous.book)
         try {
-            if (preparation.clientSourceKey != sourceKey || preparation.remoteBook?.id != replaceBookId) {
+            if (preparation.clientSourceKey != sourceKey ||
+                !matchesComicReplacement(replaceBookId, previous.expectedRemoteHash, preparation.remoteBook)
+            ) {
                 throw NasComicUploadException(NasComicUploadFailure.RemoteChanged)
             }
             // Check again after the network calls, in case the NAS was switched during prepare().
@@ -293,6 +300,7 @@ class NasComicUploadRepository(
         @SerializedName("configurationFingerprint") val configurationFingerprint: String,
         @SerializedName("maxUploadBytes") val maxUploadBytes: Long,
         @SerializedName("replaceBookId") val replaceBookId: String? = null,
+        @SerializedName("expectedRemoteHash") val expectedRemoteHash: String? = null,
     )
 
     companion object {
@@ -337,4 +345,11 @@ private fun WorkInfo.toComicState(): NasComicUploadState {
         remotePath = values.getString(NasComicUploadRepository.KEY_REMOTE_PATH),
         warning = values.getString(NasComicUploadRepository.KEY_WARNING),
     )
+}
+
+/** IDs remain unchanged on NAS overwrites; the exact approved file must still be present. */
+internal fun matchesComicReplacement(bookId: String?, expectedHash: String?, remote: NasBookDetail?): Boolean {
+    if (bookId == null) return remote == null
+    val hash = normalizeNasSha256(expectedHash) ?: return false
+    return remote?.id == bookId && normalizeNasSha256(remote.contentHash) == hash
 }
