@@ -3156,6 +3156,7 @@
     <string name="cache_delete_book_incomplete">未能完全清除快取，可能仍在使用中。</string>
     <string name="nas_download_source_changed">無法確認原 NAS 來源，請從 NAS 書庫重新選擇下載。</string>
     <string name="nas_download_invalid_book">下載檔案為空、已損壞或格式不受支援。</string>
+    <string name="nas_download_checksum_mismatch">下載檔案與 NAS 校驗值不符，未匯入書架。請重新下載。</string>
     <string name="nas_download_invalid_comic">壓縮檔內沒有可匯入的漫畫。</string>
     <string name="manga_catalog_requires_manual_refresh">書源目錄順序已變，閱讀器保留了舊目錄。請暫停該書下載、離開閱讀器，再開啟目錄，選擇更新目錄。</string>
 </resources>

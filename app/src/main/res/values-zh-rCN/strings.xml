@@ -4132,6 +4132,7 @@
     <string name="cache_delete_book_incomplete">未能完全清除缓存，可能仍在使用中。</string>
     <string name="nas_download_source_changed">无法确认原 NAS 来源，请从 NAS 书库重新选择下载。</string>
     <string name="nas_download_invalid_book">下载文件为空、已损坏或格式不受支持。</string>
+    <string name="nas_download_checksum_mismatch">下载文件与 NAS 校验值不一致，未导入书架。请重新下载。</string>
     <string name="nas_download_invalid_comic">压缩包里没有可导入的漫画。</string>
     <string name="manga_catalog_requires_manual_refresh">书源目录顺序已变，阅读器保留了旧目录。请暂停该书下载、退出阅读器，再打开目录，选择更新目录。</string>
 </resources>

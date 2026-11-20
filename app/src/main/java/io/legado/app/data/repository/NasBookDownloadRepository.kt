@@ -9,6 +9,7 @@ import io.legado.app.domain.gateway.NasDownloadSink
 import io.legado.app.domain.gateway.NasSettingsGateway
 import io.legado.app.domain.model.NasBook
 import io.legado.app.domain.model.NasTransferHistory
+import io.legado.app.domain.model.normalizeNasSha256
 import io.legado.app.domain.model.settings.NasSettings
 import io.legado.app.domain.usecase.NasLibraryUseCase
 import io.legado.app.exception.NoStackTraceException
@@ -83,13 +84,18 @@ class NasBookDownloadRepository(
                 }, settings)
             }
             scope.ensureActive()
+            val version = hash.digest().toHexString()
+            val expectedHash = normalizeNasSha256(book.contentHash)
+            if (expectedHash != null && expectedHash != version) {
+                throw NoStackTraceException(application.getString(R.string.nas_download_checksum_mismatch))
+            }
             val format = nasDownloadFormat(book, file)
             if (file.length() == 0L || !format.supported ||
                 (format.fileName.endsWith(".epub", true) && !file.isEpubContainer())
             ) throw NoStackTraceException(application.getString(R.string.nas_download_invalid_book))
             val target = nasDownloadTarget(
                 File(application.filesDir, "nas-books"), source, book.id,
-                hash.digest().toHexString(), format.fileName,
+                version, format.fileName,
             )
             val imported = publishLock.withLock {
                 scope.ensureActive()

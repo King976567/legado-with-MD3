@@ -35,6 +35,7 @@ import org.koin.dsl.module
 import splitties.init.injectAsAppCtx
 import java.io.File
 import java.lang.reflect.Proxy
+import java.security.MessageDigest
 
 @RunWith(RobolectricTestRunner::class)
 @Config(application = Application::class, manifest = Config.NONE, sdk = [28])
@@ -86,7 +87,39 @@ class NasDownloadTransferTest {
         assertTrue(history.history.value.isEmpty())
     }
 
+    @Test fun mismatchedRemoteChecksumNeverImportsEvenAReadableFile() = runBlocking {
+        withImportContext {
+            holdOpen = false
+            val book = NasBook("first", fileName = "Book.txt", contentHash = "a".repeat(64))
+            val failure = runCatching { repository.download(book, old) }.exceptionOrNull()
+            assertTrue(failure is NoStackTraceException)
+            assertTrue(appDb.bookDao.all.isEmpty())
+            assertFalse(File(app.filesDir, "nas-books").exists())
+            assertFalse(app.cacheDir.listFiles().orEmpty().any { it.name.startsWith("nas-download-") })
+            assertEquals(NasTransferHistoryRepository.FAILED, history.history.value.single().state)
+        }
+    }
+
     @Test fun sameNamedDownloadsAreSeparateAndAnIdenticalRetryPreservesTheOriginalBook() = runBlocking {
+        withImportContext {
+            holdOpen = false
+            val hash = MessageDigest.getInstance("SHA-256").digest("Contents of first".toByteArray()).toHexString()
+            val approved = NasBook("first", fileName = "Book.txt", contentHash = hash.uppercase())
+            val first = repository.download(approved, old)
+            appDb.bookDao.update(first.copy(durChapterIndex = 3, durChapterPos = 10))
+            // Without a published hash, the previous format checks still allow a valid download.
+            val second = repository.download(NasBook("second", fileName = "Book.txt"), old)
+            val identical = repository.download(approved, old)
+            assertNotEquals(first.bookUrl, second.bookUrl)
+            assertEquals("Contents of first", File(requireNotNull(Uri.parse(first.bookUrl).path)).readText())
+            assertEquals("Contents of second", File(requireNotNull(Uri.parse(second.bookUrl).path)).readText())
+            assertEquals(first.bookUrl, identical.bookUrl)
+            assertEquals(3, identical.durChapterIndex)
+            assertEquals(10, identical.durChapterPos)
+        }
+    }
+
+    private suspend fun withImportContext(block: suspend () -> Unit) {
         app.injectAsAppCtx()
         startKoin {
             modules(module {
@@ -102,17 +135,7 @@ class NasDownloadTransferTest {
             })
         }
         try {
-            holdOpen = false
-            val first = repository.download(NasBook("first", fileName = "Book.txt"), old)
-            appDb.bookDao.update(first.copy(durChapterIndex = 3, durChapterPos = 10))
-            val second = repository.download(NasBook("second", fileName = "Book.txt"), old)
-            val identical = repository.download(NasBook("first", fileName = "Book.txt"), old)
-            assertNotEquals(first.bookUrl, second.bookUrl)
-            assertEquals("Contents of first", File(requireNotNull(Uri.parse(first.bookUrl).path)).readText())
-            assertEquals("Contents of second", File(requireNotNull(Uri.parse(second.bookUrl).path)).readText())
-            assertEquals(first.bookUrl, identical.bookUrl)
-            assertEquals(3, identical.durChapterIndex)
-            assertEquals(10, identical.durChapterPos)
+            block()
         } finally {
             stopKoin()
         }
