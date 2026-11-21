@@ -1037,8 +1037,8 @@
     <string name="export_no_chapter_name">TXT不導出章節名</string>
     <string name="end">end</string>
     <string name="custom_group_summary">關閉替換分組/開啟添加分組</string>
-    <string name="pref_media_button_per_next">媒體按鈕•上一首|下一首</string>
-    <string name="pref_media_button_per_next_summary">上一段|下一段/上一章|下一章</string>
+    <string name="pref_media_button_per_next">媒體按鈕按章節切換</string>
+    <string name="pref_media_button_per_next_summary">開啟後，通知欄、鎖定畫面與耳機鍵的上一個/下一個用於切換章節；關閉時用於段落快進/後退</string>
     <string name="read_aloud_by_page_summary">及時翻頁,翻頁時會停頓一下</string>
     <string name="check_source_show_debug_message">校驗書源顯示詳細信息</string>
     <string name="check_source_show_debug_message_summary">書源校驗時顯示網絡請求步驟和時間</string>
@@ -2317,6 +2317,8 @@
     <string name="show_all_synopsis">顯示全部簡介</string>
     <string name="show_bookshelf_tab_menu">顯示更多書架分頁</string>
     <string name="show_bottom_nav">顯示導航欄</string>
+    <string name="use_pager_top_bar">橫划頂欄</string>
+    <string name="use_pager_top_bar_summary">主頁面使用 OxygenX 橫划頂欄，並隱藏底部導航欄</string>
     <string name="show_latest_chapter">顯示最新章節</string>
     <string name="show_lines_synopsis">顯示簡介 %1$d 行</string>
     <string name="show_menu_icon">顯示選單項目圖標</string>
