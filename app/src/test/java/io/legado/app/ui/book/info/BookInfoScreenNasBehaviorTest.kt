@@ -9,12 +9,14 @@ import androidx.compose.ui.test.assertHasClickAction
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.click
 import androidx.compose.ui.test.hasContentDescription
+import androidx.compose.ui.test.hasScrollToIndexAction
 import androidx.compose.ui.test.hasText
 import androidx.compose.ui.test.junit4.v2.createComposeRule
 import androidx.compose.ui.test.longClick
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performScrollTo
+import androidx.compose.ui.test.performScrollToNode
 import androidx.compose.ui.test.performTouchInput
 import io.legado.app.R
 import io.legado.app.constant.BookType
@@ -153,6 +155,34 @@ class BookInfoScreenNasBehaviorTest {
     }
 
     @Test
+    fun onlineComicRendersItsSourceIntro() {
+        val intro = "An adventurer finds a city in the clouds."
+        val state = screenState(book = bookFixture(type = BookType.image).copy(intro = intro))
+        show(state = { state })
+
+        assertIntroIsDisplayed(intro)
+    }
+
+    @Test
+    fun importedComicRendersRealIntroAndHidesOnlyRawArchiveMetadata() {
+        val book = bookFixture(type = BookType.local or BookType.image or BookType.archive)
+            .copy(isLocal = true)
+        val legacyXml = "\uFEFF \n<?xml version=\"1.0\"?><ComicInfo><Title>Legacy metadata</Title></ComicInfo>"
+        val legacyZip = "PK\u0003\u0004archive payload"
+        val intro = "PK is the hero of this story."
+        val state = mutableStateOf(screenState(book = book.copy(intro = intro)))
+        show(state = { state.value })
+        assertIntroIsDisplayed(intro)
+
+        for (metadata in listOf(legacyXml, "<ComicInfo><Title>Legacy metadata</Title></ComicInfo>", legacyZip)) {
+            compose.runOnIdle { state.value = screenState(book = book.copy(intro = metadata)) }
+            assertIntroIsDisplayed(string(R.string.intro_show_null))
+            assertNoExposedValue("Legacy metadata")
+            assertNoExposedValue("archive payload")
+        }
+    }
+
+    @Test
     fun imageAndImageArchiveHideNumericWordCountButKeepTheirOtherTags() {
         val state = mutableStateOf(screenState(
             book = bookFixture(type = BookType.image),
@@ -258,6 +288,12 @@ class BookInfoScreenNasBehaviorTest {
             assertEquals(emptyList<BookInfoIntent>(), intents)
         }
         assertNoExposedValue(EXPLORE_LABEL + "|/catalog?page=2")
+    }
+
+    private fun assertIntroIsDisplayed(text: String) {
+        // The details are in a lazy item and plain intros get a paragraph indent.
+        compose.onNode(hasScrollToIndexAction()).performScrollToNode(hasText(text, substring = true))
+        compose.onNodeWithText(text, substring = true).assertIsDisplayed()
     }
 
     private fun show(

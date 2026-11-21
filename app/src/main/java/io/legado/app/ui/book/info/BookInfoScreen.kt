@@ -308,7 +308,7 @@ private fun BookInfoScreenContent(
     onOpenExplore: (title: String, url: String) -> Unit,
 ) {
     val isMiuix = LegadoTheme.composeEngine == ComposeEngine.Miuix
-    val intro = state.book?.intro
+    val intro = state.book?.renderableIntro
     val hasWebIntro = remember(intro) { parseBookInfoIntro(intro) is BookInfoIntroContent.Web }
     val scrollBehavior = if (isMiuix) {
         MiuixGlassScrollBehavior(MiuixScrollBehavior())
@@ -488,6 +488,7 @@ private fun BookInfoScreenContent(
                                         }
                                         BookInfoSummary(
                                             book = book,
+                                            intro = intro,
                                             tocLoadFailed = state.tocLoadFailed,
                                             onRemarkClick = { onIntent(BookInfoIntent.RemarkClick) },
                                             bookSource = state.bookSource,
@@ -1671,6 +1672,7 @@ private fun BookInfoActionCard(
 @Composable
 private fun BookInfoSummary(
     book: BookInfoBookUi,
+    intro: String?,
     tocLoadFailed: Boolean,
     onRemarkClick: () -> Unit,
     bookSource: BookSource?,
@@ -1748,9 +1750,8 @@ private fun BookInfoSummary(
             }
         }
         Spacer(modifier = Modifier.height(4.dp))
-        // Imported comic archives can contain legacy XML/ZIP metadata in intro.
-        if ((book.type and BookType.image) == 0) BookInfoIntro(
-            intro = book.intro,
+        BookInfoIntro(
+            intro = intro,
             baseUrl = book.bookUrl
                 .takeIf { it.startsWith("http", true) }
                 ?.substringBefore(","),
@@ -1762,6 +1763,23 @@ private fun BookInfoSummary(
         )
     }
 }
+
+private val comicInfoXmlHeader = Regex(
+    """^(?:<\?xml\s[^?]*\?>\s*)?<ComicInfo(?=[\s/>]|$)""",
+    RegexOption.IGNORE_CASE,
+)
+
+private val BookInfoBookUi.renderableIntro: String?
+    get() {
+        val text = intro ?: return null
+        if (!isLocal || (type and BookType.image) == 0) return text
+        // Older imports could store raw ComicInfo.xml or ZIP bytes as the introduction.
+        val header = text.trimStart { it.isWhitespace() || it == '\uFEFF' }
+        return text.takeUnless {
+            comicInfoXmlHeader.containsMatchIn(header) ||
+                header.startsWith("PK\u0003\u0004") || header.startsWith("PK\u0005\u0006")
+        }
+    }
 
 /**
  * 上游书籍详情页的简介渲染：
