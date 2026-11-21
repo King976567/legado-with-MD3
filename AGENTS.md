@@ -19,7 +19,7 @@
 ## Skill 路由
 
 - MD3阅读上游更新检查、两级同步 PR、同步失败排查与 NAS/漫画回归：使用
-  `md3-upstream-sync`，遵守逐阶段人工确认合并，不将检查请求当同步授权。
+  `md3-upstream-sync`，逐阶段验证后合并；用户要求同步时不重复请其确认，不将只读检查请求当同步授权。
 - XML/View/Activity/Fragment/RecyclerView 到 Compose 的页面迁移、新 Compose 页面：使用
   `legado-compose-migration`。
 - Compose Screen、Contract、ViewModel、导航、状态与兼容边界审查：使用 `legado-compose-review`。
@@ -41,7 +41,7 @@
 - 每完成一个独立修改，先执行与改动风险相称的验证并检查 diff；通过后提交本次相关源码、资源、测试或文档，再正常推送，不等待用户重复提醒。
 - 使用明确的文件清单暂存；不得夹带无关或他人改动、凭据、APK、构建缓存、临时文件和压缩包。
 - 验证失败、合并冲突、远端已变化或推送失败时停止并报告，不强制推送、不覆盖远端、不把本地提交称为已上传。
-- 上游同步仍按 `upstream → main → nas-md3` 的 PR 流程独立验证；不自动合并 PR 或自动解决冲突。
+- 上游同步仍按 `upstream → main → nas-md3` 的 PR 流程独立验证；Actions 不自动合并 PR 或自动解决冲突。
 - 交付时报告提交号、推送目标和验证结果。只读任务或无变更不创建空提交；用户本次明确要求不提交或不推送时优先遵从。
 
 ## 当前工程事实与目标方向

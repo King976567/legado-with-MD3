@@ -1,13 +1,13 @@
 # MD3 两级同步
 
-`main` 保存上游基线和本 Fork 的自动化配置；`nas-md3` 保存 NAS 功能。两级同步只创建或更新 PR，不直接修改目标分支、不自动合并、不自动解决冲突。
+`main` 保存上游基线和本 Fork 的自动化配置；`nas-md3` 保存 NAS 功能。两级同步的 GitHub Actions 只创建或更新 PR 并验证，不直接修改目标分支、不自动合并、不自动解决冲突。用户要求同步时，由执行者在各阶段验证通过且候选与基线一致后合并对应 PR，无须重复请用户确认；只读检查或用户限定范围的请求不扩大授权。
 
 ## 流程
 
 1. 每周一北京时间 11:17，或手动运行 **Sync upstream**：将 HapeLee 上游更新合并到 `automation/sync-upstream-main`，创建指向 `main` 的 PR。
 2. 同一次运行直接调用 **Verify sync PR**，执行 JVM 测试、lint、架构检查和 arm64 Comic Debug APK 打包。检查结果通过 commit status 显示在 PR 中。
-3. 人工确认并合并第一份 PR 后，`main` 的 push 触发第二级：将 `main` 合并到基于 `nas-md3` 的 `automation/sync-nas-main`，创建指向 `nas-md3` 的 PR。
-4. 第二级也直接执行验证，下载 Artifacts 中的 arm64 APK 试用并确认后，再手动合并第二份 PR。
+3. 验证通过并合并第一份 PR 后，`main` 的 push 触发第二级：将 `main` 合并到基于 `nas-md3` 的 `automation/sync-nas-main`，创建指向 `nas-md3` 的 PR。
+4. 第二级也直接执行验证，用本次候选的 arm64 APK 完成必要试用，再合并第二份 PR。
 
 手动触发可选择 `upstream`、`nas` 或 `all`。`all` 只使用当前已合入 main 的内容准备 NAS PR，不会提前带入未审批的上游 PR。定时运行也补查第二级，避免遗漏。
 
