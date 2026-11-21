@@ -873,6 +873,21 @@ interface BookDao {
     @Update
     fun update(vararg book: Book)
 
+    /** Fill a missing intro without overwriting edits, source changes, or reading progress. */
+    @Query(
+        """UPDATE books SET intro = COALESCE(:detailIntro, intro), listIntro = COALESCE(:discoveryIntro, listIntro)
+           WHERE bookUrl = :bookUrl AND origin = :origin
+             AND trim(COALESCE(customIntro, '')) = ''
+             AND trim(COALESCE(intro, '')) = ''
+             AND trim(COALESCE(listIntro, '')) = ''"""
+    )
+    suspend fun fillMissingIntro(
+        bookUrl: String,
+        origin: String,
+        detailIntro: String?,
+        discoveryIntro: String?,
+    ): Int
+
     /**
      * 只回写字数列，且仅当该字段当前仍为空时才写。
      *

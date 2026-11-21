@@ -357,6 +357,7 @@ class BookInfoViewModel(
         private set
 
     private var changeSourceCoroutine: Coroutine<*>? = null
+    private var introRecoveryJob: Job? = null
     private var readRecordObserveJob: Job? = null
     private var relatedBooksLoadJob: Job? = null
     private var characterLoadJob: Job? = null
@@ -404,6 +405,17 @@ class BookInfoViewModel(
             val book = when {
                 dbBook != null -> {
                     inBookshelf = !dbBook.isNotShelf
+                    if (dbBook.needsOnlineComicIntro()) {
+                        dbBook.matchingDiscoveryIntro(searchRepository.getSearchBook(bookUrl))?.let { intro ->
+                            if (!inBookshelf || bookRepository.fillMissingIntro(
+                                    bookUrl = bookUrl,
+                                    origin = dbBook.origin,
+                                    discoveryIntro = intro,
+                                )) {
+                                dbBook.listIntro = intro
+                            }
+                        }
+                    }
                     dbBook
                 }
 
@@ -1330,6 +1342,7 @@ class BookInfoViewModel(
         scope: CoroutineScope = viewModelScope,
         showLoading: Boolean = true,
     ) {
+        introRecoveryJob?.cancel()
         syncUiState(isTocLoading = showLoading)
         if (book.isLocal) {
             LocalBook.upBookInfo(book)
@@ -1432,6 +1445,7 @@ class BookInfoViewModel(
         if (book.tocUrl.isEmpty() && !book.isLocal) {
             loadBookInfo(book, runPreUpdateJs = inBookshelf, showLoading = false)
         } else {
+            recoverMissingComicIntro(book, source)
             execute {
                 bookRepository.getChapters(book.bookUrl)
             }.onSuccess { chapters ->
@@ -1444,6 +1458,29 @@ class BookInfoViewModel(
                 }
             }.onError {
                 loadChapter(book, showLoading = false)
+            }
+        }
+    }
+
+    private fun recoverMissingComicIntro(book: Book, source: BookSource?) {
+        introRecoveryJob?.cancel()
+        if (!inBookshelf || source?.ruleBookInfo?.intro.isNullOrBlank() || !book.needsOnlineComicIntro()) return
+        source ?: return
+        introRecoveryJob = viewModelScope.launch {
+            try {
+                // Fetch into a separate object: recovering one field must not change the TOC or progress.
+                val intro = withContext(IO) {
+                    WebBook.getBookInfoAwait(source, book.copy(), canReName = false).intro
+                }?.takeUnless(String::isBlank) ?: return@launch
+                if (!inBookshelf || currentBook !== book || !book.needsOnlineComicIntro()) return@launch
+                // Keep the in-memory copy used by concurrent TOC loading in sync with the field write.
+                book.intro = intro
+                syncUiState()
+                bookRepository.fillMissingIntro(book.bookUrl, book.origin, detailIntro = intro)
+            } catch (error: CancellationException) {
+                throw error
+            } catch (error: Exception) {
+                AppLog.put("补取漫画简介失败", error)
             }
         }
     }
@@ -2291,7 +2328,7 @@ class BookInfoViewModel(
             durChapterIndex = durChapterIndex,
             durChapterPos = durChapterPos,
             remark = remark,
-            intro = getDisplayIntro(),
+            intro = detailIntro(),
         )
     }
 
@@ -2343,3 +2380,17 @@ private val BookInfoWebFile.isSupported: Boolean
 
 private val BookInfoWebFile.isSupportDecompress: Boolean
     get() = AppPattern.archiveFileRegex.matches(name)
+
+internal fun Book.detailIntro(): String? = if (isImage && !isLocal) {
+    customIntro?.takeUnless(String::isBlank)
+        ?: intro?.takeUnless(String::isBlank)
+        ?: listIntro?.takeUnless(String::isBlank)
+} else {
+    getDisplayIntro()
+}
+
+internal fun Book.needsOnlineComicIntro(): Boolean = isImage && !isLocal && detailIntro().isNullOrBlank()
+
+internal fun Book.matchingDiscoveryIntro(discovered: SearchBook?): String? = discovered
+    ?.takeIf { it.bookUrl == bookUrl && it.origin == origin }
+    ?.intro?.takeUnless(String::isBlank)

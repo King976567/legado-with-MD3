@@ -176,6 +176,13 @@ class BookRepository(
         }
     }
 
+    suspend fun fillMissingIntro(
+        bookUrl: String,
+        origin: String,
+        detailIntro: String? = null,
+        discoveryIntro: String? = null,
+    ): Boolean = bookDao.fillMissingIntro(bookUrl, origin, detailIntro, discoveryIntro) > 0
+
     suspend fun upVideoPlayProgress(
         bookUrl: String,
         index: Int,

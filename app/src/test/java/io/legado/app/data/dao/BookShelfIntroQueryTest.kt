@@ -85,4 +85,37 @@ class BookShelfIntroQueryTest {
         assertEquals(listIntro, saved.listIntro)
         assertEquals(detailIntro, saved.intro)
     }
+
+    @Test
+    fun backfillOnlyWritesMissingIntroForTheSameSourceAndRetainsProgress() = runBlocking {
+        val book = newBook().apply {
+            intro = null
+            listIntro = null
+            durChapterIndex = 12
+            durChapterPos = 7
+        }
+        db.bookDao.insert(book)
+
+        assertEquals(0, db.bookDao.fillMissingIntro(book.bookUrl, "other source", null, listIntro))
+        assertEquals(1, db.bookDao.fillMissingIntro(book.bookUrl, book.origin, null, listIntro))
+        assertEquals(0, db.bookDao.fillMissingIntro(book.bookUrl, book.origin, detailIntro, null))
+        val result = db.bookDao.getBook(book.bookUrl)!!
+        assertEquals(listIntro, result.listIntro)
+        assertEquals(null, result.intro)
+        assertEquals(12, result.durChapterIndex)
+        assertEquals(7, result.durChapterPos)
+    }
+
+    @Test
+    fun backfillDoesNotOverwriteCustomOrExistingSourceIntro() = runBlocking {
+        val book = newBook().apply { listIntro = null }
+        db.bookDao.insert(book)
+        assertEquals(0, db.bookDao.fillMissingIntro(book.bookUrl, book.origin, "new intro", null))
+        assertEquals(detailIntro, db.bookDao.getBook(book.bookUrl)?.intro)
+
+        db.bookDao.update(book.apply { intro = null; customIntro = "用户简介" })
+        assertEquals(0, db.bookDao.fillMissingIntro(book.bookUrl, book.origin, "new intro", null))
+        assertEquals("用户简介", db.bookDao.getBook(book.bookUrl)?.customIntro)
+    }
+
 }
