@@ -25,6 +25,9 @@ import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import java.io.File
 import java.nio.file.Files
+import java.nio.file.LinkOption.NOFOLLOW_LINKS
+import java.nio.file.StandardCopyOption.ATOMIC_MOVE
+import java.nio.file.StandardCopyOption.REPLACE_EXISTING
 import java.security.MessageDigest
 import java.util.UUID
 import java.util.zip.ZipFile
@@ -100,11 +103,22 @@ class NasBookDownloadRepository(
             val imported = publishLock.withLock {
                 scope.ensureActive()
                 verifiedSource(settings)
-                // Both directories are inside app storage. No replace-existing option is used.
-                val created = !target.exists()
+                val path = target.toPath()
+                val created = Files.notExists(path, NOFOLLOW_LINKS)
                 if (created) {
-                    Files.createDirectories(target.parentFile!!.toPath())
-                    Files.move(file.toPath(), target.toPath())
+                    Files.createDirectories(path.parent)
+                    Files.move(file.toPath(), path)
+                } else {
+                    if (!Files.isRegularFile(path, NOFOLLOW_LINKS)) {
+                        throw NoStackTraceException(application.getString(R.string.nas_download_invalid_book))
+                    }
+                    if (target.length() != file.length() || target.nasDownloadSha256() != version) {
+                        scope.ensureActive()
+                        verifiedSource(settings)
+                        // This private path identifies the exact received bytes, not just a filename.
+                        // Repair that version atomically; never fall back to an in-place copy.
+                        Files.move(file.toPath(), path, ATOMIC_MOVE, REPLACE_EXISTING)
+                    }
                 }
                 try {
                     LocalBook.importNasDownload(Uri.fromFile(target), format.comicArchive)
@@ -212,5 +226,20 @@ internal fun nasDownloadTarget(root: File, source: String, bookId: String, versi
     File(File(File(root, nasDownloadFingerprint(source)), sha256(bookId)), "$version/$name")
 
 internal fun nasDownloadFingerprint(source: String): String = sha256("nas-download:$source")
+
+private suspend fun File.nasDownloadSha256(): String {
+    val scope = currentCoroutineContext()
+    val hash = MessageDigest.getInstance("SHA-256")
+    inputStream().use { input ->
+        val buffer = ByteArray(DEFAULT_BUFFER_SIZE)
+        while (true) {
+            scope.ensureActive()
+            val count = input.read(buffer)
+            if (count < 0) break
+            hash.update(buffer, 0, count)
+        }
+    }
+    return hash.digest().toHexString()
+}
 
 private fun sha256(text: String) = MessageDigest.getInstance("SHA-256").digest(text.toByteArray()).toHexString()

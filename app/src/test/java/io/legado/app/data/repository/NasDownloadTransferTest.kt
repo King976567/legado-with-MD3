@@ -119,6 +119,38 @@ class NasDownloadTransferTest {
         }
     }
 
+    @Test fun sameVersionDownloadRepairsDamagedLocalFileWithoutResettingShelfProgress() = runBlocking {
+        withImportContext {
+            holdOpen = false
+            val content = "Contents of repair"
+            val hash = MessageDigest.getInstance("SHA-256").digest(content.toByteArray()).toHexString()
+            val source = NasBook("repair", fileName = "Book.txt", contentHash = hash)
+            val original = repository.download(source, old)
+            val localFile = File(requireNotNull(Uri.parse(original.bookUrl).path))
+            appDb.bookDao.update(original.copy(durChapterIndex = 3, durChapterPos = 10, customIntro = "My notes"))
+            // Same length as the original, so checking file size alone cannot detect it.
+            val damaged = "x".repeat(content.length)
+            localFile.writeText(damaged)
+
+            // A mismatched download cannot repair or alter the existing file.
+            val rejected = runCatching { repository.download(source.copy(contentHash = "a".repeat(64)), old) }
+            assertTrue(rejected.exceptionOrNull() is NoStackTraceException)
+            assertEquals(damaged, localFile.readText())
+
+            val repaired = repository.download(source, old)
+
+            assertEquals(content, localFile.readText())
+            assertEquals(original.bookUrl, repaired.bookUrl)
+            assertEquals(3, repaired.durChapterIndex)
+            assertEquals(10, repaired.durChapterPos)
+            assertEquals("My notes", repaired.customIntro)
+            assertEquals(1, appDb.bookDao.all.size)
+            assertFalse(app.cacheDir.listFiles().orEmpty().any { it.name.startsWith("nas-download-") })
+            assertEquals(2, history.history.value.count { it.state == NasTransferHistoryRepository.SUCCEEDED })
+            assertEquals(1, history.history.value.count { it.state == NasTransferHistoryRepository.FAILED })
+        }
+    }
+
     private suspend fun withImportContext(block: suspend () -> Unit) {
         app.injectAsAppCtx()
         startKoin {
@@ -135,7 +167,14 @@ class NasDownloadTransferTest {
             })
         }
         try {
-            block()
+            // LocalBook uses a process-wide Room singleton, shared by tests in this sandbox.
+            val previous = appDb.bookDao.all.map { it.bookUrl }.toSet()
+            try {
+                block()
+            } finally {
+                val imported = appDb.bookDao.all.filterNot { it.bookUrl in previous }
+                if (imported.isNotEmpty()) appDb.bookDao.delete(*imported.toTypedArray())
+            }
         } finally {
             stopKoin()
         }

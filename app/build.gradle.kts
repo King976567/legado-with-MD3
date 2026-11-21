@@ -71,7 +71,7 @@ android {
         targetSdk = 37
         // Increment this NAS delivery baseline for each release. Upstream CI's commit
         // counter can be lower than the user's installed version and must not downgrade it.
-        val nasReleaseVersionCode = 32655
+        val nasReleaseVersionCode = 32656
         versionCode = maxOf(
             nasReleaseVersionCode,
             System.getenv("COMMIT_NUMBER")?.toInt()?.let { 10000 + it } ?: 0,
