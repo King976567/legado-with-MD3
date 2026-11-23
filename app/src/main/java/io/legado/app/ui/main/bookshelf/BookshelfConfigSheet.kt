@@ -16,7 +16,6 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.ExperimentalMaterial3Api
-import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -283,6 +282,19 @@ fun BookshelfConfigSheet(
                         }
                     )
 
+                    // 沉浸网格只在紧凑/仅封面下有意义：标准样式封面下方还有书名，贴边会被裁掉
+                    AnimatedVisibility(visible = settings.bookshelfGridLayout != 0) {
+                        CompactSwitchSettingItem(
+                            title = stringResource(R.string.bookshelf_grid_immersive),
+                            description = stringResource(R.string.bookshelf_grid_immersive_summary),
+                            checked = settings.bookshelfGridImmersive,
+                            color = LegadoTheme.colorScheme.surface,
+                            onCheckedChange = { value ->
+                                onUpdate { it.copy(bookshelfGridImmersive = value) }
+                            }
+                        )
+                    }
+
                     val gridCount =
                         if (isLandscape) settings.bookshelfLayoutGridLandscape else settings.bookshelfLayoutGridPortrait
                     CompactSwitchSettingItem(
@@ -398,7 +410,7 @@ fun BookshelfConfigSheet(
                                         .background(Color(settings.bookshelfCardColor))
                                         .border(
                                             1.dp,
-                                            MaterialTheme.colorScheme.outlineVariant,
+                                            LegadoTheme.colorScheme.outlineVariant,
                                             CircleShape
                                         )
                                 )
@@ -419,7 +431,7 @@ fun BookshelfConfigSheet(
                                         .background(Color(settings.bookshelfCardColorDark))
                                         .border(
                                             1.dp,
-                                            MaterialTheme.colorScheme.outlineVariant,
+                                            LegadoTheme.colorScheme.outlineVariant,
                                             CircleShape
                                         )
                                 )

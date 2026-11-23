@@ -283,6 +283,36 @@ class AppDatabaseUpgradeTest {
         }
     }
 
+    @Test
+    fun version135PreservesBooksAndProgressWithoutAssigningSeries() {
+        lateinit var originalRows: Map<String, TableSnapshot>
+        val name = createHistoricalDatabase(135) { db ->
+            insertBook(db, LOCAL_CBZ, BookType.local or BookType.image, BookType.localTag)
+            insertBook(db, ONLINE_COMIC, BookType.image, "https://source.example.invalid")
+            insertChapter(db, LOCAL_CBZ, "0002_第二章/0001.jpg", "第二章")
+            insertChapter(db, ONLINE_COMIC, "$ONLINE_COMIC/chapter/2", "第二章")
+            insertHighlightRule(db)
+            originalRows = PRESERVED_TABLES.associateWith { snapshot(db, it) }
+            assertEquals(135, db.version)
+        }
+
+        // Check both the actual migration and a normal reopen through Room.
+        repeat(2) {
+            withCurrentDatabase(name) { db ->
+                assertEquals(CURRENT_DATABASE_VERSION, db.version)
+                assertPreserved(db, originalRows)
+                db.query("SELECT seriesId, seriesOrder FROM books ORDER BY bookUrl").use { cursor ->
+                    assertEquals(2, cursor.count)
+                    while (cursor.moveToNext()) {
+                        assertTrue(cursor.isNull(0))
+                        assertEquals(0, cursor.getInt(1))
+                    }
+                }
+                assertTrue(snapshot(db, "book_series").rows.isEmpty())
+            }
+        }
+    }
+
     private fun assertVersion135Defaults(db: SupportSQLiteDatabase) {
         db.query(
             """SELECT textColorNight, bgColorNight, borderColorNight, underlineColorNight
@@ -540,7 +570,7 @@ class AppDatabaseUpgradeTest {
     private data class TableSnapshot(val columns: List<String>, val rows: List<List<Any?>>)
 
     companion object {
-        private const val CURRENT_DATABASE_VERSION = 135
+        private const val CURRENT_DATABASE_VERSION = 137
         private const val LOCAL_CBZ = "content://local-comics/downloaded.cbz"
         private const val ONLINE_COMIC = "https://comic.example.invalid/book/42"
         private val PRESERVED_TABLES = listOf("books", "chapters", "caches", "highlightRules")

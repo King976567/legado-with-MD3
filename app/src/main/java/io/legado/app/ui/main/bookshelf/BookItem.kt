@@ -40,6 +40,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.RectangleShape
 import androidx.compose.ui.graphics.Shadow
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.Role
@@ -54,11 +55,13 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.text.withStyle
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import io.legado.app.R
 import io.legado.app.constant.BookType
 import io.legado.app.domain.model.settings.BookshelfSettings
 import io.legado.app.ui.config.themeConfig.TagColorPair
+import io.legado.app.ui.theme.BookshelfCoverInnerInset
 import io.legado.app.ui.theme.LegadoTheme
 import io.legado.app.ui.widget.components.card.GlassCard
 import io.legado.app.ui.widget.components.card.NormalCard
@@ -81,6 +84,11 @@ fun BookshelfGridItem(
     cover: @Composable (Modifier) -> Unit,
     title: String,
     gridStyle: Int,
+    /**
+     * 沉浸网格：封面贴边排布，去掉卡片内边距与圆角，并忽略固定封面宽度（铺满列宽）。
+     * 间距由外层 LazyGrid 的 1dp arrangement 提供，卡片自己不再留边。
+     */
+    immersive: Boolean = false,
     modifier: Modifier = Modifier,
     isSelected: Boolean = false,
     titleSmallFont: Boolean = false,
@@ -93,10 +101,13 @@ fun BookshelfGridItem(
     onClick: () -> Unit,
     onLongClick: (() -> Unit)?
 ) {
+    val containerShape = if (immersive) RectangleShape else RoundedCornerShape(4.dp)
+    // 沉浸模式下间距只有 1dp：此时再按固定宽度居中会重新撑出边距，所以一律铺满列宽
+    val effectiveCoverWidth = coverWidth.takeUnless { immersive }
     Box(
         modifier = modifier
             .fillMaxWidth()
-            .clip(RoundedCornerShape(4.dp))
+            .clip(containerShape)
             .then(if (isSelected) Modifier.background(LegadoTheme.colorScheme.secondaryContainer) else Modifier)
             .combinedClickable(role = Role.Button, onClick = onClick, onLongClick = onLongClick)
             .bookshelfItemSemantics(accessibilityLabel ?: title, isSelected)
@@ -106,11 +117,15 @@ fun BookshelfGridItem(
             modifier = Modifier
                 .align(Alignment.Center)
                 .then(
-                    if (coverWidth != null) Modifier.width(coverWidth.dp)
+                    if (effectiveCoverWidth != null) Modifier.width(effectiveCoverWidth.dp)
                     else Modifier.fillMaxWidth()
                 )
         ) {
-            BookshelfItemCover(coverShadow = coverShadow, cover = cover) {
+            BookshelfItemCover(
+                coverShadow = coverShadow,
+                cover = cover,
+                immersive = immersive,
+            ) {
                 if (gridStyle == 1) {
                     AppText(
                         text = title,
@@ -277,15 +292,18 @@ fun BookshelfListItem(
 private fun BookshelfItemCover(
     coverShadow: Boolean,
     cover: @Composable (Modifier) -> Unit,
+    /** 沉浸网格：不留内边距、不做圆角，封面之间的唯一间隙交给外层 1dp 间距。 */
+    immersive: Boolean = false,
     overlay: @Composable androidx.compose.foundation.layout.BoxScope.() -> Unit = {},
 ) {
+    val shape = if (immersive) RectangleShape else RoundedCornerShape(4.dp)
     Box(
         modifier = Modifier
-            .padding(4.dp)
+            .padding(if (immersive) 0.dp else BookshelfCoverInnerInset)
             .fillMaxWidth()
             .aspectRatio(5f / 7f)
-            .then(if (coverShadow) Modifier.shadow(4.dp, RoundedCornerShape(4.dp)) else Modifier)
-            .clip(RoundedCornerShape(4.dp))
+            .then(if (coverShadow) Modifier.shadow(4.dp, shape) else Modifier)
+            .clip(shape)
     ) {
         cover(Modifier.fillMaxSize())
         overlay()
@@ -342,18 +360,21 @@ fun BookGroupCover(
     books: List<BookUiItem>,
     coverPath: String? = null,
     leftBottomText: String? = null,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    /** 沉浸网格下传 0dp：分组封面与书籍封面一起变直角。 */
+    cornerRadius: Dp = 4.dp,
 ) {
     Box(
         modifier = modifier
             .aspectRatio(5f / 7f)
-            .clip(RoundedCornerShape(4.dp))
+            .clip(RoundedCornerShape(cornerRadius))
     ) {
         if (!coverPath.isNullOrBlank()) {
             CoilBookCover(
                 name = null,
                 author = null,
                 path = coverPath,
+                radius = cornerRadius,
                 modifier = Modifier.fillMaxSize()
             )
         } else {
@@ -468,6 +489,7 @@ fun BookGroupItemGrid(
     previewBooks: List<BookUiItem>,
     countText: String? = null,
     gridStyle: Int = 0,
+    immersive: Boolean = false,
     titleSmallFont: Boolean = false,
     titleCenter: Boolean = true,
     titleMaxLines: Int = 2,
@@ -478,13 +500,15 @@ fun BookGroupItemGrid(
 ) {
     BookshelfGridItem(
         gridStyle = gridStyle,
+        immersive = immersive,
         cover = {
             BookGroupCover(
                 settings = settings,
                 books = previewBooks,
                 coverPath = group.cover,
                 leftBottomText = countText,
-                modifier = it
+                modifier = it,
+                cornerRadius = if (immersive) 0.dp else 4.dp,
             )
         },
         title = group.groupName,
@@ -692,6 +716,8 @@ fun BookItem(
     modifier: Modifier = Modifier,
     isSelected: Boolean = false,
     gridStyle: Int = 0,
+    /** 沉浸网格：紧凑/仅封面样式下贴边排布，间距 1dp、无圆角。 */
+    immersive: Boolean = false,
     isCompact: Boolean = false,
     isUpdating: Boolean = false,
     titleSmallFont: Boolean = false,
@@ -700,6 +726,8 @@ fun BookItem(
     coverShadow: Boolean = false,
     isSearchMode: Boolean = false,
     searchKey: String = "",
+    /** 选择模式：系列卡被拆成单本，封面左下角补一个系列归属标签 */
+    isEditMode: Boolean = false,
     /** 私密书籍且尚未解锁：只渲染模糊封面与占位内容，不渲染任何真实文字 */
     locked: Boolean = false,
     sharedTransitionScope: SharedTransitionScope? = null,
@@ -732,6 +760,7 @@ fun BookItem(
             modifier = modifier,
             isSelected = isSelected,
             gridStyle = gridStyle,
+            immersive = immersive,
             isCompact = isCompact,
             titleSmallFont = titleSmallFont,
             titleCenter = titleCenter,
@@ -785,6 +814,13 @@ fun BookItem(
     } else {
         null
     }
+    // 系列归属标签只在选择模式补：普通态由系列卡本身表达归属，
+    // 单本左下角仍留给来源/类型，避免和原有信息抢位置
+    val seriesLabel = if (isEditMode) {
+        book.seriesId?.takeIf { it.isNotBlank() }
+    } else {
+        null
+    }
 
     val cover: @Composable (Modifier) -> Unit = { coverModifier ->
         Box(modifier = coverModifier) {
@@ -792,6 +828,8 @@ fun BookItem(
                 name = book.name,
                 author = book.author,
                 path = book.getDisplayCover(),
+                // 圆角在封面组件内部裁切，只有把 0.dp 传进去才会真正变直角
+                radius = if (immersive) 0.dp else 4.dp,
                 // 锁定态不露更新进度指示：它同样是在透露"这本书有更新"
                 isUpdating = isUpdating && !locked,
                 modifier = Modifier.fillMaxSize(),
@@ -805,7 +843,11 @@ fun BookItem(
                 // 锁定态不露未读角标与来源标签：它们都是真实信息
                 badgeText = if (locked) null else if (layoutMode != 0) unreadText else null,
                 showBadgeDot = !locked && showUpdateBadge,
-                leftBottomText = if (locked) null else matchedSourceLabel ?: bookTypeLabel,
+                leftBottomText = if (locked) {
+                    null
+                } else {
+                    matchedSourceLabel ?: seriesLabel ?: bookTypeLabel
+                },
                 showLoadingPlaceholder = true,
                 // 模糊与"已隐藏"叠加层都交给封面组件在**共享元素节点内部**渲染。
                 // 这是关键：转场时 overlay 只搬运 sharedBounds 节点自己的内容，
@@ -843,6 +885,7 @@ fun BookItem(
             // （模糊 + 遮罩 + 点阵 + 锁标）已经说明了状态
             title = if (locked) "" else book.name,
             gridStyle = gridStyle,
+            immersive = immersive,
             modifier = modifier,
             isSelected = isSelected,
             titleSmallFont = titleSmallFont,
@@ -997,6 +1040,7 @@ private fun PrivateLockedBookItem(
     modifier: Modifier = Modifier,
     isSelected: Boolean = false,
     gridStyle: Int = 0,
+    immersive: Boolean = false,
     isCompact: Boolean = false,
     titleSmallFont: Boolean = false,
     titleCenter: Boolean = true,
@@ -1018,6 +1062,8 @@ private fun PrivateLockedBookItem(
             modifier = coverModifier
                 .fillMaxWidth()
                 .aspectRatio(5f / 7f),
+            // 脱敏封面自己带 4dp 圆角与裁切，沉浸网格同样要显式传 0.dp
+            radius = if (immersive) 0.dp else 4.dp,
             sharedCoverKey = sharedCoverKey,
             sharedTransitionScope = sharedTransitionScope,
             animatedVisibilityScope = animatedVisibilityScope,
@@ -1029,6 +1075,7 @@ private fun PrivateLockedBookItem(
             // 与正常态锁定卡片一致：不渲染书名文字，只留封面
             title = "",
             gridStyle = gridStyle,
+            immersive = immersive,
             modifier = modifier,
             isSelected = isSelected,
             titleSmallFont = titleSmallFont,
