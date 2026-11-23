@@ -310,6 +310,13 @@
     <string name="bookmark_badge_custom">自訂圖片</string>
     <string name="bookmark_badge_reset">恢復預設書籤角標</string>
     <string name="bookmark_badge_size">角標大小</string>
+    <string name="bookmark_badge_position">角標位置</string>
+    <string name="bookmark_badge_position_top_start">左上角</string>
+    <string name="bookmark_badge_position_top_end">右上角</string>
+    <string name="bookmark_badge_position_custom">自訂</string>
+    <string name="bookmark_badge_offset_x">水平偏移</string>
+    <string name="bookmark_badge_offset_y">垂直偏移</string>
+    <string name="bookmark_badge_offset_origin">以正文區左上角為原點</string>
     <string name="menu_mark">筆記</string>
     <string name="bookmark_mark">劃線標記</string>
     <string name="bookmark_mark_selection">選中文字</string>
@@ -2463,6 +2470,8 @@
     <string name="bookshelf_grid_fixed_columns_summary">關閉後按封面寬度自動計算列數</string>
     <string name="bookshelf_grid_fixed_cover_width">固定封面寬度</string>
     <string name="bookshelf_grid_fixed_cover_width_summary">關閉後封面鋪滿列寬，隨列數自動縮放</string>
+    <string name="bookshelf_grid_immersive">沉浸網格</string>
+    <string name="bookshelf_grid_immersive_summary">封面間距 1dp，去掉左右螢幕邊距與封面圓角（緊湊、僅封面樣式生效）</string>
     <string name="day_card_bg_color">日間卡片背景色</string>
     <string name="night_card_bg_color">夜間卡片背景色</string>
     <string name="compact_details">精簡詳情</string>
@@ -3162,4 +3171,25 @@
     <string name="nas_download_invalid_comic">壓縮檔內沒有可匯入的漫畫。</string>
     <string name="book_info_comic_catalog_requires_manual_refresh">書源變更了現有章節，已保留本機目錄。請先暫停該書的下載，再開啟目錄，選擇更新目錄。</string>
     <string name="manga_catalog_requires_manual_refresh">書源目錄順序已變，閱讀器保留了舊目錄。請暫停該書下載、離開閱讀器，再開啟目錄，選擇更新目錄。</string>
+    <!-- 書架折疊收納（同系列多卷） -->
+    <string name="bookshelf_series_count">%1$d 卷</string>
+    <string name="bookshelf_series_create">收納為系列</string>
+    <string name="bookshelf_series_remove">移出系列</string>
+    <string name="bookshelf_series_rename">重新命名系列</string>
+    <string name="bookshelf_series_dissolve">解散系列</string>
+    <string name="bookshelf_series_dissolve_message">解散「%1$s」後，%2$d 本書會回到書架，確定嗎？</string>
+    <string name="bookshelf_series_name_label">系列名</string>
+    <string name="bookshelf_series_name_empty">系列名不能為空</string>
+    <string name="bookshelf_series_name_conflict">已存在同名系列</string>
+    <string name="bookshelf_series_created">已將 %2$d 本收納為「%1$s」</string>
+    <string name="bookshelf_series_dissolved">已解散「%1$s」</string>
+    <string name="bookshelf_series_removed">已將 %1$d 本移出系列</string>
+    <string name="bookshelf_series_manage">管理系列書籍</string>
+    <string name="bookshelf_series_count_read">%1$d 卷 · 已讀 %2$d</string>
+    <string name="bookshelf_series_progress_summary">已讀 %1$d/%2$d</string>
+    <string name="bookshelf_series_reading_volume">在讀第 %1$d 卷</string>
+    <string name="bookshelf_series_collapse">收合</string>
+    <string name="bookshelf_series_pick_cover">設定封面</string>
+    <string name="bookshelf_series_reset_cover">恢復卷封面</string>
+    <string name="bookshelf_series">書籍系列</string>
 </resources>

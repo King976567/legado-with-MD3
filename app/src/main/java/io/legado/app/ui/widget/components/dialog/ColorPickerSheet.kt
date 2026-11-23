@@ -38,14 +38,20 @@ import androidx.compose.ui.unit.dp
 import io.legado.app.R
 import io.legado.app.ui.theme.LegadoTheme
 import io.legado.app.ui.widget.components.AppTextField
-import io.legado.app.ui.widget.components.button.series.MediumTonalButton
 import io.legado.app.ui.widget.components.modalBottomSheet.AppModalBottomSheet
+import io.legado.app.ui.widget.components.modalBottomSheet.SheetAction
 import io.legado.app.ui.widget.components.text.AppText
 import io.legado.app.utils.isHex
 import top.yukonga.miuix.kmp.basic.ColorPalette
 import top.yukonga.miuix.kmp.basic.ColorPicker
 import top.yukonga.miuix.kmp.basic.ColorSpace
 
+/**
+ * 取色面板。
+ *
+ * @param windowPresentation 调用点位于独立窗口（如划词浮层 Popup）时置 true，强制面板用
+ * 独立窗口呈现，避免被该窗口盖住；见 [AppModalBottomSheet]。
+ */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun ColorPickerSheet(
@@ -53,6 +59,7 @@ fun ColorPickerSheet(
     initialColor: Int,
     onDismissRequest: () -> Unit,
     onColorSelected: (Int) -> Unit,
+    windowPresentation: Boolean = false,
 ) {
     var currentColor by remember { mutableStateOf(Color(initialColor)) }
     var hexInput by remember { mutableStateOf(initialColor.asHexColorString()) }
@@ -71,29 +78,26 @@ fun ColorPickerSheet(
     AppModalBottomSheet(
         show = show,
         onDismissRequest = onDismissRequest,
+        windowPresentation = windowPresentation,
         title = stringResource(R.string.select_color),
-        startAction = {
-            MediumTonalButton(
-                onClick = {
-                    currentColor = Color.Transparent
-                    hexInput = "#00000000"
-                    isHexInputError = false
-                },
-                icon = Icons.Default.Restore,
-                contentDescription = stringResource(R.string.reset),
-            )
-        },
-        endAction = {
-            MediumTonalButton(
-                onClick = {
-                    onColorSelected(currentColor.toArgb())
-                    onDismissRequest()
-                },
-                enabled = parsedHexColor != null && !isHexInputError,
-                icon = Icons.Default.Save,
-                contentDescription = stringResource(R.string.action_save),
-            )
-        },
+        startSheetAction = SheetAction(
+            onClick = {
+                currentColor = Color.Transparent
+                hexInput = "#00000000"
+                isHexInputError = false
+            },
+            icon = Icons.Default.Restore,
+            contentDescription = stringResource(R.string.reset),
+        ),
+        endSheetAction = SheetAction(
+            onClick = {
+                onColorSelected(currentColor.toArgb())
+                onDismissRequest()
+            },
+            icon = Icons.Default.Save,
+            enabled = parsedHexColor != null && !isHexInputError,
+            contentDescription = stringResource(R.string.action_save),
+        ),
     ) {
         Column(
             modifier = Modifier
