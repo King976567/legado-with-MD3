@@ -7,11 +7,11 @@ import android.content.Context
 import android.os.Build
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.animateDpAsState
-import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -35,12 +35,9 @@ import androidx.compose.material.icons.filled.DarkMode
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.LightMode
 import androidx.compose.material3.ButtonGroupDefaults
-import androidx.compose.material3.Card
-import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.ExperimentalMaterial3ExpressiveApi
 import androidx.compose.material3.Icon
-import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.material3.ToggleButton
 import androidx.compose.material3.ToggleButtonDefaults
@@ -82,6 +79,7 @@ import io.legado.app.ui.widget.components.alert.AppAlertDialog
 import io.legado.app.ui.widget.components.card.InfoCard
 import io.legado.app.ui.widget.components.dialog.ColorPickerSheet
 import io.legado.app.ui.widget.components.dialog.TimePickerDialog
+import io.legado.app.ui.widget.components.icon.AppIcon
 import io.legado.app.ui.widget.components.modalBottomSheet.SheetAction
 import io.legado.app.ui.widget.components.settingItem.ClickableSettingItem
 import io.legado.app.ui.widget.components.settingItem.DropdownListSettingItem
@@ -897,7 +895,7 @@ fun ThemeConfigScreen(
                                                 .background(Color(theme.itemDividerColor))
                                                 .border(
                                                     1.dp,
-                                                    MaterialTheme.colorScheme.outlineVariant,
+                                                    LegadoTheme.colorScheme.outlineVariant,
                                                     CircleShape
                                                 )
                                         )
@@ -1179,7 +1177,7 @@ private fun BaseCardBorderColorSettingItem(
                         color.takeIf { it != 0 }?.let(::Color)
                             ?: LegadoTheme.colorScheme.outlineVariant
                     )
-                    .border(1.dp, MaterialTheme.colorScheme.outlineVariant, CircleShape)
+                    .border(1.dp, LegadoTheme.colorScheme.outlineVariant, CircleShape)
             )
         }
     )
@@ -1296,15 +1294,24 @@ fun ThemeColorButton(
     Column(
         horizontalAlignment = Alignment.CenterHorizontally,
     ) {
-        Card(
-            onClick = onClick,
-            modifier = Modifier.size(64.dp),
-            shape = RoundedCornerShape(16.dp),
-            border = if (isSelected) BorderStroke(
-                borderWidth,
-                LegadoTheme.colorScheme.primary
-            ) else null,
-            colors = CardDefaults.cardColors(containerColor = colors.surfaceContainer)
+        Box(
+            modifier = Modifier
+                .size(64.dp)
+                .clip(RoundedCornerShape(16.dp))
+                .background(colors.surfaceContainer)
+                .then(
+                    if (isSelected) {
+                        Modifier.border(
+                            borderWidth,
+                            LegadoTheme.colorScheme.primary,
+                            RoundedCornerShape(16.dp)
+                        )
+                    } else {
+                        Modifier
+                    }
+                )
+                .clickable(role = Role.Button, onClick = onClick),
+            contentAlignment = Alignment.Center,
         ) {
             Box(
                 modifier = Modifier.fillMaxSize(),
@@ -1349,10 +1356,10 @@ fun ThemeColorButton(
                             .clip(RoundedCornerShape(12.dp)),
                         contentAlignment = Alignment.Center
                     ) {
-                        Icon(
+                        AppIcon(
                             imageVector = Icons.Default.Check,
                             contentDescription = null,
-                            tint = MaterialTheme.colorScheme.onPrimary,
+                            tint = LegadoTheme.colorScheme.onPrimary,
                             modifier = Modifier.size(24.dp)
                         )
                     }
@@ -1399,13 +1406,13 @@ fun ThemeCard(
     Column(
         horizontalAlignment = Alignment.CenterHorizontally
     ) {
-        Card(
+        Box(
             modifier = Modifier
                 .width(128.dp)
-                .height(256.dp),
-            shape = MaterialTheme.shapes.large,
-            border = BorderStroke(1.dp, colors.primary),
-            colors = CardDefaults.cardColors(containerColor = colors.surface)
+                .height(256.dp)
+                .clip(RoundedCornerShape(16.dp))
+                .background(colors.surface)
+                .border(1.dp, colors.primary, RoundedCornerShape(16.dp))
         ) {
             ConstraintLayout(
                 modifier = Modifier.fillMaxSize()
