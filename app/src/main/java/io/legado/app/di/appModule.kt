@@ -740,7 +740,33 @@ val appModule = module {
     viewModelOf(::RemoteBookViewModel)
     viewModelOf(::ServerConfigViewModel)
     viewModelOf(::ServersViewModel)
-    viewModelOf(::BookInfoViewModel)
+    viewModel {
+        BookInfoViewModel(
+            application = get(),
+            remoteBookRepository = get(),
+            readRecordRepository = get(),
+            changeBookSourceUseCase = get(),
+            clearBookCacheUseCase = get(),
+            bookGroupRepository = get(),
+            bookRepository = get(),
+            findBookshelfConflictUseCase = get(),
+            resolveBookshelfConflictUseCase = get(),
+            bookSourceRepository = get(),
+            searchRepository = get(),
+            highlightTagRuleRepository = get(),
+            imageLoader = get(),
+            bookKnowledgeGateway = get(),
+            themeSettingsGateway = get(),
+            coverSettingsGateway = get(),
+            otherSettingsGateway = get(),
+            privateAccessGateway = get(),
+            privateContentGateway = get(),
+            nasSettingsGateway = get(),
+            nasLocalBookUploadRepository = get(),
+            nasComicUploadRepository = get(),
+            mangaReaderDataGateway = get(),
+        )
+    }
     viewModel {
         WebViewModel(
             application = get(),

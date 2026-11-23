@@ -28,6 +28,7 @@ import io.legado.app.data.repository.ReadRecordRepository
 import io.legado.app.data.repository.RemoteBookRepository
 import io.legado.app.data.repository.NasLocalBookUploadRepository
 import io.legado.app.data.repository.manga.NasComicUploadRepository
+import io.legado.app.domain.gateway.MangaReaderDataGateway
 import io.legado.app.domain.gateway.NasSettingsGateway
 import io.legado.app.domain.model.NasComicUploadException
 import io.legado.app.domain.model.NasComicUploadFailure
@@ -50,6 +51,7 @@ import io.legado.app.domain.model.BookshelfConflict
 import io.legado.app.domain.model.ConflictBookSummary
 import io.legado.app.domain.model.PrivateAccessState
 import io.legado.app.domain.model.PrivateUnlockTarget
+import io.legado.app.domain.model.manga.MangaCatalogCheck
 import io.legado.app.domain.model.settings.CoverSettings
 import io.legado.app.domain.model.settings.OtherSettings
 import io.legado.app.domain.model.settings.PrivateAccessSettings
@@ -142,6 +144,7 @@ class BookInfoViewModel(
     private val nasSettingsGateway: NasSettingsGateway,
     private val nasLocalBookUploadRepository: NasLocalBookUploadRepository,
     private val nasComicUploadRepository: NasComicUploadRepository,
+    private val mangaReaderDataGateway: MangaReaderDataGateway,
 ) : BaseViewModel(application) {
 
     val allGroups = bookGroupRepository.flowSelect().map { it.toImmutableList() }
@@ -358,6 +361,7 @@ class BookInfoViewModel(
 
     private var changeSourceCoroutine: Coroutine<*>? = null
     private var introRecoveryJob: Job? = null
+    private var comicCatalogCheckJob: Job? = null
     private var readRecordObserveJob: Job? = null
     private var relatedBooksLoadJob: Job? = null
     private var characterLoadJob: Job? = null
@@ -1295,6 +1299,7 @@ class BookInfoViewModel(
 
     fun delBook(deleteOriginal: Boolean = false, success: (() -> Unit)? = null) {
         val book = currentBook ?: return
+        comicCatalogCheckJob?.cancel()
         execute {
             inBookshelf = false
             invalidateShelfDuplicates()
@@ -1308,6 +1313,7 @@ class BookInfoViewModel(
     }
 
     fun refreshBook(book: Book) {
+        comicCatalogCheckJob?.cancel()
         syncUiState(isTocLoading = true)
         execute {
             if (book.isLocal) {
@@ -1343,6 +1349,7 @@ class BookInfoViewModel(
         showLoading: Boolean = true,
     ) {
         introRecoveryJob?.cancel()
+        comicCatalogCheckJob?.cancel()
         syncUiState(isTocLoading = showLoading)
         if (book.isLocal) {
             LocalBook.upBookInfo(book)
@@ -1393,6 +1400,7 @@ class BookInfoViewModel(
         options: ChangeSourceMigrationOptions,
         replacedBook: Book? = null,
     ) {
+        comicCatalogCheckJob?.cancel()
         val shouldPersist = replacedBook != null || inBookshelf
         changeSourceCoroutine?.cancel()
         changeSourceCoroutine = execute {
@@ -1424,6 +1432,7 @@ class BookInfoViewModel(
     }
 
     private fun upBook(book: Book, source: BookSource?) {
+        comicCatalogCheckJob?.cancel()
         currentBook = book
         currentChapterList = emptyList()
         tocLoadFailed = false
@@ -1452,12 +1461,59 @@ class BookInfoViewModel(
                 if (chapters.isNotEmpty()) {
                     currentChapterList = chapters
                     syncUiState(isTocLoading = false)
-                    source?.let { scheduleRelatedBooksLoad(book, it) }
+                    source?.let {
+                        scheduleRelatedBooksLoad(book, it)
+                        checkCachedComicCatalog(book, it)
+                    }
                 } else {
                     loadChapter(book, showLoading = false)
                 }
             }.onError {
                 loadChapter(book, showLoading = false)
+            }
+        }
+    }
+
+    private fun checkCachedComicCatalog(book: Book, source: BookSource) {
+        if (!inBookshelf || book.isLocal || !book.isImage || !book.canUpdate || !source.enabled) return
+        val bookUrl = book.bookUrl
+        val tocUrl = book.tocUrl
+        val reverseToc = book.getReverseToc()
+        fun stillShowingCatalog(candidate: Book) =
+            candidate.bookUrl == bookUrl && candidate.origin == source.bookSourceUrl &&
+                candidate.tocUrl == tocUrl && candidate.getReverseToc() == reverseToc
+
+        if (currentBook?.let(::stillShowingCatalog) != true) return
+
+        // Show saved chapters first. The reader's append-only check never rewrites cached indices.
+        comicCatalogCheckJob = viewModelScope.launch {
+            try {
+                val result = withContext(IO) { mangaReaderDataGateway.checkForCatalogUpdates(bookUrl) }
+                if (!inBookshelf || currentBook?.let(::stillShowingCatalog) != true) return@launch
+                if (result == MangaCatalogCheck.RequiresManualRefresh) {
+                    showMessage(R.string.book_info_comic_catalog_requires_manual_refresh)
+                    return@launch
+                }
+                val updated = bookRepository.getBook(bookUrl)?.takeIf(::stillShowingCatalog) ?: return@launch
+                // Another consumer (e.g. the reader) may have committed the same append first.
+                if (updated.totalChapterNum <= currentChapterList.size) return@launch
+                val chapters = bookRepository.getChapters(bookUrl)
+                val current = currentBook?.takeIf(::stillShowingCatalog) ?: return@launch
+                if (!inBookshelf || chapters.size != updated.totalChapterNum ||
+                    chapters.size <= currentChapterList.size
+                ) return@launch
+                currentChapterList = chapters
+                current.totalChapterNum = updated.totalChapterNum
+                current.latestChapterTitle = updated.latestChapterTitle
+                current.latestChapterTime = updated.latestChapterTime
+                current.lastCheckTime = updated.lastCheckTime
+                current.lastCheckCount = updated.lastCheckCount
+                syncUiState()
+            } catch (error: CancellationException) {
+                throw error
+            } catch (error: Exception) {
+                // A failed network check must leave the saved catalog usable.
+                AppLog.put("漫画详情页目录检查失败", error)
             }
         }
     }
@@ -1545,6 +1601,7 @@ class BookInfoViewModel(
         scope: CoroutineScope = viewModelScope,
         showLoading: Boolean = true,
     ) {
+        comicCatalogCheckJob?.cancel()
         tocLoadFailed = false
         syncUiState(isTocLoading = showLoading)
         if (book.isLocal) {

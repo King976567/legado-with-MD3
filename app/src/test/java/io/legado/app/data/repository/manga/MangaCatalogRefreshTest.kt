@@ -65,6 +65,15 @@ class MangaCatalogRefreshTest {
     }
 
     @Test
+    fun `detail and reader checking the same catalog do not append chapters twice`() = runBlocking {
+        val catalog = listOf(first, second, third)
+        assertEquals(MangaCatalogCheck.Appended, database.appendMangaCatalog(book, fetchedBook, catalog))
+        assertEquals(MangaCatalogCheck.Unchanged, database.appendMangaCatalog(book, fetchedBook, catalog))
+        assertEquals(catalog, database.bookChapterDao.getChapterList(book.bookUrl))
+        assertEquals(1, database.bookDao.getBook(book.bookUrl)?.lastCheckCount)
+    }
+
+    @Test
     fun `an incomplete or reordered fetch does not change downloaded chapter indices`() = runBlocking {
         val incomplete = database.appendMangaCatalog(book, fetchedBook, listOf(first))
         val reordered = database.appendMangaCatalog(book, fetchedBook, listOf(second.copy(index = 0), first.copy(index = 1), third))

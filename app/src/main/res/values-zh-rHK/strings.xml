@@ -3155,5 +3155,6 @@
     <string name="nas_download_invalid_book">下載檔案為空、已損壞或格式不受支援。</string>
     <string name="nas_download_checksum_mismatch">下載檔案與 NAS 校驗值不符，未匯入書架。請重新下載。</string>
     <string name="nas_download_invalid_comic">壓縮檔內沒有可匯入的漫畫。</string>
+    <string name="book_info_comic_catalog_requires_manual_refresh">書源變更了已有章節，已保留本機目錄。請先暫停該書的下載，再開啟目錄，選擇更新目錄。</string>
     <string name="manga_catalog_requires_manual_refresh">書源目錄順序已變，閱讀器保留了舊目錄。請暫停該書下載、離開閱讀器，再開啟目錄，選擇更新目錄。</string>
 </resources>

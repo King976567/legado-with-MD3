@@ -4145,5 +4145,6 @@
     <string name="nas_download_invalid_book">The downloaded file is empty, damaged, or in an unsupported format.</string>
     <string name="nas_download_checksum_mismatch">The downloaded file does not match the NAS checksum and was not imported. Please try downloading it again.</string>
     <string name="nas_download_invalid_comic">This archive does not contain a supported comic.</string>
+    <string name="book_info_comic_catalog_requires_manual_refresh">The source changed existing chapters. Your saved catalog was kept. Pause downloads for this book, then open its catalog and choose Update catalog.</string>
     <string name="manga_catalog_requires_manual_refresh">The source changed the chapter order. This session kept the old catalog. Pause downloads, exit the reader, and then open the book catalog and choose Update catalog.</string>
 </resources>

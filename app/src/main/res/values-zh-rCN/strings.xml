@@ -4136,5 +4136,6 @@
     <string name="nas_download_invalid_book">下载文件为空、已损坏或格式不受支持。</string>
     <string name="nas_download_checksum_mismatch">下载文件与 NAS 校验值不一致，未导入书架。请重新下载。</string>
     <string name="nas_download_invalid_comic">压缩包里没有可导入的漫画。</string>
+    <string name="book_info_comic_catalog_requires_manual_refresh">书源变更了已有章节，已保留本机目录。请先暂停该书的下载，再打开目录，选择更新目录。</string>
     <string name="manga_catalog_requires_manual_refresh">书源目录顺序已变，阅读器保留了旧目录。请暂停该书下载、退出阅读器，再打开目录，选择更新目录。</string>
 </resources>
