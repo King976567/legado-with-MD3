@@ -7,11 +7,11 @@ description: 检查或同步 HapeLee/legado-with-MD3 到用户 MD3阅读 Fork，
 
 ## 先辨认工程和授权
 
-- 本机正确工程为 `D:/pythonproject/yuedu-md3`；`D:/pythonproject/yuedu` 是冻结原版，不能因当前 cwd 在那里就修改它。
+- 先用当前 Git 根目录和 remote 验明是 MD3阅读；不要把某台机器的路径当作通用配置，也不要修改冻结原版工程。
 - `origin` 应为 `King976567/legado-with-MD3`，`upstream` 应为 `HapeLee/legado-with-MD3`。先核实 remote、工作树、分支、开放 PR 和实时 SHA；不沿用上轮的提交数、失败原因或 APK。
 - 应用名称是“MD3阅读”；namespace 为 `io.legado.app`，defaultConfig 基础 applicationId 为 `io.legato.kazusa`。用户实际使用的安装身份为 `io.legato.kazusa.debug`，`nas-md3` 的正式 Release 也沿用该包名和历史兼容签名，以覆盖原 Debug 版并保留数据；`.debug` 只是历史包名。`main` 保留上游配置，第二阶段须保留 NAS 的 Release 身份差异。
 - 用户日常只用 **Comic 完整版**（`appComic`，含本地漫画引擎），只验证和交付 Comic 的 arm64 包。上游的 Core 源码、共享实现及配置仍须完整整合，不能因不交付 Core 删减源码；不运行 Core 的编译、测试、lint 或打包门禁，也不产生 Core 交付包。
-- 读工程 `AGENTS.md` 和 `docs/dev/upstream-sync.md`。在工程外调用本技能时，从上述已验证工程定位这些文件，而不是相对当前目录猜测。
+- 读工程 `AGENTS.md` 和 `docs/dev/upstream-sync.md`，执行同步时应用其中的「冲突处理与续跑」。在工程外调用本技能时，从已验证的工程定位这些文件。
 - “看看有没有更新”是只读查询，不触发 Action、改文件、提交或合并。“去同步”“同步更新”是执行请求：按用户已明确设定的流程，默认授权完成本次 `upstream → main → nas-md3` 两阶段；各阶段验证通过后由执行者合并对应 PR，不再逐次请用户确认。用户本次说只准备 PR、不要合并或只做某一阶段时，遵守更窄的范围。
 - 免重复确认不等于免验证或放开权限。合并前核对仓库、PR 目标、候选 SHA、目标基线及绑定两者的完整 Comic 验证；候选或基线变化须重新验证。验证失败、存在无法证明行为等价的冲突或 GitHub 权限/分支保护阻止合并时，按证据处理或停下报告，不绕过门槛。Actions 仍只准备与验证，不自动合并。
 
@@ -29,7 +29,7 @@ description: 检查或同步 HapeLee/legado-with-MD3 到用户 MD3阅读 Fork，
 1. 核实干净工作树并获取远端；保留其他人的修改。记录本轮上游来源 SHA、目标 main SHA、原 NAS SHA。
 2. 先检查是否已有运行中的相同任务/开放 PR，避免重复运行。通常从 Fork `main` 触发 `sync-upstream.yml`，`stage=upstream`、`upstream_ref=main`。
 3. 固定分支 `automation/sync-upstream-main` 和已存在 PR 优先复用；先获取并合入最新 `origin/main`，再整合上游，更新候选与目标基线记录。保留人工修复，正常 push，不重置分支、不强推。不要把 NAS 功能带入 main。
-4. 遇冲突时 Action 一律中止、不发布半成品。交互处理先报告冲突文件；本轮已授权同步时，可逐块复核并处理有证据、行为等价的机械冲突。涉及功能取舍、数据语义或无法证明兼容的选择，停止并把具体差异交用户确认。禁止整文件 ours/theirs 或自动替用户选择业务语义。
+4. Actions 发现冲突会停止且不发布半成品。已授权的执行者（包括定时任务）在同阶段的同步分支接手：三方检查后，对不承载 Fork 行为的上游公共代码优先选用上游对应改动；Fork 专用或混合改动按文档保留定制、接入上游结构。能验证的逐块解决并继续，不等待确认。不能兼得且会改变用户行为或数据时才请求取舍。
 5. 排查失败运行中的具体测试、异常、timeout 与 artifact。重跑旧 run 不会带入新上游或新修复；修改后必须验证新 SHA。禁止跳过失败测试、放宽架构基线或伪造成功状态。
 6. 提交并推送已复核的候选修复，执行下述完整门禁。PR 描述记录实际来源、目标基线、候选 SHA、风险和验证链接。
 7. 门禁通过并复核 SHA 后，用保留提交历史的合并方式合并本阶段 PR，报告实际结果，再进入授权范围内的第二阶段，无需重复确认。不得直接推送 main，也不得将尚未合入 main 的上游提前带进正式 NAS 同步 PR。
@@ -38,7 +38,7 @@ description: 检查或同步 HapeLee/legado-with-MD3 到用户 MD3阅读 Fork，
 
 1. 第一阶段验证通过并合并后，核实远端 main 确含批准的上游；由 main push 或从 main 手动 `stage=nas` 生成/更新 `automation/sync-nas-main` → `nas-md3`。
 2. 重新获取 nas-md3 的最新基线，保留该分支的 NAS、CBZ、封面、任务历史和漫画选章修复。若目标已前进，合入新基线再验证，不能使用旧候选的绿色状态。
-3. 逐项核对导航/DI、详情、多语言、数据库、缓存及漫画读写交集。读 [references/regression-gates.md](references/regression-gates.md)；涉及 Compose 时同时按工程现有 Compose review 技能审查，修复前读其实现约定。
+3. 对冲突按同一规则逐块处理；第二阶段的上游侧是已合入的 Fork `main`，不是未经验证的上游分支。即使 Git 无冲突，也逐项核对导航/DI、详情、多语言、数据库、缓存及漫画读写交集。读 [references/regression-gates.md](references/regression-gates.md)；涉及 Compose 时同时按工程现有 Compose review 技能审查，修复前读其实现约定。
 4. 完整门禁与必要模拟器验证通过后，复核 SHA 并在授权范围内合并第二阶段 PR，无需重复确认。main 阶段产物不含 NAS，不能当用户日常使用包交付。
 5. 合并后再次核实远端分支和候选树相同/包含预期修复，再正常快进本地 nas-md3。临时分支只有已合并、无独有未保存改动且清理在授权范围内才删除；不用强制删除。
 
