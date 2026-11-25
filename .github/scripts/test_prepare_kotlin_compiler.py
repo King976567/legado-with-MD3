@@ -5,6 +5,7 @@ import json
 from pathlib import Path
 import tempfile
 import unittest
+import urllib.error
 from unittest import mock
 import urllib.request
 
@@ -38,7 +39,7 @@ class CompilerPreparationTest(unittest.TestCase):
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory()
         self.addCleanup(self.temp.cleanup)
-        self.root = Path(self.temp.name)
+        self.root = Path(self.temp.name).resolve()
         self.versions = self.root / "libs.versions.toml"
         self.versions.write_text('[versions]\nkotlin = "2.4.20"\n', encoding="utf-8")
         self.config = prepare.load_compiler(self.versions, self.root / "gradle")
@@ -227,6 +228,50 @@ class CompilerPreparationTest(unittest.TestCase):
         self.assertEqual((self.asset["url"], "private-token", "application/octet-stream"), opened.call_args.args)
         self.assert_repository()
 
+    def test_github_asset_transport_failure_uses_identical_official_maven_jar(self):
+        offline = urllib.error.URLError("https://example.invalid/signed?token=secret")
+        with self.metadata, self.checksum, self.pom, \
+                mock.patch("prepare_gradle_distribution.time.sleep"), \
+                mock.patch.object(prepare, "_open", side_effect=offline) as release_jar, \
+                mock.patch.object(prepare.urllib.request, "build_opener") as opener:
+            opener.return_value.open.return_value = io.BytesIO(CONTENTS)
+            prepare.prepare_compiler(self.config, "private-token")
+        self.assertEqual(3, release_jar.call_count)
+        request = opener.return_value.open.call_args.args[0]
+        self.assertEqual(f"{prepare.MAVEN}/2.4.20/{self.config.filename}", request.full_url)
+        self.assertFalse(request.has_header("Authorization"))
+        self.assert_repository()
+
+    def test_github_api_metadata_response_is_not_a_binary_and_can_use_maven(self):
+        metadata_response = io.BytesIO(b'{"name":"kotlin-compiler"}')
+        metadata_response.headers = {"Content-Type": "application/json; charset=utf-8"}
+        with self.metadata, self.checksum, self.pom, \
+                mock.patch.object(prepare, "_open", return_value=metadata_response), \
+                mock.patch.object(prepare.urllib.request, "build_opener") as opener:
+            opener.return_value.open.return_value = io.BytesIO(CONTENTS)
+            prepare.prepare_compiler(self.config)
+        self.assert_repository()
+
+    def test_fallback_still_requires_both_checksums_and_never_publishes_wrong_bytes(self):
+        with self.metadata, self.checksum, self.pom, \
+                mock.patch("prepare_gradle_distribution.time.sleep"), \
+                mock.patch.object(prepare, "_open", side_effect=urllib.error.URLError("unavailable")), \
+                mock.patch.object(prepare.urllib.request, "build_opener") as opener:
+            opener.return_value.open.return_value = io.BytesIO(b"x" * len(CONTENTS))
+            with self.assertRaises(prepare.PrepareError):
+                prepare.prepare_compiler(self.config)
+        self.assertFalse(prepare.artifact_path(self.config).exists())
+        self.assertFalse(list(prepare.repository_path(self.config).rglob("*.part")))
+
+    def test_fallback_does_not_mask_a_github_binary_integrity_failure(self):
+        with self.metadata, self.checksum, self.pom, \
+                mock.patch.object(prepare, "_open", return_value=io.BytesIO(b"x" * len(CONTENTS))), \
+                mock.patch.object(prepare.urllib.request, "build_opener") as opener:
+            with self.assertRaises(prepare.PrepareError):
+                prepare.prepare_compiler(self.config)
+        opener.assert_not_called()
+        self.assertFalse(prepare.artifact_path(self.config).exists())
+
     def test_bad_sha1_sha256_or_length_keeps_previous_jar_and_cleans_part(self):
         destination = prepare.artifact_path(self.config)
         cases = [(CONTENTS[:-1], self.asset, SHA1), (CONTENTS + b"extra", self.asset, SHA1),
@@ -270,6 +315,15 @@ class CompilerPreparationTest(unittest.TestCase):
         self.assertFalse(redirected.has_header("Authorization"))
         with self.assertRaises(prepare.PrepareError):
             OfficialRedirectHandler().redirect_request(request, None, 302, "Found", {}, "https://evil.invalid/asset")
+
+    def test_cli_identifies_failed_maven_pom_stage_without_exposing_raw_error(self):
+        with self.metadata, self.checksum, \
+                mock.patch.object(prepare, "get_maven_pom", side_effect=prepare.PrepareError("signedURL?token=secret")), \
+                contextlib.redirect_stderr(io.StringIO()) as output:
+            self.assertEqual(1, prepare.main(["--versions-file", str(self.versions)]))
+        self.assertIn("Maven Central POM", output.getvalue())
+        self.assertNotIn("signedURL", output.getvalue())
+        self.assertNotIn("secret", output.getvalue())
 
     def test_cli_failure_does_not_print_signed_url_or_token(self):
         with mock.patch.object(prepare, "prepare_compiler", side_effect=prepare.PrepareError("signedURL?token=secret")):

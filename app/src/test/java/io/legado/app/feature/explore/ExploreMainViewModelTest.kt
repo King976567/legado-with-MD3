@@ -1,6 +1,7 @@
 package io.legado.app.feature.explore
 
 import android.app.Application
+import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelStore
 import io.legado.app.constant.PreferKey
@@ -10,19 +11,24 @@ import io.legado.app.data.entities.SearchBook
 import io.legado.app.data.entities.rule.ExploreKind
 import io.legado.app.data.repository.ExploreRepository
 import io.legado.app.data.repository.SettingsRepository
+import io.legado.app.data.repository.dataStore
 import io.legado.app.help.config.AppConfigStore
+import io.legado.app.help.config.SettingsWriter
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.flowOf
+import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.test.StandardTestDispatcher
 import kotlinx.coroutines.test.resetMain
 import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
 import kotlinx.coroutines.test.setMain
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeout
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -46,16 +52,28 @@ class ExploreMainViewModelTest {
     fun setUp() {
         Dispatchers.setMain(dispatcher)
         AppConfigStore.init(RuntimeEnvironment.getApplication())
-        AppConfigStore.putBoolean(PreferKey.exploreMainContent, false)
-        AppConfigStore.putString(PreferKey.exploreMainSourceUrl, "a")
-        // AppConfigStore 是进程级单例，逐个测试重置分类记忆避免互相污染。
-        AppConfigStore.putString(PreferKey.exploreMainKind, "")
+        // DataStore 使用真实 IO；先确认测试基线已落盘，不能用主线程测试调度器等待。
+        runBlocking {
+            AppConfigStore.putAllAndAwait(
+                mapOf(
+                    PreferKey.exploreMainContent to false,
+                    PreferKey.exploreMainSourceUrl to "a",
+                    PreferKey.exploreMainKind to "",
+                ),
+            )
+        }
     }
 
     @After
     fun tearDown() {
-        store.clear()
-        Dispatchers.resetMain()
+        try {
+            store.clear()
+            // Robolectric 各用例共享设置写入器；不要把仍在 IO 的写入留给下个用例。
+            runBlocking { SettingsWriter.awaitPendingWrites() }
+            assertEquals(0, SettingsWriter.pendingWriteCount)
+        } finally {
+            Dispatchers.resetMain()
+        }
     }
 
     @Test
@@ -144,17 +162,25 @@ class ExploreMainViewModelTest {
         model.onIntent(ExploreMainIntent.ShowContent(true))
         runCurrent()
 
-        val categoryKey = exploreKindKey(kind("a"))
+        val category = kind("a")
+        repository.responses.getValue("a").complete(listOf(category))
+        runCurrent()
+        assertEquals(listOf(category), model.uiState.value.kinds)
+
+        val categoryKey = exploreKindKey(category)
         model.onIntent(ExploreMainIntent.SelectKind(categoryKey))
         runCurrent()
-
         assertEquals(categoryKey, model.uiState.value.selectedKindKey)
-        assertEquals(
-            categoryKey,
-            parseExploreKindSelections(
-                AppConfigStore.getString(PreferKey.exploreMainKind).orEmpty()
-            )["a"],
-        )
+
+        val key = stringPreferencesKey(PreferKey.exploreMainKind)
+        val persistedSelections = withContext(Dispatchers.IO) {
+            withTimeout(5_000) {
+                RuntimeEnvironment.getApplication().dataStore.data.first {
+                    parseExploreKindSelections(it[key].orEmpty())["a"] == categoryKey
+                }[key].orEmpty()
+            }
+        }
+        assertEquals(categoryKey, parseExploreKindSelections(persistedSelections)["a"])
     }
 
     @Test
