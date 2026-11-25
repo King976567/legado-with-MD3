@@ -32,6 +32,10 @@ class PrepareError(ValueError):
     """A sanitized failure which contains no signed URL or credential."""
 
 
+class TransportError(PrepareError):
+    """An official download was unavailable after bounded retries."""
+
+
 @dataclass(frozen=True)
 class Distribution:
     url: str
@@ -127,7 +131,7 @@ def _retry(operation):
             return operation()
         except (urllib.error.URLError, http.client.HTTPException, OSError):
             if attempt == 2:
-                raise PrepareError("Official Gradle API/download failed after three attempts") from None
+                raise TransportError("Official Gradle API/download failed after three attempts") from None
             time.sleep(attempt + 1)
 
 
