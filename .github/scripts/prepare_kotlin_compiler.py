@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+from contextlib import contextmanager
 from dataclasses import dataclass
 import hashlib
 import json
@@ -17,7 +18,7 @@ import urllib.parse
 import urllib.request
 import xml.etree.ElementTree as ET
 
-from prepare_gradle_distribution import PrepareError, _open, _retry
+from prepare_gradle_distribution import PrepareError, TransportError, _open, _retry
 
 
 API = "https://api.github.com/repos/JetBrains/kotlin"
@@ -70,12 +71,16 @@ class MavenRedirectHandler(urllib.request.HTTPRedirectHandler):
         return super().redirect_request(request, response, code, message, headers, new_url)
 
 
-def _maven_bytes(config: Compiler, filename: str, limit: int) -> bytes:
+def _open_maven(config: Compiler, filename: str):
     # This separate client never receives the step's GitHub token.
-    url = f"{MAVEN}/{config.version}/{filename}"
+    request = urllib.request.Request(f"{MAVEN}/{config.version}/{filename}",
+                                     headers={"User-Agent": "kotlin-compiler-prefetch"})
+    return urllib.request.build_opener(MavenRedirectHandler()).open(request, timeout=60)
+
+
+def _maven_bytes(config: Compiler, filename: str, limit: int) -> bytes:
     def read_file():
-        request = urllib.request.Request(url, headers={"User-Agent": "kotlin-compiler-prefetch"})
-        with urllib.request.build_opener(MavenRedirectHandler()).open(request, timeout=60) as response:
+        with _open_maven(config, filename) as response:
             result = response.read(limit + 1)
             if len(result) > limit:
                 raise PrepareError("Official Maven file exceeds the expected limit")
@@ -136,29 +141,75 @@ def _hashes(path: Path) -> tuple[str, str]:
     return sha1.hexdigest(), sha256.hexdigest()
 
 
-def download_compiler(asset: dict, destination: Path, sha1: str, token: str) -> None:
+class CompilerStageError(PrepareError):
+    """A fixed failure label safe for CI logs."""
+
+
+@contextmanager
+def _stage(label: str):
+    try:
+        yield
+    except CompilerStageError:
+        raise
+    except (PrepareError, OSError, ValueError) as error:
+        raise CompilerStageError(f"{label} ({type(error).__name__})") from None
+
+
+def _download_verified(open_response, asset: dict, destination: Path, sha1: str,
+                       *, github: bool = False) -> None:
     expected_sha256 = asset["digest"].removeprefix("sha256:")
+
     def transfer():
         total = 0
         actual_sha1, actual_sha256 = hashlib.sha1(), hashlib.sha256()
-        with _open(asset["url"], token, "application/octet-stream") as response, destination.open("wb") as output:
-            while chunk := response.read(1024 * 1024):
-                total += len(chunk)
-                if total > asset["size"]:
-                    raise PrepareError("Kotlin compiler download exceeds the official asset size")
-                actual_sha1.update(chunk)
-                actual_sha256.update(chunk)
-                output.write(chunk)
+        with open_response() as response:
+            content_type = getattr(response, "headers", {}).get("Content-Type", "")
+            if github and content_type.split(";", 1)[0].strip().lower() in {
+                "application/json", "application/vnd.github+json"
+            }:
+                # The official asset API can return metadata rather than binary bytes.
+                raise TransportError("Official GitHub asset response was JSON instead of a JAR")
+            try:
+                output = destination.open("wb")
+            except OSError:
+                raise PrepareError("Cannot open temporary Kotlin compiler destination") from None
+            with output:
+                while chunk := response.read(1024 * 1024):
+                    total += len(chunk)
+                    if total > asset["size"]:
+                        raise PrepareError("Kotlin compiler download exceeds the official asset size")
+                    actual_sha1.update(chunk)
+                    actual_sha256.update(chunk)
+                    try:
+                        output.write(chunk)
+                    except OSError:
+                        raise PrepareError("Cannot write temporary Kotlin compiler destination") from None
         if (total != asset["size"] or actual_sha1.hexdigest() != sha1
                 or actual_sha256.hexdigest() != expected_sha256):
             raise PrepareError("Kotlin compiler size, Maven SHA1 and official SHA256 must all match")
+
     _retry(transfer)
 
 
+def download_compiler(config: Compiler, asset: dict, destination: Path, sha1: str, token: str) -> None:
+    with _stage("GitHub release JAR download or integrity check"):
+        try:
+            _download_verified(lambda: _open(asset["url"], token, "application/octet-stream"),
+                               asset, destination, sha1, github=True)
+            return
+        except TransportError:
+            print("Kotlin compiler: GitHub release JAR unavailable; trying the official Maven Central JAR.")
+    with _stage("Maven Central fallback JAR download or integrity check"):
+        _download_verified(lambda: _open_maven(config, config.filename), asset, destination, sha1)
+
+
 def prepare_compiler(config: Compiler, token: str = "", cached_only: bool = False) -> str:
-    asset = get_release_asset(config, token)
-    sha1 = get_maven_sha1(config)
-    pom, pom_sha1 = get_maven_pom(config)
+    with _stage("GitHub release metadata"):
+        asset = get_release_asset(config, token)
+    with _stage("Maven Central JAR SHA1"):
+        sha1 = get_maven_sha1(config)
+    with _stage("Maven Central POM and its SHA1"):
+        pom, pom_sha1 = get_maven_pom(config)
     destination = artifact_path(config)
     pom_path = destination.with_suffix(".pom")
     expected_sha256 = asset["digest"].removeprefix("sha256:")
@@ -176,7 +227,7 @@ def prepare_compiler(config: Compiler, token: str = "", cached_only: bool = Fals
         os.close(descriptor)
         temporary = Path(temporary)
         try:
-            download_compiler(asset, temporary, sha1, token)
+            download_compiler(config, asset, temporary, sha1, token)
             os.replace(temporary, destination)
         finally:
             temporary.unlink(missing_ok=True)
@@ -200,9 +251,14 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--cached-only", action="store_true", help="Require a complete verified local repository; never download the asset")
     args = parser.parse_args(argv)
     try:
-        config = load_compiler(args.versions_file, args.gradle_user_home)
-        result = prepare_compiler(config, os.environ.get("GH_TOKEN", ""), args.cached_only)
-    except (PrepareError, OSError, ValueError, UnicodeError):
+        with _stage("Kotlin version catalog"):
+            config = load_compiler(args.versions_file, args.gradle_user_home)
+        with _stage("local Maven repository preparation"):
+            result = prepare_compiler(config, os.environ.get("GH_TOKEN", ""), args.cached_only)
+    except CompilerStageError as error:
+        print(f"Kotlin compiler preparation failed at {error}.", file=sys.stderr)
+        return 1
+    except (PrepareError, OSError, ValueError):
         print("Kotlin compiler preparation failed; official POM, version, Maven SHA1 and official JAR SHA256 must agree.", file=sys.stderr)
         return 1
     print(f"Kotlin compiler {config.filename}: {result}")
