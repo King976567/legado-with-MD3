@@ -829,7 +829,7 @@ fun MainActivity.mainEntryProvider(
     }
 
     entry<MainRouteSettingsTheme> {
-        SettingsDestinationContent(SettingsSearchPage.Theme, onNavigateBack)
+        SettingsDestinationContent(SettingsSearchPage.Theme, onNavigateBack, useNavigationRail = useRail)
     }
 
     entry<MainRouteSettingsBackup> {
@@ -2245,6 +2245,7 @@ private fun MainEntryNavigation.SettingsDestinationContent(
     page: SettingsSearchPage,
     onNavigateBack: () -> Unit,
     startAtMangaTranslation: Boolean = false,
+    useNavigationRail: Boolean = false,
 ) {
     when (page) {
         SettingsSearchPage.Reading -> {
@@ -2254,7 +2255,8 @@ private fun MainEntryNavigation.SettingsDestinationContent(
             ThemeConfigRouteScreen(
                 onBackClick = { onNavigateBack() },
                 onNavigateToCustomTheme = { pushRoute(MainRouteSettingsCustomTheme) },
-                onNavigateToThemeManage = { pushRoute(MainRouteSettingsThemeManage) }
+                onNavigateToThemeManage = { pushRoute(MainRouteSettingsThemeManage) },
+                useNavigationRail = useNavigationRail,
             )
         }
         SettingsSearchPage.Other -> {

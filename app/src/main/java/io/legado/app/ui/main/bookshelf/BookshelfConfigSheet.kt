@@ -52,6 +52,7 @@ fun BookshelfConfigSheet(
     show: Boolean,
     settings: BookshelfSettings,
     onUpdate: ((BookshelfSettings) -> BookshelfSettings) -> Unit,
+    onDimensionalShelfChange: (Boolean) -> Unit,
     enableCustomTagColors: Boolean,
     customTagColors: List<TagColorPair>,
     themeColor: Int,
@@ -101,11 +102,15 @@ fun BookshelfConfigSheet(
 
             PillHeaderDivider(title = stringResource(R.string.sort))
 
+            val sortEntries = stringArrayResource(R.array.bookshelf_px_array)
+            val sortEntryValues = remember(sortEntries.size) {
+                Array(sortEntries.size) { it.toString() }
+            }
             CompactDropdownSettingItem(
                 title = stringResource(R.string.sort),
                 selectedValue = settings.bookshelfSort.toString(),
-                displayEntries = stringArrayResource(R.array.bookshelf_px_array),
-                entryValues = Array(stringArrayResource(R.array.bookshelf_px_array).size) { it.toString() },
+                displayEntries = sortEntries,
+                entryValues = sortEntryValues,
                 onValueChange = { value ->
                     onUpdate { it.copy(bookshelfSort = value.toInt()) }
                 }
@@ -126,6 +131,14 @@ fun BookshelfConfigSheet(
             )
 
             PillHeaderDivider(title = stringResource(R.string.bookshelf_section_layout))
+
+            CompactSwitchSettingItem(
+                title = stringResource(R.string.dimensional_bookshelf),
+                description = stringResource(R.string.dimensional_bookshelf_summary),
+                checked = settings.bookshelfDimensionalShelf,
+                color = LegadoTheme.colorScheme.surface,
+                onCheckedChange = onDimensionalShelfChange,
+            )
 
             // Layout Mode (non-folder)
             val layoutMode =
