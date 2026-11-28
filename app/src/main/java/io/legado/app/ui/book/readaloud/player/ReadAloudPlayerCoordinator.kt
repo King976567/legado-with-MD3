@@ -47,6 +47,7 @@ import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.merge
+import kotlinx.coroutines.flow.onStart
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlin.math.roundToInt
@@ -149,7 +150,8 @@ class ReadAloudPlayerCoordinator(
         bookWithChapters,
         readAloudSettingsGateway.settings,
         voiceGateway.observeVoices(),
-    ) { session, (book, chapters, bindings), settings, voicesList ->
+        ReadAloud.idleExoPlayerChain,
+    ) { session, (book, chapters, bindings), settings, voicesList, _ ->
         val playback = session.playback
         val currentEngine = (ReadAloud.bookSession.book ?: ReadBook.book)?.getTtsEngine()
             ?: settings.ttsEngine
@@ -172,6 +174,8 @@ class ReadAloudPlayerCoordinator(
             speakerName = playback.characterName.ifBlank { playback.roleType.storageValue },
             isPaused = session.status != ReadAloudSessionStatus.Playing,
             speed = readAloudSettingsGateway.currentSettings.ttsSpeechRate,
+            ttsFollowSys = settings.ttsFollowSys,
+            maxPlaybackSpeed = ReadAloud.maxPlaybackSpeed,
             timerMinutes = session.timerMinutes,
             timerMode = settings.timerMode,
             timerChapters = if (session.timerChapters > 0 || session.status != ReadAloudSessionStatus.Idle) {
@@ -182,6 +186,9 @@ class ReadAloudPlayerCoordinator(
             finishCurrentChapterAfterTimer = settings.finishCurrentChapterAfterTimer,
             voices = voiceItems,
         )
+    }.onStart {
+        // 打开播放页时补一次空闲链路解析，避免上限仍停在默认值
+        ReadAloud.requestIdlePlaybackChainResolution()
     }
 
     fun snapshot(): ReadAloudPlayerSourceState {
@@ -206,6 +213,8 @@ class ReadAloudPlayerCoordinator(
             speakerName = playback.characterName.ifBlank { playback.roleType.storageValue },
             isPaused = session.status != ReadAloudSessionStatus.Playing,
             speed = readAloudSettingsGateway.currentSettings.ttsSpeechRate,
+            ttsFollowSys = readAloudSettingsGateway.currentSettings.ttsFollowSys,
+            maxPlaybackSpeed = ReadAloud.maxPlaybackSpeed,
             timerMinutes = session.timerMinutes,
             timerMode = readAloudSettingsGateway.currentSettings.timerMode,
             timerChapters = if (session.timerChapters > 0 || session.status != ReadAloudSessionStatus.Idle) {
@@ -318,6 +327,12 @@ class ReadAloudPlayerCoordinator(
 
     suspend fun setSpeed(value: Int) {
         readAloudSettingsGateway.update { it.copy(ttsSpeechRate = coerceReadAloudSpeed(value)) }
+        ReadAloud.upTtsSpeechRate(application)
+    }
+
+    /** 与经典朗读面板共用同一份 ttsFollowSys；切换后服务要重建引擎恢复系统默认语速。 */
+    suspend fun setFollowSys(value: Boolean) {
+        readAloudSettingsGateway.update { it.copy(ttsFollowSys = value) }
         ReadAloud.upTtsSpeechRate(application)
     }
 
@@ -540,6 +555,8 @@ data class ReadAloudPlayerSourceState(
     val speakerName: String,
     val isPaused: Boolean,
     val speed: Int,
+    val ttsFollowSys: Boolean,
+    val maxPlaybackSpeed: Float,
     val timerMinutes: Int,
     val timerMode: String,
     val timerChapters: Int,
