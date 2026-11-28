@@ -106,6 +106,8 @@ class ReadAloudDelegate(
     fun collectPreferences() {
         scope.launch {
             readAloudSettingsRepository.preferences.collect { prefs ->
+                // 引擎设置变化后重解析空闲链路；解析在后台做，主线程只读结果
+                ReadAloud.requestIdlePlaybackChainResolution()
                 host.updateState {
                     it.copy(
                         readAloudIgnoreAudioFocus = prefs.ignoreAudioFocus,
@@ -126,6 +128,7 @@ class ReadAloudDelegate(
                         readAloudStreamAudio = prefs.streamReadAloudAudio,
                         readAloudTtsFollowSys = prefs.ttsFollowSys,
                         readAloudTtsSpeechRate = prefs.ttsSpeechRate,
+                        readAloudMaxPlaybackSpeed = ReadAloud.maxPlaybackSpeed,
                         readAloudTtsTimer = prefs.ttsTimer,
                         readAloudFinishCurrentChapterAfterTimer =
                             prefs.finishCurrentChapterAfterTimer,
@@ -148,6 +151,16 @@ class ReadAloudDelegate(
                     )
                 }
             }
+        }
+        scope.launch {
+            combine(
+                ReadAloud.bookSession.state,
+                ReadAloud.idleExoPlayerChain,
+            ) { _, _ -> ReadAloud.maxPlaybackSpeed }
+                .distinctUntilChanged()
+                .collect { maxSpeed ->
+                    host.updateState { it.copy(readAloudMaxPlaybackSpeed = maxSpeed) }
+                }
         }
     }
 
