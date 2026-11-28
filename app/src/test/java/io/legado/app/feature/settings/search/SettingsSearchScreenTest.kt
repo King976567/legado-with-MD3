@@ -99,7 +99,8 @@ class SettingsSearchScreenTest {
         var configuration by mutableStateOf(Configuration(original))
         val viewModel = SettingsSearchViewModel(SavedStateHandle())
         val reading = ReadSetting.BrightnessPosition
-        val theme = requireNotNull(SettingsSearchCatalog.find("theme.miuix_monet"))
+        // Use a fixed item with a grouped path, description and parent after the appearance redesign.
+        val theme = requireNotNull(SettingsSearchCatalog.find("theme.top_bar_button_liquid_glass"))
 
         fun entry(id: String) = viewModel.uiState.value.results.single { it.id == id }
         fun assertLocalizedEntries() {

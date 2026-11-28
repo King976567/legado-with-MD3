@@ -16,6 +16,7 @@ data class HomeReadingBook(
     val coverPath: String?,
     val chapterTitle: String?,
     val chapterProgress: Float?,
+    val isPrivate: Boolean,
 )
 
 enum class HomeDashboardSection(val storageValue: String) {
@@ -25,7 +26,8 @@ enum class HomeDashboardSection(val storageValue: String) {
     RecentBooks("recent_books"),
     DailyGoal("daily_goal"),
     WebDavBackup("webdav_backup"),
-    NasLibrary("nas_library");
+    NasLibrary("nas_library"),
+    DimensionalBookshelf("dimensional_bookshelf");
 
     companion object {
         fun fromStorage(value: String): Set<HomeDashboardSection> {
@@ -37,13 +39,16 @@ enum class HomeDashboardSection(val storageValue: String) {
                     entries.firstOrNull { it.storageValue == stored }
                 }
                 .toSet()
-            return sections.ifEmpty { entries.toSet() - NasLibrary }
+            return sections.ifEmpty { DEFAULT_HOME_DASHBOARD_SECTIONS }
         }
     }
 }
 
 val DEFAULT_HOME_DASHBOARD_SECTIONS: Set<HomeDashboardSection> =
-    HomeDashboardSection.entries.toSet() - HomeDashboardSection.NasLibrary
+    HomeDashboardSection.entries.toSet() - setOf(
+        HomeDashboardSection.NasLibrary,
+        HomeDashboardSection.DimensionalBookshelf,
+    )
 
 const val DEFAULT_DAILY_READING_GOAL_MINUTES = 30
 const val MAX_DAILY_READING_GOAL_MINUTES = 24 * 60
